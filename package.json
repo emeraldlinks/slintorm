@@ -1,0 +1,43 @@
+{
+  "name": "slintorm",
+  "version": "0.0.2",
+  "description": "Minimal fully typed orm for typescript",
+  "license": "ISC",
+  "author": "Joseph Christopher",
+  "type": "module",
+  "main": "./dist/index.js",
+  "homepage": "https://github.com/emeraldlinks/slintorm",
+   "bugs": {
+    "url": "https://github.com/emeraldlinks/slintormssues"
+  },
+   "files": [
+    "README.md",
+    "dist/src" 
+  ],
+  "exports": {
+    "import": "./dist/src/index.js",
+    "types": "./dist/src/index.ts",
+    "require": "./dist/src/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/emeraldlinks/slintorm.git"
+  },  "scripts": {
+  "test": "node --loader ts-node/esm --experimental-specifier-resolution=node src/example.ts"
+},
+  "dependencies": {
+    "mongodb": "^6.20.0",
+    "mysql2": "^3.15.3",
+    "path": "^0.12.7",
+    "pg": "^8.16.3",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7",
+    "ts-morph": "^27.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1",
+    "@types/pg": "^8.15.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

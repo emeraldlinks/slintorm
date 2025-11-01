@@ -1,0 +1,117 @@
+{
+  "User": {
+    "fields": {
+      "id": {
+        "type": "number | undefined | undefined",
+        "meta": {
+          "index": true,
+          "auto": true
+        }
+      },
+      "name": {
+        "type": "string",
+        "meta": {}
+      },
+      "lastname": {
+        "type": "string | undefined | undefined",
+        "meta": {}
+      },
+      "posts": {
+        "type": "Post[] | undefined | undefined",
+        "meta": {
+          "relation onetomany": "Post",
+          "foreignKey": "userId"
+        }
+      },
+      "profile": {
+        "type": "Profile | undefined | undefined",
+        "meta": {
+          "relationship onetoone": "Profile",
+          "foreignKey": "userId"
+        }
+      }
+    },
+    "relations": [],
+    "table": "users"
+  },
+  "Post": {
+    "fields": {
+      "id": {
+        "type": "number | undefined | undefined",
+        "meta": {
+          "index": true,
+          "auto": true
+        }
+      },
+      "title": {
+        "type": "string",
+        "meta": {}
+      },
+      "userId": {
+        "type": "number | undefined | undefined",
+        "meta": {}
+      },
+      "user": {
+        "type": "User | undefined | undefined",
+        "meta": {
+          "relation manytoone": "User",
+          "foreignKey": "userId"
+        }
+      }
+    },
+    "relations": [],
+    "table": "post"
+  },
+  "Todo": {
+    "fields": {
+      "id": {
+        "type": "number | undefined | undefined",
+        "meta": {
+          "index": true,
+          "auto": true
+        }
+      },
+      "title": {
+        "type": "string",
+        "meta": {}
+      },
+      "detail": {
+        "type": "string",
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string",
+        "meta": {}
+      }
+    },
+    "relations": [],
+    "table": "todo"
+  },
+  "Profile": {
+    "fields": {
+      "id": {
+        "type": "number | undefined | undefined",
+        "meta": {
+          "index": true,
+          "auto": true
+        }
+      },
+      "user": {
+        "type": "User | undefined | undefined",
+        "meta": {
+          "relationship onetoone": "User",
+          "foreignKey": "userId"
+        }
+      },
+      "userId": {
+        "type": "number",
+        "meta": {
+          "index": true,
+          "auto": true
+        }
+      }
+    },
+    "relations": [],
+    "table": "profile"
+  }
+}

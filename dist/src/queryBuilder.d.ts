@@ -1,0 +1,34 @@
+import type { ExecFn, OpComparison } from "./types.ts";
+type PreloadPath<T> = (keyof T & string) | `${Extract<keyof T, string>}.${string}`;
+export declare class QueryBuilder<T extends Record<string, any>> {
+    private _selects;
+    private _where;
+    private _orderBy;
+    private _limit;
+    private _offset;
+    private _joins;
+    private _preloads;
+    private table;
+    private exec;
+    private orm;
+    modelName: string;
+    constructor(table: string, exec: ExecFn, orm?: {
+        dialect?: string;
+    });
+    private normalizeModelName;
+    select<K extends keyof T>(...cols: K[]): this;
+    where<K extends keyof T>(column: K, op: OpComparison, value: T[K]): this;
+    whereRaw(sql: string): this;
+    orderBy<K extends keyof T>(column: K, dir?: "asc" | "desc"): this;
+    limit(n: number): this;
+    offset(n: number): this;
+    join(table: string, onLeft: string, op: string, onRight: string): this;
+    leftJoin(table: string, onLeft: string, op: string, onRight: string): this;
+    preload<K extends PreloadPath<T>>(relation: K): this;
+    ILike<K extends keyof T>(column: K, value: string): this;
+    private buildSql;
+    get(): Promise<T[]>;
+    first(condition?: string): Promise<T | null>;
+    private applyPreloads;
+}
+export {};
