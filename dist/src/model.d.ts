@@ -1,5 +1,5 @@
-import { DBAdapter } from "./dbAdapter";
-import { QueryBuilder } from "./queryBuilder";
+import { DBAdapter } from "./dbAdapter.js";
+import { QueryBuilder } from "./queryBuilder.js";
 type ModelAPI<T extends Record<string, any>> = {
     insert(item: T): Promise<T>;
     update(filter: Partial<T>, partial: Partial<T>): Promise<T | null>;

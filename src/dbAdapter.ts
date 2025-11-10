@@ -14,9 +14,21 @@ export class DBAdapter {
   private mongoDb: MongoDb | null = null;
   private connected = false;
 
-  private config: { driver?: DBDriver; databaseUrl?: string; databaseName?: string; [key: string]: any } = {};
+  private config: {
+    driver?: DBDriver;
+    databaseUrl?: string;
+    databaseName?: string;
+    [key: string]: any;
+  } = {};
 
-  constructor(config: { driver?: DBDriver; databaseUrl?: string; databaseName?: string; [key: string]: any } = {}) {
+  constructor(
+    config: {
+      driver?: DBDriver;
+      databaseUrl?: string;
+      databaseName?: string;
+      [key: string]: any;
+    } = {}
+  ) {
     this.config = config;
     this.driver = config.driver ?? "sqlite";
   }
@@ -41,7 +53,9 @@ export class DBAdapter {
       }
 
       case "postgres": {
-        this.pgClient = new PgClient({ connectionString: this.config.databaseUrl });
+        this.pgClient = new PgClient({
+          connectionString: this.config.databaseUrl,
+        });
         await this.pgClient.connect();
         break;
       }
@@ -62,57 +76,59 @@ export class DBAdapter {
   }
 
   async exec(sqlOrOp: string, params: any[] = []): Promise<SQLExecResult> {
-    await this.connect();
+  await this.connect();
 
-    switch (this.driver) {
-      case "sqlite": {
-        const sql = sqlOrOp.trim();
-        if (sql.toUpperCase().startsWith("SELECT")) {
-          const rows = await this.sqliteDb!.all(sql, params);
-          return { rows };
-        } else {
-          await this.sqliteDb!.run(sql, params);
-          return { rows: [] };
-        }
+  switch (this.driver) {
+    case "sqlite": {
+      const sql = sqlOrOp.trim();
+      if (sql.toUpperCase().startsWith("SELECT")) {
+        const rows = await this.sqliteDb!.all(sql, params);
+        return { rows };
+      } else {
+        const result = await this.sqliteDb!.run(sql, params);
+        return { rows: [], changes: result.changes };
       }
-
-      case "mysql": {
-        const [rows] = await this.mysqlConn!.execute(sqlOrOp, params);
-        return { rows: Array.isArray(rows) ? rows : [] };
-      }
-
-      case "postgres": {
-        const res = await this.pgClient!.query(sqlOrOp, params);
-        return { rows: res.rows };
-      }
-
-      case "mongodb": {
-        // For Mongo, sqlOrOp should be a JSON command object
-        if (!this.mongoDb) throw new Error("MongoDB not initialized");
-        // naive: sqlOrOp as stringified JSON { collection, action, filter?, data? }
-        const cmd = JSON.parse(sqlOrOp);
-        const col = this.mongoDb.collection(cmd.collection);
-        switch (cmd.action) {
-          case "find":
-            return { rows: await col.find(cmd.filter || {}).toArray() };
-          case "insert":
-            await col.insertMany(cmd.data);
-            return { rows: cmd.data };
-          case "update":
-            await col.updateMany(cmd.filter, { $set: cmd.data });
-            return { rows: [] };
-          case "delete":
-            await col.deleteMany(cmd.filter);
-            return { rows: [] };
-          default:
-            throw new Error(`Unknown Mongo action ${cmd.action}`);
-        }
-      }
-
-      default:
-        return { rows: [] };
     }
+
+    case "mysql": {
+      const [result] = await this.mysqlConn!.execute(sqlOrOp, params);
+      if (Array.isArray(result)) {
+        return { rows: result };
+      } else {
+        return { rows: [], changes: result.affectedRows };
+      }
+    }
+
+    case "postgres": {
+      const res = await this.pgClient!.query(sqlOrOp, params);
+      return { rows: res.rows, changes: res.rowCount };
+    }
+
+    case "mongodb": {
+      if (!this.mongoDb) throw new Error("MongoDB not initialized");
+      const cmd = JSON.parse(sqlOrOp);
+      const col = this.mongoDb.collection(cmd.collection);
+      switch (cmd.action) {
+        case "find":
+          return { rows: await col.find(cmd.filter || {}).toArray() };
+        case "insert":
+          await col.insertMany(cmd.data);
+          return { rows: cmd.data };
+        case "update":
+          const updateResult = await col.updateMany(cmd.filter, { $set: cmd.data });
+          return { rows: [], changes: updateResult.modifiedCount };
+        case "delete":
+          const deleteResult = await col.deleteMany(cmd.filter);
+          return { rows: [], changes: deleteResult.deletedCount };
+        default:
+          throw new Error(`Unknown Mongo action ${cmd.action}`);
+      }
+    }
+
+    default:
+      throw new Error(`Unsupported driver: ${this.driver}`);
   }
+}
 
   async close() {
     switch (this.driver) {
@@ -143,12 +159,13 @@ export class DBAdapter {
         return await this.pgClient!.query(
           `SELECT column_name, data_type, is_nullable
            FROM information_schema.columns
-           WHERE table_name = $1`, [table]
-        ).then(r => r.rows);
+           WHERE table_name = $1`,
+          [table]
+        ).then((r) => r.rows);
       case "mongodb":
         if (!this.mongoDb) return [];
         const sample = await this.mongoDb.collection(table).findOne({});
-        return sample ? Object.keys(sample).map(k => ({ name: k })) : [];
+        return sample ? Object.keys(sample).map((k) => ({ name: k })) : [];
       default:
         return [];
     }

@@ -2,7 +2,7 @@
   "User": {
     "fields": {
       "id": {
-        "type": "number | undefined | undefined",
+        "type": "number | undefined",
         "meta": {
           "index": true,
           "auto": true
@@ -13,18 +13,18 @@
         "meta": {}
       },
       "lastname": {
-        "type": "string | undefined | undefined",
+        "type": "string | undefined",
         "meta": {}
       },
       "posts": {
-        "type": "Post[] | undefined | undefined",
+        "type": "Post[] | undefined",
         "meta": {
           "relation onetomany": "Post",
           "foreignKey": "userId"
         }
       },
       "profile": {
-        "type": "Profile | undefined | undefined",
+        "type": "Profile | undefined",
         "meta": {
           "relationship onetoone": "Profile",
           "foreignKey": "userId"
@@ -37,7 +37,7 @@
   "Post": {
     "fields": {
       "id": {
-        "type": "number | undefined | undefined",
+        "type": "number | undefined",
         "meta": {
           "index": true,
           "auto": true
@@ -48,11 +48,11 @@
         "meta": {}
       },
       "userId": {
-        "type": "number | undefined | undefined",
+        "type": "number | undefined",
         "meta": {}
       },
       "user": {
-        "type": "User | undefined | undefined",
+        "type": "User | undefined",
         "meta": {
           "relation manytoone": "User",
           "foreignKey": "userId"
@@ -65,7 +65,7 @@
   "Todo": {
     "fields": {
       "id": {
-        "type": "number | undefined | undefined",
+        "type": "number | undefined",
         "meta": {
           "index": true,
           "auto": true
@@ -90,14 +90,14 @@
   "Profile": {
     "fields": {
       "id": {
-        "type": "number | undefined | undefined",
+        "type": "number | undefined",
         "meta": {
           "index": true,
           "auto": true
         }
       },
       "user": {
-        "type": "User | undefined | undefined",
+        "type": "User | undefined",
         "meta": {
           "relationship onetoone": "User",
           "foreignKey": "userId"
@@ -105,10 +105,7 @@
       },
       "userId": {
         "type": "number",
-        "meta": {
-          "index": true,
-          "auto": true
-        }
+        "meta": {}
       }
     },
     "relations": [],

@@ -1,10 +1,8 @@
-import { Migrator } from "./migrator";
-import { QueryBuilder } from "./queryBuilder";
+import { Migrator } from "./migrator.js";
+import { QueryBuilder } from "./queryBuilder.js";
 import fs from "fs";
 import path from "path";
-import generateSchema from "./generator";
 export async function createModelFactory(adapter) {
-    await generateSchema();
     const schemaPath = path.join(process.cwd(), "schema", "generated.json");
     const schemas = fs.existsSync(schemaPath)
         ? JSON.parse(fs.readFileSync(schemaPath, "utf8"))
@@ -24,15 +22,15 @@ export async function createModelFactory(adapter) {
             const keys = Object.keys(filter);
             if (!keys.length)
                 throw new Error("Filter must contain at least one field");
-            // For SQL, placeholder = ?, For Mongo, we use object filter
             if (adapter.driver === "mongodb") {
                 return { mongoFilter: filter };
             }
-            else {
-                const clause = keys.map((k) => `${k} = ?`).join(" AND ");
-                const params = keys.map((k) => filter[k]);
-                return { clause, params };
-            }
+            // For SQL adapters
+            const clause = keys
+                .map((k, i) => `${k} = ${adapter.driver === "postgres" ? `$${i + 1}` : "?"}`)
+                .join(" AND ");
+            const params = keys.map((k) => filter[k]);
+            return { clause, params };
         }
         return {
             async insert(item) {
@@ -96,6 +94,7 @@ export async function createModelFactory(adapter) {
                 else {
                     const { clause, params } = buildWhereClause(filter);
                     const sql = `DELETE FROM ${tableName} WHERE ${clause}`;
+                    console.log("DELETE SQL:", sql, "PARAMS:", params);
                     await adapter.exec(sql, params);
                 }
                 return filter;

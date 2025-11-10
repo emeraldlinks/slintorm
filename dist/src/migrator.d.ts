@@ -1,4 +1,4 @@
-import type { ExecFn } from "./types";
+import type { ExecFn } from "./types.ts";
 interface FieldInfo {
     type: string;
     meta?: Record<string, string | boolean>;

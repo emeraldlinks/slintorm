@@ -7,13 +7,14 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "rootDir": ".", // keep root as project root
+    "rootDir": ".",                 
     "outDir": "dist",
     "declaration": true,
-    "declarationDir": "dist", // all .d.ts files go to dist
+    "declarationDir": "dist",   
     "types": ["node"],
-    "jsx": "preserve",
-    "jsxImportSource": "ripple"
   },
-  "include": ["packages/**/*.ts", "packages/**/*.d.ts", "src", "example.ts"]
+  "include": [
+    "src"
+  ]
+  
 }

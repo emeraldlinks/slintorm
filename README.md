@@ -4,14 +4,12 @@
 ```ts
 
 
-
-import { createORM } from "./index";
-
+import ORMManager from "slintorm";
 
 // ==== MODEL INTERFACES (UNCHANGED) ====
 interface Post {
   // @index;auto
-  id?: number; 
+  id?: number;
   title: string;
   userId?: number;
   // @relation manytoone:User;foreignKey:userId
@@ -35,7 +33,7 @@ interface Profile {
   // @relationship onetoone:User;foreignKey:userId
   user?: User;
   // @index;auto
-  userId: number
+  userId: number;
 }
 
 interface Todo {
@@ -44,48 +42,56 @@ interface Todo {
   title: string;
   detail: string;
   createdAt: string;
-} 
-
+}
 
 // ==== MAIN FUNCTION ====
 async function main() {
   // Initialize ORM
-    const orm = await createORM({
-    driver: "postgres",
-    databaseUrl: "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
-  });
-
-  //   const orm = await createORM({
-  //   driver: "sqlite",
-  //   databaseUrl: "./test.db",
+  // const orm = await createORM({
+  //   driver: "postgres",
+  //   databaseUrl:
+  //     "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
   // });
 
+    const orm = new ORMManager({
+    driver: "sqlite",
+    databaseUrl: "./test.db",
+    dir: "/models"
+  });
+  
 
   // Define models
-  const Users = orm.defineModel<User>("users", "User");
-  const Posts = orm.defineModel<Post>("post", "Post");
-  const Todos = orm.defineModel<Todo>("todo", "Todo");
-  const Profiles = orm.defineModel<Profile>("profile", "Profile");
+  const Users = await orm.defineModel<User>("users", "User");
+  const Posts = await orm.defineModel<Post>("post", "Post");
+  const Todos = await orm.defineModel<Todo>("todo", "Todo");
+  const Profiles = await orm.defineModel<Profile>("profile", "Profile");
 
   console.log("=== ORM Example ===");
 
   // ==== CREATE TODOS ====
-  await Todos.insert({ title: "To watch plates", detail: "Wash all plates", createdAt: new Date().toISOString() });
+  await Todos.insert({
+    title: "To watch plates",
+    detail: "Wash all plates",
+    createdAt: new Date().toISOString(),
+  });
   console.log("todos:", await Todos.getAll());
 
   // ==== CREATE USERS AND POSTS ====
-  const newUser = await Users.insert({ name: "Catherine", lastname: "Christopher" });
-  console.log("newUser: ", newUser)
+  const newUser = await Users.insert({
+    name: "Catherine",
+    lastname: "Christopher",
+  });
+  console.log("newUser: ", newUser);
 
   const newPost = await Posts.insert({ title: "Hello Boys", userId: 2 });
-  console.log("newPost: ", newPost)
+  console.log("newPost: ", newPost);
 
   // const oo = await Users.query().preload("posts").first()
   // console.log("profile: ", oo)
-  
+
   // ==== CREATE PROFILE FOR USER (one-to-one) ====
   const profile = await Profiles.insert({ userId: 2 });
-  
+
   // ==== FETCH USER WITH POSTS AND PROFILE ====
   const userWithRelations = await Users.query()
     .preload("posts")
@@ -96,7 +102,7 @@ async function main() {
   console.dir(userWithRelations, { depth: null });
 
   // ==== FETCH POST WITH USER RELATION ====
-  console.log("posts with user =====>")
+  console.log("posts with user =====>");
   const postWithUser = await Posts.query()
     .preload("user")
     .preload("user.posts")
@@ -117,5 +123,6 @@ async function main() {
 
 // ==== RUN MAIN ====
 main().catch(console.error);
+
 
 ```

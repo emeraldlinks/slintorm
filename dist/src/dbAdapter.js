@@ -33,7 +33,9 @@ export class DBAdapter {
                 break;
             }
             case "postgres": {
-                this.pgClient = new PgClient({ connectionString: this.config.databaseUrl });
+                this.pgClient = new PgClient({
+                    connectionString: this.config.databaseUrl,
+                });
                 await this.pgClient.connect();
                 break;
             }
@@ -130,12 +132,12 @@ export class DBAdapter {
             case "postgres":
                 return await this.pgClient.query(`SELECT column_name, data_type, is_nullable
            FROM information_schema.columns
-           WHERE table_name = $1`, [table]).then(r => r.rows);
+           WHERE table_name = $1`, [table]).then((r) => r.rows);
             case "mongodb":
                 if (!this.mongoDb)
                     return [];
                 const sample = await this.mongoDb.collection(table).findOne({});
-                return sample ? Object.keys(sample).map(k => ({ name: k })) : [];
+                return sample ? Object.keys(sample).map((k) => ({ name: k })) : [];
             default:
                 return [];
         }

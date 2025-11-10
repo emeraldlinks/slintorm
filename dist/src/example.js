@@ -1,26 +1,39 @@
-import { createORM } from "./index";
+import ORMManager from "./index";
 // ==== MAIN FUNCTION ====
 async function main() {
     // Initialize ORM
-    const orm = await createORM({
-        driver: "postgres",
-        databaseUrl: "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
-    });
-    //   const orm = await createORM({
-    //   driver: "sqlite",
-    //   databaseUrl: "./test.db",
+    // const orm = await createORM({
+    //   driver: "postgres",
+    //   databaseUrl:
+    //     "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
+    // }, );
+    //   const orm = new ORMManager({
+    //   driver: "postgres",
+    //   databaseUrl: "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
+    //   dir: "/models",
     // });
+    const orm = new ORMManager({
+        driver: "sqlite",
+        databaseUrl: "./test.db",
+    });
     // Define models
-    const Users = orm.defineModel("users", "User");
-    const Posts = orm.defineModel("post", "Post");
-    const Todos = orm.defineModel("todo", "Todo");
-    const Profiles = orm.defineModel("profile", "Profile");
+    const Users = await orm.defineModel("users", "User");
+    const Posts = await orm.defineModel("post", "Post");
+    const Todos = await orm.defineModel("todo", "Todo");
+    const Profiles = await orm.defineModel("profile", "Profile");
     console.log("=== ORM Example ===");
     // ==== CREATE TODOS ====
-    await Todos.insert({ title: "To watch plates", detail: "Wash all plates", createdAt: new Date().toISOString() });
+    await Todos.insert({
+        title: "To watch plates",
+        detail: "Wash all plates",
+        createdAt: new Date().toISOString(),
+    });
     console.log("todos:", await Todos.getAll());
     // ==== CREATE USERS AND POSTS ====
-    const newUser = await Users.insert({ name: "Catherine", lastname: "Christopher" });
+    const newUser = await Users.insert({
+        name: "Catherine",
+        lastname: "Christopher",
+    });
     console.log("newUser: ", newUser);
     const newPost = await Posts.insert({ title: "Hello Boys", userId: 2 });
     console.log("newPost: ", newPost);
@@ -33,7 +46,7 @@ async function main() {
         .preload("posts")
         .preload("profile")
         .preload("posts.user")
-        .first();
+        .get();
     console.dir(userWithRelations, { depth: null });
     // ==== FETCH POST WITH USER RELATION ====
     console.log("posts with user =====>");
@@ -42,7 +55,7 @@ async function main() {
         .preload("user.posts")
         .preload("user.profile")
         .preload("user.posts.user")
-        .first();
+        .get();
     console.dir(postWithUser, { depth: null });
     // ==== DELETE EXAMPLE ====
     try {

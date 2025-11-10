@@ -66,7 +66,7 @@ export class QueryBuilder<T extends Record<string, any>> {
   private table: string;
   private exec: ExecFn;
   private orm: { dialect?: string } | undefined;
-  public modelName: string;
+  private modelName: string;
 
   constructor(table: string, exec: ExecFn, orm?: { dialect?: string }) {
     this.table = table;
@@ -189,8 +189,9 @@ export class QueryBuilder<T extends Record<string, any>> {
   const modelSchema = schema[this.modelName];
   if (!modelSchema) return rows;
 
-  const dialect = Dialects[this.orm?.dialect || "sqlite"]; // ✅ use same dialect everywhere
+  const dialect = Dialects[this.orm?.dialect || "sqlite"];
 
+  // Collect relation metadata
   const relationFields: RelationMeta[] = [];
   for (const [field, fieldDef] of Object.entries(modelSchema.fields)) {
     const meta = (fieldDef as any)?.meta;
@@ -203,13 +204,14 @@ export class QueryBuilder<T extends Record<string, any>> {
         const foreignKey = meta.foreignKey as string | undefined;
         const relatedKey = meta.relatedKey as string | undefined;
         const through = meta.through as string | undefined;
-
         if (!targetModel) continue;
+
         relationFields.push({ fieldName: field, kind, targetModel, foreignKey, relatedKey, through });
       }
     }
   }
 
+  // Group nested preloads
   const grouped: Record<string, string[]> = {};
   for (const preload of this._preloads) {
     const [root, ...rest] = preload.split(".");
@@ -230,37 +232,15 @@ export class QueryBuilder<T extends Record<string, any>> {
     switch (kind) {
       case "onetomany": {
         if (!foreignKey) break;
-        const ids = rows.map(r => r.id).filter(Boolean);
-        if (!ids.length) break;
+        const parentIds = rows.map(r => r.id).filter(Boolean);
+        if (!parentIds.length) break;
 
-        const placeholders = ids.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+        const placeholders = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
         const sql = `SELECT * FROM ${dialect.quoteIdentifier(targetSchema.table)} WHERE ${dialect.quoteIdentifier(foreignKey)} IN (${placeholders})`;
-        const relatedRows = (await this.exec(sql, ids)).rows || [];
+        const relatedRows = (await this.exec(sql, parentIds)).rows || [];
 
         for (const row of rows) {
           row[root] = relatedRows.filter(rel => rel[foreignKey] === row.id);
-        }
-
-        if (nestedPreloads.length) {
-          const qb = new QueryBuilder(targetSchema.table, this.exec, this.orm);
-          qb._preloads = nestedPreloads;
-          await qb.applyPreloads(relatedRows);
-        }
-        break;
-      }
-
-      case "manytoone":
-      case "onetoone": {
-        if (!foreignKey) break;
-        const foreignIds = rows.map(r => r[foreignKey]).filter(Boolean);
-        if (!foreignIds.length) break;
-
-        const placeholders = foreignIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
-        const sql = `SELECT * FROM ${dialect.quoteIdentifier(targetSchema.table)} WHERE id IN (${placeholders})`;
-        const relatedRows = (await this.exec(sql, foreignIds)).rows || [];
-
-        for (const row of rows) {
-          row[root] = relatedRows.find(rel => rel.id === row[foreignKey]) || null;
         }
 
         if (nestedPreloads.length && relatedRows.length) {
@@ -271,15 +251,61 @@ export class QueryBuilder<T extends Record<string, any>> {
         break;
       }
 
+      case "manytoone":
+case "onetoone": {
+  if (!foreignKey) break;
+
+  let relatedRows: any[] = []; // declare outside so available for nested preloads
+
+  // Check if foreign key is on child (common case)
+  const childFKOnRow = rows[0].hasOwnProperty(foreignKey);
+
+  if (childFKOnRow) {
+    // Child row has foreignKey → fetch parent
+    const parentIds = rows.map(r => r[foreignKey]).filter(Boolean);
+    if (!parentIds.length) break;
+
+    const placeholders = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+    const sql = `SELECT * FROM ${dialect.quoteIdentifier(targetSchema.table)} WHERE id IN (${placeholders})`;
+    relatedRows = (await this.exec(sql, parentIds)).rows || [];
+
+    for (const row of rows) {
+      row[root] = relatedRows.find(rel => rel.id === row[foreignKey]) || null;
+    }
+  } else {
+    // Parent row has foreignKey → fetch child
+    const parentIds = rows.map(r => r.id).filter(Boolean);
+    if (!parentIds.length) break;
+
+    const placeholders = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+    const sql = `SELECT * FROM ${dialect.quoteIdentifier(targetSchema.table)} WHERE ${dialect.quoteIdentifier(foreignKey)} IN (${placeholders})`;
+    relatedRows = (await this.exec(sql, parentIds)).rows || [];
+
+    for (const row of rows) {
+      row[root] = relatedRows.find(rel => rel[foreignKey] === row.id) || null;
+    }
+  }
+
+  // Apply nested preloads
+  if (nestedPreloads.length && relatedRows.length) {
+    const qb = new QueryBuilder(targetSchema.table, this.exec, this.orm);
+    qb._preloads = nestedPreloads;
+    await qb.applyPreloads(relatedRows);
+  }
+
+  break;
+}
+
+
       case "manytomany": {
         if (!foreignKey || !relatedKey || !through) break;
 
-        const ids = rows.map(r => r.id).filter(Boolean);
-        if (!ids.length) break;
+        const parentIds = rows.map(r => r.id).filter(Boolean);
+        if (!parentIds.length) break;
 
-        const placeholders = ids.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+        const placeholders = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
         const junctionSql = `SELECT * FROM ${dialect.quoteIdentifier(through)} WHERE ${dialect.quoteIdentifier(foreignKey)} IN (${placeholders})`;
-        const junctionRows = (await this.exec(junctionSql, ids)).rows || [];
+        const junctionRows = (await this.exec(junctionSql, parentIds)).rows || [];
 
         const targetIds = [...new Set(junctionRows.map(j => j[relatedKey]))];
         if (!targetIds.length) break;
@@ -305,6 +331,7 @@ export class QueryBuilder<T extends Record<string, any>> {
 
   return rows;
 }
+
 
 
 }

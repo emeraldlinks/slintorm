@@ -22,7 +22,14 @@ export default async function generateSchema(srcGlob = "src/**/*.ts") {
             const relations = [];
             for (const prop of intf.getProperties()) {
                 const propName = prop.getName();
-                const type = prop.getType().getText();
+                let typeNode = prop.getTypeNode();
+                let type = typeNode
+                    ? typeNode.getText()
+                    : prop.getType().getText();
+                // Normalize and clean verbose import paths like import("...").Task
+                type = type.replace(/import\(["'][^"']+["']\)\./g, "");
+                // Optional cleanup for edge cases like 'typeof import("...").default'
+                type = type.replace(/typeof\s+/, "");
                 const isOptional = prop.hasQuestionToken();
                 const tsType = isOptional ? `${type} | undefined` : type;
                 let relationComment = "";
@@ -30,23 +37,26 @@ export default async function generateSchema(srcGlob = "src/**/*.ts") {
                 // ==== Parse JSDoc or inline comments ====
                 const jsDocs = prop.getJsDocs();
                 if (jsDocs.length)
-                    relationComment = jsDocs.map(j => j.getComment() || "").join(" ");
+                    relationComment = jsDocs.map((j) => j.getComment() || "").join(" ");
                 if (!relationComment) {
                     const trailingMatch = prop.getText().match(/\/\/\s*@(.+)/);
                     if (trailingMatch)
                         relationComment = trailingMatch[1];
                 }
                 if (!relationComment) {
-                    const leadingComments = prop.getLeadingCommentRanges().map(r => r.getText()).join(" ");
+                    const leadingComments = prop
+                        .getLeadingCommentRanges()
+                        .map((r) => r.getText())
+                        .join(" ");
                     const leadingMatch = leadingComments.match(/@([^\n\r*]+)/);
                     if (leadingMatch)
                         relationComment = leadingMatch[1].trim();
                 }
                 // ==== Parse directives ====
                 if (relationComment) {
-                    const parts = relationComment.split(";").map(p => p.trim());
+                    const parts = relationComment.split(";").map((p) => p.trim());
                     for (const part of parts) {
-                        const [k, v] = part.split(":").map(x => x.trim());
+                        const [k, v] = part.split(":").map((x) => x.trim());
                         if (!v)
                             directives[k] = true;
                         else
@@ -55,14 +65,19 @@ export default async function generateSchema(srcGlob = "src/**/*.ts") {
                 }
                 // ==== Handle @relation ====
                 if (directives["relation"]) {
-                    const relationParts = directives["relation"].toString().split(";").map(p => p.trim());
+                    const relationParts = directives["relation"]
+                        .toString()
+                        .split(";")
+                        .map((p) => p.trim());
                     const [kindTarget, ...extras] = relationParts;
-                    const [kind, targetModelRaw] = kindTarget.split(":").map(x => x.trim());
+                    const [kind, targetModelRaw] = kindTarget
+                        .split(":")
+                        .map((x) => x.trim());
                     const targetModel = targetModelRaw || propName.replace(/s$/, "");
                     let foreignKey = "";
                     let through = "";
                     for (const extra of extras) {
-                        const [k, v] = extra.split(":").map(x => x.trim());
+                        const [k, v] = extra.split(":").map((x) => x.trim());
                         if (k === "foreignKey" && v)
                             foreignKey = v;
                         if (k === "through" && v)
@@ -103,7 +118,7 @@ export default async function generateSchema(srcGlob = "src/**/*.ts") {
     // ==== 3. Map defineModel calls ====
     const output = {};
     for (const sf of files) {
-        sf.forEachDescendant(node => {
+        sf.forEachDescendant((node) => {
             if (node.getKind() === SyntaxKind.CallExpression) {
                 const call = node.asKind(SyntaxKind.CallExpression);
                 const expr = call.getExpression().getText();
@@ -120,7 +135,11 @@ export default async function generateSchema(srcGlob = "src/**/*.ts") {
                     const intf = interfaces.get(modelName);
                     if (!intf)
                         return;
-                    output[modelName] = { fields: intf.fields, relations: intf.relations, table: tableName };
+                    output[modelName] = {
+                        fields: intf.fields,
+                        relations: intf.relations,
+                        table: tableName,
+                    };
                 }
             }
         });
