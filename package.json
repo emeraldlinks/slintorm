@@ -1,8 +1,8 @@
 {
   "name": "slintorm",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Minimal fully typed orm for typescript",
-  "license": "ISC",
+  "license": "MIT",
   "author": "Joseph Christopher",
   "type": "module",
   "homepage": "https://github.com/emeraldlinks/slintorm",

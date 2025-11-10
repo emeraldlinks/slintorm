@@ -1,128 +1,156 @@
-# slintorm
+
+  # Simple TypeScript ORM
+
+  A lightweight TypeScript ORM for SQLite, PostgreSQL, and MySQL with support for:
+
+  - Auto table creation and migration
+  - One-to-one, one-to-many, and many-to-many relationships
+  - Timestamps and default values
+  - Query builder with preloads, filters, ordering, and limits
+  - Type-safe model definitions
+
+  ---
+
+  ## Installation
+
+  ```bash
+  npm install slintorm
+```
+
+### Usage
+
+```ts
+
+import ORMManager, { createORM } from "slintorm";
+
+// Initialize ORM
+const orm = new ORMManager({
+  driver: "sqlite",
+  databaseUrl: "./test.db",
+});
+
+// Define models
+const Users = await orm.defineModel<User>("users", "User");
+const Posts = await orm.defineModel<Post>("post", "Post");
+const Todos = await orm.defineModel<Todo>("todo", "Todo");
+const Profiles = await orm.defineModel<Profile>("profile", "Profile");
+const Tasks = await orm.defineModel<Task>("tasks", "Task");
+const Teams = await orm.defineModel<Team>("team", "Team");
+
+
+```
+
+
+
+### Model Interfaces
 
 
 ```ts
 
 
-import ORMManager from "slintorm";
-
-// ==== MODEL INTERFACES (UNCHANGED) ====
-interface Post {
-  // @index;auto
-  id?: number;
-  title: string;
-  userId?: number;
-  // @relation manytoone:User;foreignKey:userId
-  user?: User;
-}
-
 interface User {
-  // @index;auto
-  id?: number;
+  id?: number; // @index;auto
   name: string;
   lastname?: string;
-  // @relation onetomany:Post;foreignKey:userId
-  posts?: Post[];
-  // @relationship onetoone:Profile;foreignKey:userId
-  profile?: Profile;
+  posts?: Post[]; // @relation onetomany:Post;foreignKey:userId
+  profile?: Profile; // @relationship onetoone:Profile;foreignKey:userId
+}
+
+interface Post {
+  id?: number; // @index;auto
+  title: string;
+  userId?: number;
+  user?: User; // @relation manytoone:User;foreignKey:userId
 }
 
 interface Profile {
-  // @index;auto
-  id?: number;
-  // @relationship onetoone:User;foreignKey:userId
-  user?: User;
-  // @index;auto
+  id?: number; // @index;auto
+  user?: User; // @relationship onetoone:User;foreignKey:userId
   userId: number;
 }
 
 interface Todo {
-  // @index;auto
-  id?: number;
+  id?: number; // @index;auto
   title: string;
   detail: string;
   createdAt: string;
 }
 
-// ==== MAIN FUNCTION ====
-async function main() {
-  // Initialize ORM
-  // const orm = await createORM({
-  //   driver: "postgres",
-  //   databaseUrl:
-  //     "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
-  // });
-
-    const orm = new ORMManager({
-    driver: "sqlite",
-    databaseUrl: "./test.db",
-    dir: "/models"
-  });
-  
-
-  // Define models
-  const Users = await orm.defineModel<User>("users", "User");
-  const Posts = await orm.defineModel<Post>("post", "Post");
-  const Todos = await orm.defineModel<Todo>("todo", "Todo");
-  const Profiles = await orm.defineModel<Profile>("profile", "Profile");
-
-  console.log("=== ORM Example ===");
-
-  // ==== CREATE TODOS ====
-  await Todos.insert({
-    title: "To watch plates",
-    detail: "Wash all plates",
-    createdAt: new Date().toISOString(),
-  });
-  console.log("todos:", await Todos.getAll());
-
-  // ==== CREATE USERS AND POSTS ====
-  const newUser = await Users.insert({
-    name: "Catherine",
-    lastname: "Christopher",
-  });
-  console.log("newUser: ", newUser);
-
-  const newPost = await Posts.insert({ title: "Hello Boys", userId: 2 });
-  console.log("newPost: ", newPost);
-
-  // const oo = await Users.query().preload("posts").first()
-  // console.log("profile: ", oo)
-
-  // ==== CREATE PROFILE FOR USER (one-to-one) ====
-  const profile = await Profiles.insert({ userId: 2 });
-
-  // ==== FETCH USER WITH POSTS AND PROFILE ====
-  const userWithRelations = await Users.query()
-    .preload("posts")
-    .preload("profile")
-    .preload("posts.user")
-    .first();
-
-  console.dir(userWithRelations, { depth: null });
-
-  // ==== FETCH POST WITH USER RELATION ====
-  console.log("posts with user =====>");
-  const postWithUser = await Posts.query()
-    .preload("user")
-    .preload("user.posts")
-    .preload("user.profile")
-    .preload("user.posts.user")
-    .first();
-  console.dir(postWithUser, { depth: null });
-
-  // ==== DELETE EXAMPLE ====
-  try {
-    await Posts.delete({ id: 3 });
-  } catch (err) {
-    console.log("Delete error:", err);
-  }
-
-  console.log("=== Done ===");
+interface Task {
+  id?: number; // @index;auto
+  title: string;
+  detail: string;
+  createdAt: string;
 }
 
-// ==== RUN MAIN ====
-main().catch(console.error);
+interface Team {
+  id?: number; // @index;auto
+  title: string;
+  detail: string;
+  open?: boolean;
+  tested?: boolean;
+}
+
 
 
 ```
+
+### Basic CRUD Examples
+
+
+```ts
+// Insert
+await Todos.insert({
+  title: "To watch plates",
+  detail: "Wash all plates",
+  createdAt: new Date().toISOString(),
+});
+
+// Fetch all
+const allTodos = await Todos.getAll();
+
+// Fetch one
+const user = await Users.get({ id: 1 });
+
+// Update
+await Users.update({ id: 1 }, { name: "Amike Catherine" });
+
+// Update instance
+const fetchedUser = await Users.get({ id: 1 });
+await fetchedUser?.update({ name: "Amike Egwamene" });
+
+// Delete
+await Posts.delete({ id: 3 });
+
+
+```
+
+
+### Query Builder
+
+```ts
+const userWithRelations = await Users.query()
+  .preload("posts")
+  .preload("profile")
+  .first("id = 2");
+
+const postWithUser = await Posts.query()
+  .preload("user")
+  .preload("user.posts")
+  .preload("user.profile")
+  .get();
+
+
+```
+
+
+----
+#### Relationships
+
+* One-to-many: @relation onetomany:Post;foreignKey:userId
+
+* Many-to-one: @relation manytoone:User;foreignKey:userId
+
+* One-to-one: @relationship onetoone:Profile;foreignKey:userId
+
+* Many-to-many: Use through table in schema metadata

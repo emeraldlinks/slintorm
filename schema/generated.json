@@ -110,5 +110,59 @@
     },
     "relations": [],
     "table": "profile"
+  },
+  "Task": {
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "meta": {
+          "index": true,
+          "auto": true
+        }
+      },
+      "title": {
+        "type": "string",
+        "meta": {}
+      },
+      "detail": {
+        "type": "string",
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string",
+        "meta": {}
+      }
+    },
+    "relations": [],
+    "table": "tasks"
+  },
+  "Team": {
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "meta": {
+          "index": true,
+          "auto": true
+        }
+      },
+      "title": {
+        "type": "string",
+        "meta": {}
+      },
+      "detail": {
+        "type": "string",
+        "meta": {}
+      },
+      "open": {
+        "type": "boolean | undefined",
+        "meta": {}
+      },
+      "tested": {
+        "type": "boolean | undefined",
+        "meta": {}
+      }
+    },
+    "relations": [],
+    "table": "team"
   }
 }

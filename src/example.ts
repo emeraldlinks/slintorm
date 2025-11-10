@@ -37,6 +37,24 @@ interface Todo {
   createdAt: string;
 }
 
+interface Task {
+  // @index;auto
+  id?: number;
+  title: string;
+  detail: string;
+  createdAt: string;
+}
+
+
+interface Team {
+  // @index;auto
+  id?: number;
+  title: string;
+  detail: string;
+  open?: boolean
+  tested?: boolean
+}
+
 // ==== MAIN FUNCTION ====
 async function main() {
   // Initialize ORM
@@ -63,6 +81,8 @@ async function main() {
   const Posts = await orm.defineModel<Post>("post", "Post");
   const Todos = await orm.defineModel<Todo>("todo", "Todo");
   const Profiles = await orm.defineModel<Profile>("profile", "Profile");
+  const Tasks = await orm.defineModel<Task>("tasks", "Task");
+  const Teams = await orm.defineModel<Team>("team", "Team");
 
   console.log("=== ORM Example ===");
 
@@ -128,7 +148,7 @@ async function main() {
 
   const upuser = await Users.get({id: 1})
   console.log("fetched updated user: ", upuser)
-  const updated = await upuser?.update({ name: "EntityWithUpdate" });
+  const updated = await upuser?.update({ name: "Amike Egwamene" });
 console.log("Updated user:", updated);
     
   } catch (err)  {
@@ -139,6 +159,17 @@ console.log("Updated user:", updated);
 
  const pp = await Profiles.query().preload("user").preload("user.profile").preload("user.profile.user").first("userId = 2")
  console.log("profile: ", pp)
+
+
+   await Teams.insert({
+    title: "To watch plates",
+    detail: "Wash all plates",
+  });
+  console.log("Teams:", await Teams.getAll());
+
+
+
+
   console.log("=== Done ===");
 }
 
