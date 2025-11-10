@@ -164,8 +164,10 @@ console.log("Updated user:", updated);
    await Teams.insert({
     title: "To watch plates",
     detail: "Wash all plates",
+    open: true,
+    tested: false
   });
-  console.log("Teams:", await Teams.getAll());
+  console.log("Teams:", await Teams.query().first());
 
 
 

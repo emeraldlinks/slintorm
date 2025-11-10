@@ -1,6 +1,6 @@
 import { DBAdapter } from "./dbAdapter.js";
 import { Migrator } from "./migrator.js";
-import { QueryBuilder } from "./queryBuilder.js";
+import { QueryBuilder, mapBooleans } from "./queryBuilder.js";
 import fs from "fs";
 import path from "path";
 import type { RelationDef, EntityWithUpdate } from "./types";
@@ -186,20 +186,14 @@ export async function createModelFactory(adapter: DBAdapter) {
         return filter;
       },
 
-      async get(filter: Partial<T>): Promise<EntityWithUpdate<T> | null> {
+     async get(filter: Partial<T>): Promise<EntityWithUpdate<T> | null> {
   await ensure();
 
-  if (!Object.keys(filter).length)
-    throw new Error("Get filter cannot be empty");
+  if (!Object.keys(filter).length) throw new Error("Get filter cannot be empty");
 
   let record: T | null = null;
-
   if (adapter.driver === "mongodb") {
-    const cmd = JSON.stringify({
-      collection: tableName,
-      action: "find",
-      filter,
-    });
+    const cmd = JSON.stringify({ collection: tableName, action: "find", filter });
     const res = await adapter.exec(cmd);
     record = res.rows[0] || null;
   } else {
@@ -211,16 +205,19 @@ export async function createModelFactory(adapter: DBAdapter) {
 
   if (!record) return null;
 
-  // Attach update method as non-enumerable
+  // Map boolean fields
+  record = mapBooleans(record, modelSchema.fields);
+
   Object.defineProperty(record, "update", {
     value: async (data: Partial<T>) => this.update(filter, data),
-    enumerable: false, // prevents showing in console.log or JSON
+    enumerable: false,
     configurable: true,
     writable: false,
   });
 
   return record as EntityWithUpdate<T>;
 }
+
  ,
 
 
@@ -228,17 +225,21 @@ export async function createModelFactory(adapter: DBAdapter) {
 
 
       async getAll() {
-        await ensure();
+  await ensure();
+  let rows: T[] = [];
 
-        if (adapter.driver === "mongodb") {
-          const cmd = JSON.stringify({ collection: tableName, action: "find" });
-          const res = await adapter.exec(cmd);
-          return res.rows;
-        } else {
-          const res = await adapter.exec(`SELECT * FROM ${tableName}`);
-          return res.rows;
-        }
-      },
+  if (adapter.driver === "mongodb") {
+    const cmd = JSON.stringify({ collection: tableName, action: "find" });
+    const res = await adapter.exec(cmd);
+    rows = res.rows;
+  } else {
+    const res = await adapter.exec(`SELECT * FROM ${tableName}`);
+    rows = res.rows;
+  }
+
+  return rows.map(row => mapBooleans(row, modelSchema.fields));
+}
+,
 
       query() {
         return new QueryBuilder<T>(tableName, adapter.exec.bind(adapter));

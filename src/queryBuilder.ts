@@ -10,6 +10,28 @@ type RelationMeta = {
   relatedKey?: string;   // only for manytomany
   through?: string;      // only for manytomany
 };
+ export function mapBooleans<T extends Record<string, any>>(
+  row: T,
+  schemaFields: Record<string, any>
+): T {
+  // Create a shallow copy with mutable type
+  const newRow = { ...row } as Record<string, any>;
+
+  for (const key of Object.keys(schemaFields)) {
+    const fieldType = String(schemaFields[key]?.type || "").toLowerCase();
+
+    // Detect "boolean" or union types containing it
+    if (fieldType.includes("boolean") && key in newRow) {
+      const val = newRow[key];
+      newRow[key] = val === 1 || val === true || val === "1" ? true : false;
+    }
+  }
+
+  return newRow as T;
+}
+
+
+
 
 
 let schemaCache: Record<string, any> | null = null;
@@ -171,8 +193,12 @@ export class QueryBuilder<T extends Record<string, any>> {
     const { sql, params } = this.buildSql();
     const res = await this.exec(sql, params);
     const rows = (res.rows || []) as T[];
-    if (this._preloads.length) return await this.applyPreloads(rows);
-    return rows;
+    if (this._preloads.length) {
+  const preloaded = await this.applyPreloads(rows);
+  return preloaded.map(r => mapBooleans(r, getSchema()[this.modelName].fields));
+}
+return rows.map(r => mapBooleans(r, getSchema()[this.modelName].fields));
+
   }
 
   async first(condition?: string): Promise<T | null> {
