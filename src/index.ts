@@ -26,6 +26,7 @@ export async function createORM(
 
 let schemaGenerated = false;
 
+
 export default class ORMManager {
   cfg: { driver?: string; databaseUrl?: string; dir?: string };
   adapter: DBAdapter;
@@ -38,7 +39,7 @@ export default class ORMManager {
     });
   }
 
-  async init() {
+  private async ensureSchema() {
     if (!schemaGenerated) {
       schemaGenerated = true;
       const schemaPath = getPaths(this.cfg.dir);
@@ -47,9 +48,20 @@ export default class ORMManager {
     }
   }
 
-  async defineModel<T extends Record<string, any>>(table: string, modelName: string) {
-    await this.init(); // <-- make sure schema exists before defining
+  async defineModel<T extends Record<string, any>>(
+    table: string,
+    modelName: string,
+    hooks?: {
+      onCreate?: (item: T) => Promise<void> | void;
+      onUpdate?: (oldData: T | null, newData: Partial<T>) => Promise<void> | void;
+      onDelete?: (deleted: Partial<T>) => Promise<void> | void;
+    }
+  ) {
+    await this.ensureSchema();
+
     const defineModel = await createModelFactory(this.adapter);
-    return defineModel<T>(table, modelName);
+    // Pass hooks directly to the model factory
+    return defineModel<T>(table, modelName, hooks);
   }
 }
+

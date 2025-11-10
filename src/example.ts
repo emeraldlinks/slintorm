@@ -82,7 +82,12 @@ async function main() {
   const Todos = await orm.defineModel<Todo>("todo", "Todo");
   const Profiles = await orm.defineModel<Profile>("profile", "Profile");
   const Tasks = await orm.defineModel<Task>("tasks", "Task");
-  const Teams = await orm.defineModel<Team>("team", "Team");
+   const Teams = await orm.defineModel<Team>("team", "Team", {
+    onCreate(item) {
+      console.log("new item: ", item)
+    },
+  });
+
 
   console.log("=== ORM Example ===");
 
@@ -161,13 +166,13 @@ console.log("Updated user:", updated);
  console.log("profile: ", pp)
 
 
-   await Teams.insert({
+  const nnew = await Teams.insert({
     title: "To watch plates",
     detail: "Wash all plates",
     open: true,
     tested: false
   });
-  console.log("Teams:", await Teams.query().first());
+  console.log("Teams:", nnew);
 
 
 
