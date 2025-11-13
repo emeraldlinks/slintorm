@@ -1,6 +1,7 @@
 import type { SQLExecResult, DBDriver } from "./types.ts";
 export declare class DBAdapter {
     driver?: DBDriver;
+    dir?: string;
     private sqliteDb;
     private mysqlConn;
     private pgClient;
@@ -12,6 +13,7 @@ export declare class DBAdapter {
         driver?: DBDriver;
         databaseUrl?: string;
         databaseName?: string;
+        dir?: string;
         [key: string]: any;
     });
     onConnect?: () => Promise<void>;

@@ -31,9 +31,10 @@ interface InterfaceInfo {
 }
 
 // ==== Main Generator ====
-export default async function generateSchema(srcGlob = "src/**/*.ts") {
+export default async function generateSchema(srcGlob: string) {
   const project = new Project({ tsConfigFilePath: "tsconfig.json" });
-  const files = project.getSourceFiles(srcGlob);
+  const ssfilePath = srcGlob + "/**/*.ts"
+  const files = project.getSourceFiles(ssfilePath);
   console.log(`Scanning ${files.length} source files...`);
 
   const interfaces = new Map<string, InterfaceInfo>();
@@ -49,14 +50,14 @@ export default async function generateSchema(srcGlob = "src/**/*.ts") {
         const propName = prop.getName();
         let typeNode = prop.getTypeNode();
         let type = typeNode
-  ? typeNode.getText()
-  : prop.getType().getText();
+          ? typeNode.getText()
+          : prop.getType().getText();
 
-// Normalize and clean verbose import paths like import("...").Task
-type = type.replace(/import\(["'][^"']+["']\)\./g, "");
+        // Normalize and clean verbose import paths like import("...").Task
+        type = type.replace(/import\(["'][^"']+["']\)\./g, "");
 
-// Optional cleanup for edge cases like 'typeof import("...").default'
-type = type.replace(/typeof\s+/, "");
+        // Optional cleanup for edge cases like 'typeof import("...").default'
+        type = type.replace(/typeof\s+/, "");
 
         const isOptional = prop.hasQuestionToken();
         const tsType = isOptional ? `${type} | undefined` : type;
@@ -185,7 +186,7 @@ type = type.replace(/typeof\s+/, "");
   }
 
   // ==== 4. Write schema ====
-  const outDir = path.join(process.cwd(), "schema");
+  const outDir = path.join(srcGlob, "schema");
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
   fs.writeFileSync(

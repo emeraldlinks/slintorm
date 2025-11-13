@@ -6,33 +6,74 @@ import path from "path";
 import type { RelationDef, EntityWithUpdate } from "./types";
 
 type ModelAPI<T extends Record<string, any>> = {
-  insert(item: T): Promise<T>;
-  update(filter: Partial<T>, partial: Partial<T>): Promise<T | null>;
+  /** Inserts a new record into the table */
+  insert(item: T): Promise<EntityWithUpdate<T> | null>;
+
+  /** Updates existing records matching the filter */
+  update(filter: Partial<T>, partial: Partial<T>): Promise<EntityWithUpdate<T> | null>;
+
+  /** Deletes records matching the filter */
   delete(filter: Partial<T>): Promise<Partial<T>>;
+
+  /** Retrieves a single record matching the filter */
   get(filter: Partial<T>): Promise<EntityWithUpdate<T> | null>;
+
+  /** Retrieves all records from the table */
   getAll(): Promise<T[]>;
+
+  /** Returns a query builder instance for custom queries */
   query(): QueryBuilder<T>;
+
+  /** Counts the number of records matching the filter */
   count(filter?: Partial<T>): Promise<number>;
+
+  /** Checks if any record exists matching the filter */
   exists(filter: Partial<T>): Promise<boolean>;
+
+  /** Deletes all records in the table */
   truncate(): Promise<void>;
+
+  /** Loads a single related record */
   withOne<K extends keyof T & string>(relation: K): Promise<any | null>;
+
+  /** Loads multiple related records */
   withMany<K extends keyof T & string>(relation: K): Promise<any[]>;
+
+  /** Preloads a relation for future queries */
   preload<K extends keyof T & string>(relation: K): Promise<void>;
 };
 
+/**
+ * Factory function to create models with CRUD and query capabilities.
+ *
+ * @param adapter - Database adapter instance
+ * @returns A function to define a model with optional hooks
+ */
 export async function createModelFactory(adapter: DBAdapter) {
-  const schemaPath = path.join(process.cwd(), "schema", "generated.json");
+  const schemaPath = path.join(adapter.dir!, "schema", "generated.json");
+
   const schemas: Record<string, any> = fs.existsSync(schemaPath)
     ? JSON.parse(fs.readFileSync(schemaPath, "utf8"))
     : {};
 
+  /**
+   * Defines a new model for a specific table.
+   *
+   * @param table - Database table name
+   * @param modelName - Optional name for the model
+   * @param hooks - Optional lifecycle hooks for CRUD operations
+   * @returns The model API for interacting with the table
+   */
   return function defineModel<T extends Record<string, any>>(
     table: string,
     modelName?: string,
     hooks?: {
-      onCreate?: (item: T) => Promise<void> | void;
-      onUpdate?: (oldData: T | null, newData: Partial<T>) => Promise<void> | void;
-      onDelete?: (deleted: Partial<T>) => Promise<void> | void;
+      onCreateBefore?: (item: T) => T | void | Promise<T | void>;
+      onCreateAfter?: (item: T) => void | Promise<void>;
+      onUpdateBefore?: (oldData: T | null, newData: Partial<T>) => Partial<T> | void | Promise<Partial<T> | void>;
+      onUpdateAfter?: (oldData: T | null, newData: Partial<T>) => void | Promise<void>;
+      onDeleteBefore?: (deleted: Partial<T>) => void | Promise<void>;
+      onDeleteAfter?: (deleted: Partial<T>) => void | Promise<void>;
     }
   ): ModelAPI<T> {
     const tableName = table;
@@ -40,81 +81,78 @@ export async function createModelFactory(adapter: DBAdapter) {
       modelName ||
       Object.keys(schemas).find((k) => schemas[k].table === tableName) ||
       tableName;
+    const sqlDriver = (adapter.driver === "sqlite" || adapter.driver === "postgres" || adapter.driver === "mysql")
+      ? adapter.driver
+      : undefined;
 
-    const modelSchema = schemas[name] || {
-      fields: {},
-      relations: [] as RelationDef[],
-    };
+    const modelSchema = schemas[name] || { fields: {}, relations: [] as RelationDef[] };
+    const driver = adapter.driver as "sqlite" | "postgres" | "mysql" | "mongodb" | undefined;
+    const migrator = new Migrator(adapter.exec.bind(adapter), sqlDriver);
 
-    const driver = adapter.driver as "sqlite" | "postgres" | "mysql" | undefined;
-    const migrator = new Migrator(adapter.exec.bind(adapter), driver!);
-
+    /** Ensures the table exists and is up-to-date */
     async function ensure() {
       await migrator.ensureTable(tableName, modelSchema.fields || {});
     }
 
+    /**
+     * Builds a WHERE clause for SQL queries
+     *
+     * @param filter - Object with key-value pairs to filter by
+     * @returns SQL clause and parameters
+     */
     function buildWhereClause(filter: Partial<T>) {
       const keys = Object.keys(filter);
       if (!keys.length) throw new Error("Filter must contain at least one field");
-
       if (adapter.driver === "mongodb") return { mongoFilter: filter };
-
       const clause = keys
-        .map(
-          (k, i) => `${k} = ${adapter.driver === "postgres" ? `$${i + 1}` : "?"}`
-        )
+        .map((k, i) => `${k} = ${driver === "postgres" ? `$${i + 1}` : "?"}`)
         .join(" AND ");
       const params = keys.map((k) => filter[k as keyof T]);
       return { clause, params };
     }
 
     return {
+      /** @inheritdoc */
       async insert(item: T) {
         await ensure();
-        if (adapter.driver === "mongodb") {
-          const cmd = JSON.stringify({
-            collection: tableName,
-            action: "insert",
-            data: [item],
-          });
-          await adapter.exec(cmd);
-        } else {
-          const cols = Object.keys(item).filter(
-            (c) => typeof item[c as keyof T] !== "object"
-          );
-          const values = cols.map((c) => item[c as keyof T]);
-          const placeholders = adapter.driver === "postgres"
-            ? cols.map((_, i) => `$${i + 1}`).join(", ")
-            : cols.map(() => "?").join(", ");
-          const wrap = (c: string) =>
-            adapter.driver === "mysql" ? `\`${c}\`` : `"${c}"`;
-          const sql = `INSERT INTO ${wrap(tableName)} (${cols
-            .map(wrap)
-            .join(",")}) VALUES (${placeholders})`;
-          await adapter.exec(sql, values);
+        if (hooks?.onCreateBefore) {
+          const modified = await hooks.onCreateBefore(item);
+          if (modified === undefined) return null;
+          item = modified;
         }
-
-        if (hooks?.onCreate) await hooks.onCreate(item);
-        return this.get(item);
+        let insertedId: number | undefined;
+        if (driver === "mongodb") {
+          await adapter.exec(JSON.stringify({ collection: tableName, action: "insert", data: [item] }));
+        } else {
+          const cols = Object.keys(item).filter((c) => typeof item[c as keyof T] !== "object");
+          const values = cols.map((c) => item[c as keyof T]);
+          const placeholders = driver === "postgres" ? cols.map((_, i) => `$${i + 1}`).join(", ") : cols.map(() => "?").join(", ");
+          const wrap = (c: string) => (driver === "mysql" ? `\`${c}\`` : `"${c}"`);
+          const sql = `INSERT INTO ${wrap(tableName)} (${cols.map(wrap).join(",")}) VALUES (${placeholders})`;
+          const result: any = await adapter.exec(sql, values);
+          if (driver === "sqlite" && result?.lastID) insertedId = result.lastID;
+          if (driver === "mysql" && result?.insertId) insertedId = result.insertId;
+          if (driver === "postgres" && result?.rows?.[0]?.id) insertedId = result.rows[0].id;
+          if (insertedId) (item as any).id = insertedId;
+        }
+        const inserted = await this.get(item);
+        if (hooks?.onCreateAfter && inserted) await hooks.onCreateAfter(inserted);
+        return inserted;
       },
 
-      async update(where: Partial<T>, data: Partial<T>): Promise<T | null> {
+      /** @inheritdoc */
+      async update(where: Partial<T>, data: Partial<T>) {
         await ensure();
         const before = await this.get(where);
-
-        if (!where || !Object.keys(where).length)
-          throw new Error("Update 'where' condition required");
-        if (!data || !Object.keys(data).length)
-          throw new Error("Update data cannot be empty");
-
-        if (adapter.driver === "mongodb") {
-          const cmd = JSON.stringify({
-            collection: tableName,
-            action: "update",
-            filter: where,
-            data,
-          });
-          await adapter.exec(cmd);
+        if (!where || !Object.keys(where).length) throw new Error("Update 'where' condition required");
+        if (!data || !Object.keys(data).length) throw new Error("Update data cannot be empty");
+        if (hooks?.onUpdateBefore) {
+          const modified = await hooks.onUpdateBefore(before, data);
+          if (modified === undefined) return before;
+          data = modified;
+        }
+        if (driver === "mongodb") {
+          await adapter.exec(JSON.stringify({ collection: tableName, action: "update", filter: where, data }));
         } else {
           const setCols = Object.keys(data);
           const setClause = setCols.map((c) => `${String(c)} = ?`).join(", ");
@@ -125,49 +163,38 @@ export async function createModelFactory(adapter: DBAdapter) {
           const sql = `UPDATE ${tableName} SET ${setClause} WHERE ${whereClause}`;
           await adapter.exec(sql, [...setValues, ...whereValues]);
         }
-
         const after = await this.get(where);
-        if (hooks?.onUpdate) await hooks.onUpdate(before, data);
+        if (hooks?.onUpdateAfter) await hooks.onUpdateAfter(before, after || data);
         return after;
       },
 
+      /** @inheritdoc */
       async delete(filter: Partial<T>) {
         await ensure();
-        if (!Object.keys(filter).length)
-          throw new Error("Delete filter cannot be empty");
-
+        if (!Object.keys(filter).length) throw new Error("Delete filter cannot be empty");
         const toDelete = await this.get(filter);
-
-        if (adapter.driver === "mongodb") {
-          const cmd = JSON.stringify({
-            collection: tableName,
-            action: "delete",
-            filter,
-          });
-          await adapter.exec(cmd);
+        if (hooks?.onDeleteBefore) {
+          const res = await hooks.onDeleteBefore(toDelete || filter);
+          if (res === undefined) return filter;
+        }
+        if (driver === "mongodb") {
+          await adapter.exec(JSON.stringify({ collection: tableName, action: "delete", filter }));
         } else {
           const { clause, params } = buildWhereClause(filter);
           const sql = `DELETE FROM ${tableName} WHERE ${clause}`;
           await adapter.exec(sql, params);
         }
-
-        if (hooks?.onDelete) await hooks.onDelete(toDelete || filter);
+        if (hooks?.onDeleteAfter) await hooks.onDeleteAfter(toDelete || filter);
         return filter;
       },
 
-      async get(filter: Partial<T>): Promise<EntityWithUpdate<T> | null> {
+      /** @inheritdoc */
+      async get(filter: Partial<T>) {
         await ensure();
-        if (!Object.keys(filter).length)
-          throw new Error("Get filter cannot be empty");
-
+        if (!Object.keys(filter).length) throw new Error("Get filter cannot be empty");
         let record: T | null = null;
-        if (adapter.driver === "mongodb") {
-          const cmd = JSON.stringify({
-            collection: tableName,
-            action: "find",
-            filter,
-          });
-          const res = await adapter.exec(cmd);
+        if (driver === "mongodb") {
+          const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "find", filter }));
           record = res.rows[0] || null;
         } else {
           const { clause, params } = buildWhereClause(filter);
@@ -175,54 +202,44 @@ export async function createModelFactory(adapter: DBAdapter) {
           const res = await adapter.exec(sql, params);
           record = res.rows[0] || null;
         }
-
         if (!record) return null;
         record = mapBooleans(record, modelSchema.fields);
-
         Object.defineProperty(record, "update", {
           value: async (data: Partial<T>) => this.update(filter, data),
           enumerable: false,
         });
-
         return record as EntityWithUpdate<T>;
       },
 
+      /** @inheritdoc */
       async getAll() {
         await ensure();
-        const res =
-          adapter.driver === "mongodb"
-            ? await adapter.exec(
-                JSON.stringify({ collection: tableName, action: "find" })
-              )
-            : await adapter.exec(`SELECT * FROM ${tableName}`);
+        const res = driver === "mongodb"
+          ? await adapter.exec(JSON.stringify({ collection: tableName, action: "find" }))
+          : await adapter.exec(`SELECT * FROM ${tableName}`);
         return res.rows.map((r: T) => mapBooleans(r, modelSchema.fields));
       },
 
+      /** @inheritdoc */
       query() {
         return new QueryBuilder<T>(tableName, adapter.exec.bind(adapter));
       },
 
+      /** @inheritdoc */
       async count(filter?: Partial<T>) {
         await ensure();
-        if (adapter.driver === "mongodb") {
-          const cmd = JSON.stringify({
-            collection: tableName,
-            action: "find",
-            filter: filter || {},
-          });
-          const res = await adapter.exec(cmd);
+        if (driver === "mongodb") {
+          const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "find", filter: filter || {} }));
           return res.rows.length;
         } else {
-          const where =
-            filter && Object.keys(filter).length
-              ? buildWhereClause(filter)
-              : { clause: "1=1", params: [] };
+          const where = filter && Object.keys(filter).length ? buildWhereClause(filter) : { clause: "1=1", params: [] };
           const sql = `SELECT COUNT(*) as count FROM ${tableName} WHERE ${where.clause}`;
           const res = await adapter.exec(sql, where.params);
           return res.rows[0]?.count ?? 0;
         }
       },
 
+      /** @inheritdoc */
       async exists(filter: Partial<T>) {
         await ensure();
         const { clause, params } = buildWhereClause(filter);
@@ -231,23 +248,26 @@ export async function createModelFactory(adapter: DBAdapter) {
         return !!res.rows.length;
       },
 
+      /** @inheritdoc */
       async truncate() {
         await ensure();
         await adapter.exec(`DELETE FROM ${tableName}`);
       },
 
+      /** @inheritdoc */
       async withOne<K extends keyof T & string>(_relation: K) {
         throw new Error("withOne not yet implemented");
       },
 
+      /** @inheritdoc */
       async withMany<K extends keyof T & string>(_relation: K) {
         throw new Error("withMany not yet implemented");
       },
 
+      /** @inheritdoc */
       async preload<K extends keyof T & string>(_relation: K) {
         return;
       },
     } as ModelAPI<T>;
   };
 }
-

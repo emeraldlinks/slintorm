@@ -5,6 +5,7 @@ import { Client as PgClient } from "pg";
 import { MongoClient } from "mongodb";
 export class DBAdapter {
     driver;
+    dir;
     sqliteDb = null;
     mysqlConn = null;
     pgClient = null;
@@ -15,6 +16,7 @@ export class DBAdapter {
     constructor(config = {}) {
         this.config = config;
         this.driver = config.driver ?? "sqlite";
+        this.dir = config.dir;
     }
     onConnect;
     async connect() {
@@ -62,23 +64,26 @@ export class DBAdapter {
                     return { rows };
                 }
                 else {
-                    await this.sqliteDb.run(sql, params);
-                    return { rows: [] };
+                    const result = await this.sqliteDb.run(sql, params);
+                    return { rows: [], changes: result.changes };
                 }
             }
             case "mysql": {
-                const [rows] = await this.mysqlConn.execute(sqlOrOp, params);
-                return { rows: Array.isArray(rows) ? rows : [] };
+                const [result] = await this.mysqlConn.execute(sqlOrOp, params);
+                if (Array.isArray(result)) {
+                    return { rows: result };
+                }
+                else {
+                    return { rows: [], changes: result.affectedRows };
+                }
             }
             case "postgres": {
                 const res = await this.pgClient.query(sqlOrOp, params);
-                return { rows: res.rows };
+                return { rows: res.rows, changes: res.rowCount };
             }
             case "mongodb": {
-                // For Mongo, sqlOrOp should be a JSON command object
                 if (!this.mongoDb)
                     throw new Error("MongoDB not initialized");
-                // naive: sqlOrOp as stringified JSON { collection, action, filter?, data? }
                 const cmd = JSON.parse(sqlOrOp);
                 const col = this.mongoDb.collection(cmd.collection);
                 switch (cmd.action) {
@@ -88,17 +93,17 @@ export class DBAdapter {
                         await col.insertMany(cmd.data);
                         return { rows: cmd.data };
                     case "update":
-                        await col.updateMany(cmd.filter, { $set: cmd.data });
-                        return { rows: [] };
+                        const updateResult = await col.updateMany(cmd.filter, { $set: cmd.data });
+                        return { rows: [], changes: updateResult.modifiedCount };
                     case "delete":
-                        await col.deleteMany(cmd.filter);
-                        return { rows: [] };
+                        const deleteResult = await col.deleteMany(cmd.filter);
+                        return { rows: [], changes: deleteResult.deletedCount };
                     default:
                         throw new Error(`Unknown Mongo action ${cmd.action}`);
                 }
             }
             default:
-                return { rows: [] };
+                throw new Error(`Unsupported driver: ${this.driver}`);
         }
     }
     async close() {

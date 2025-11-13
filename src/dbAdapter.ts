@@ -7,6 +7,7 @@ import { MongoClient, Db as MongoDb } from "mongodb";
 
 export class DBAdapter {
   driver?: DBDriver;
+  dir?: string;
   private sqliteDb: SQLiteDatabase | null = null;
   private mysqlConn: mysql.Connection | null = null;
   private pgClient: PgClient | null = null;
@@ -18,6 +19,7 @@ export class DBAdapter {
     driver?: DBDriver;
     databaseUrl?: string;
     databaseName?: string;
+    dir?: string;
     [key: string]: any;
   } = {};
 
@@ -26,11 +28,14 @@ export class DBAdapter {
       driver?: DBDriver;
       databaseUrl?: string;
       databaseName?: string;
+      dir?: string;
       [key: string]: any;
     } = {}
   ) {
     this.config = config;
     this.driver = config.driver ?? "sqlite";
+    this.dir = config.dir;
+
   }
 
   onConnect?: () => Promise<void>;
@@ -76,59 +81,59 @@ export class DBAdapter {
   }
 
   async exec(sqlOrOp: string, params: any[] = []): Promise<SQLExecResult> {
-  await this.connect();
+    await this.connect();
 
-  switch (this.driver) {
-    case "sqlite": {
-      const sql = sqlOrOp.trim();
-      if (sql.toUpperCase().startsWith("SELECT")) {
-        const rows = await this.sqliteDb!.all(sql, params);
-        return { rows };
-      } else {
-        const result = await this.sqliteDb!.run(sql, params);
-        return { rows: [], changes: result.changes };
+    switch (this.driver) {
+      case "sqlite": {
+        const sql = sqlOrOp.trim();
+        if (sql.toUpperCase().startsWith("SELECT")) {
+          const rows = await this.sqliteDb!.all(sql, params);
+          return { rows };
+        } else {
+          const result = await this.sqliteDb!.run(sql, params);
+          return { rows: [], changes: result.changes };
+        }
       }
-    }
 
-    case "mysql": {
-      const [result] = await this.mysqlConn!.execute(sqlOrOp, params);
-      if (Array.isArray(result)) {
-        return { rows: result };
-      } else {
-        return { rows: [], changes: result.affectedRows };
+      case "mysql": {
+        const [result] = await this.mysqlConn!.execute(sqlOrOp, params);
+        if (Array.isArray(result)) {
+          return { rows: result };
+        } else {
+          return { rows: [], changes: result.affectedRows };
+        }
       }
-    }
 
-    case "postgres": {
-      const res = await this.pgClient!.query(sqlOrOp, params);
-      return { rows: res.rows, changes: res.rowCount };
-    }
-
-    case "mongodb": {
-      if (!this.mongoDb) throw new Error("MongoDB not initialized");
-      const cmd = JSON.parse(sqlOrOp);
-      const col = this.mongoDb.collection(cmd.collection);
-      switch (cmd.action) {
-        case "find":
-          return { rows: await col.find(cmd.filter || {}).toArray() };
-        case "insert":
-          await col.insertMany(cmd.data);
-          return { rows: cmd.data };
-        case "update":
-          const updateResult = await col.updateMany(cmd.filter, { $set: cmd.data });
-          return { rows: [], changes: updateResult.modifiedCount };
-        case "delete":
-          const deleteResult = await col.deleteMany(cmd.filter);
-          return { rows: [], changes: deleteResult.deletedCount };
-        default:
-          throw new Error(`Unknown Mongo action ${cmd.action}`);
+      case "postgres": {
+        const res = await this.pgClient!.query(sqlOrOp, params);
+        return { rows: res.rows, changes: res.rowCount };
       }
-    }
 
-    default:
-      throw new Error(`Unsupported driver: ${this.driver}`);
+      case "mongodb": {
+        if (!this.mongoDb) throw new Error("MongoDB not initialized");
+        const cmd = JSON.parse(sqlOrOp);
+        const col = this.mongoDb.collection(cmd.collection);
+        switch (cmd.action) {
+          case "find":
+            return { rows: await col.find(cmd.filter || {}).toArray() };
+          case "insert":
+            await col.insertMany(cmd.data);
+            return { rows: cmd.data };
+          case "update":
+            const updateResult = await col.updateMany(cmd.filter, { $set: cmd.data });
+            return { rows: [], changes: updateResult.modifiedCount };
+          case "delete":
+            const deleteResult = await col.deleteMany(cmd.filter);
+            return { rows: [], changes: deleteResult.deletedCount };
+          default:
+            throw new Error(`Unknown Mongo action ${cmd.action}`);
+        }
+      }
+
+      default:
+        throw new Error(`Unsupported driver: ${this.driver}`);
+    }
   }
-}
 
   async close() {
     switch (this.driver) {

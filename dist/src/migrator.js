@@ -5,51 +5,51 @@ export class Migrator {
     driver;
     constructor(exec, driver) {
         this.exec = exec;
-        if (driver) {
-            this.driver = driver;
-        }
-        else {
-            this.driver = "sqlite"; // default
-        }
+        this.driver = driver || "sqlite";
     }
-    // ==== DETECT DRIVER ====
-    //   private detectDriver() {
-    // console.log("===detectDriver===")
-    // console.log("driver: ", this.driver)
-    //     const dbUrl = process.env.DATABASE_URL || "";
-    //     console.log(dbUrl)
-    //     if (dbUrl.startsWith("postgres://") || dbUrl.startsWith("postgresql://"))
-    //       this.driver = "postgres";
-    //     else if (dbUrl.startsWith("mysql://"))
-    //       this.driver = "mysql";
-    //     else
-    //       this.driver = "sqlite";
-    //   }
     // ==== MIGRATE FULL SCHEMA ====
     async migrateSchema(schema) {
         for (const model of Object.values(schema)) {
             if (!model.table)
                 continue;
+            this.ensureTimestamps(model.fields);
             await this.ensureTable(model.table, model.fields);
+            await this.applyDefaults(model.table, model.fields);
         }
     }
-    // ==== ENSURE TABLE EXISTS AND APPLY CHANGES ====
+    // ==== ADD TIMESTAMP FIELDS ====
+    ensureTimestamps(fields) {
+        const timestampDefaults = {
+            createdAt: { type: "Date", meta: { default: "CURRENT_TIMESTAMP" } },
+            updatedAt: { type: "Date", meta: { default: "CURRENT_TIMESTAMP" } },
+            deletedAt: { type: "Date", meta: { default: null } },
+        };
+        for (const [key, def] of Object.entries(timestampDefaults)) {
+            if (!fields[key])
+                fields[key] = def;
+        }
+    }
+    // ==== ENSURE TABLE EXISTS OR ALTERED ====
     async ensureTable(table, schema) {
         table = table.toLowerCase();
         const exists = await this.tableExists(table);
         const colsSql = [];
         const indexSql = [];
         const fkSql = [];
-        // ==== BUILD COLUMN, INDEX, FK SQL ====
+        // Build column definitions
         for (const [col, info] of Object.entries(schema)) {
-            // Skip auto-increment PK if table exists
-            if (info.meta?.auto && exists) {
-                // console.log(`Skipping auto-increment primary key column "${col}" in existing table "${table}"`);
-                continue;
-            }
             let sqlType = tsTypeToSqlType(info.type);
             const isNullable = info.type.includes("undefined") ? "" : "NOT NULL";
-            // ==== AUTO-INCREMENT PRIMARY KEY ====
+            let defaultClause = "";
+            if (info.meta?.default !== undefined) {
+                const def = info.meta.default;
+                if (def === "CURRENT_TIMESTAMP")
+                    defaultClause = "DEFAULT CURRENT_TIMESTAMP";
+                else if (typeof def === "string")
+                    defaultClause = `DEFAULT '${def}'`;
+                else if (typeof def === "boolean")
+                    defaultClause = `DEFAULT ${def ? 1 : 0}`;
+            }
             if (info.meta?.auto) {
                 if (this.driver === "sqlite")
                     sqlType = "INTEGER PRIMARY KEY AUTOINCREMENT";
@@ -57,153 +57,122 @@ export class Migrator {
                     sqlType = "SERIAL PRIMARY KEY";
                 if (this.driver === "mysql")
                     sqlType = "INTEGER AUTO_INCREMENT PRIMARY KEY";
+                defaultClause = "";
             }
-            colsSql.push(`"${col}" ${sqlType} ${isNullable}`.trim());
-            // ==== INDEXES ====
+            colsSql.push(`"${col}" ${sqlType} ${isNullable} ${defaultClause}`.trim());
             if (info.meta?.index) {
-                if (this.driver === "sqlite" || this.driver === "postgres" || this.driver === "mysql") {
-                    indexSql.push(`CREATE INDEX IF NOT EXISTS idx_${table}_${col} ON "${table}"("${col}")`);
-                }
-                else {
-                    console.warn(`Index directive not supported on driver "${this.driver}" for column "${col}"`);
-                }
+                indexSql.push(`CREATE INDEX IF NOT EXISTS idx_${table}_${col} ON "${table}"("${col}")`);
             }
-            // ==== FOREIGN KEYS ====
             if (info.meta?.foreignKey) {
                 const fkCol = col;
                 const refTable = info.meta.foreignKey;
-                // Check if it's one-to-one
-                const isOneToOne = info.meta["relationship onetoone"] ? true : false;
-                if (this.driver === "sqlite" && exists) {
-                    // SQLite cannot add FKs via ALTER TABLE if table exists
-                }
-                else if (this.driver === "postgres" || this.driver === "mysql" || (this.driver === "sqlite" && !exists)) {
+                const isOneToOne = !!info.meta["relationship onetoone"];
+                if (!exists || this.driver !== "sqlite") {
                     fkSql.push(`ALTER TABLE "${table}" ADD FOREIGN KEY ("${fkCol}") REFERENCES "${refTable}"(id)`);
-                    // For one-to-one, add unique constraint on FK
-                    if (isOneToOne) {
-                        if (this.driver === "postgres" || this.driver === "mysql") {
-                            fkSql.push(`ALTER TABLE "${table}" ADD CONSTRAINT unique_${table}_${fkCol} UNIQUE ("${fkCol}")`);
-                        }
-                        else if (this.driver === "sqlite" && !exists) {
-                            // For SQLite, unique can be in column definition at table creation
-                            const colIndex = colsSql.findIndex(c => c.startsWith(`"${fkCol}"`));
-                            if (colIndex >= 0)
-                                colsSql[colIndex] += " UNIQUE";
-                        }
+                    if (isOneToOne && this.driver !== "sqlite") {
+                        fkSql.push(`ALTER TABLE "${table}" ADD CONSTRAINT unique_${table}_${fkCol} UNIQUE ("${fkCol}")`);
                     }
-                }
-                else {
-                    console.warn(`ForeignKey directive not supported on driver "${this.driver}" for column "${col}"`);
                 }
             }
         }
-        // ==== CREATE TABLE ====
         if (!exists) {
-            if (colsSql.length === 0)
-                return;
-            // console.log(`Creating table "${table}" with columns: ${colsSql.join(", ")}`);
             await this.exec(`CREATE TABLE "${table}" (${colsSql.join(", ")})`);
         }
         else {
-            // ==== ALTER TABLE - ADD COLUMNS ====
-            const existingCols = (await this.getExistingColumns(table)).map(c => c.toLowerCase());
+            const existingCols = await this.getExistingColumns(table);
             for (const colDef of colsSql) {
                 const colName = colDef.match(/["`]?(\w+)["`]?/)?.[1]?.toLowerCase();
-                if (!colName)
+                if (!colName || existingCols.includes(colName))
                     continue;
-                if (existingCols.includes(colName)) {
-                    // console.log(`Skipping existing column "${colName}" in table "${table}"`);
-                    continue;
-                }
-                // console.log(`Adding column "${colName}" to "${table}"`);
                 try {
                     await this.exec(`ALTER TABLE "${table}" ADD COLUMN ${colDef}`);
                 }
-                catch (err) {
-                    // console.warn(`Failed to add column "${colName}":`, err.message || err);
-                }
+                catch { }
             }
         }
-        // ==== CREATE INDEXES ====
+        // Create indexes
         const existingIndexes = await this.getExistingIndexes(table);
         for (const idx of indexSql) {
             const idxName = idx.match(/idx_[^\s]+/)?.[0]?.toLowerCase() || "";
-            if (existingIndexes.includes(idxName)) {
-                console.log(`Skipping existing index "${idxName}"`);
+            if (existingIndexes.includes(idxName))
                 continue;
-            }
             try {
                 await this.exec(idx);
             }
-            catch (err) {
-                if (err instanceof Error) {
-                    console.warn("Index creation failed:", err.message || err);
-                }
-            }
+            catch { }
         }
-        // ==== CREATE FOREIGN KEYS ====
+        // Create foreign keys
         const existingFKs = await this.getExistingFKs(table);
         for (const fk of fkSql) {
             const fkName = fk.toLowerCase();
-            if (existingFKs.includes(fkName)) {
-                // console.log(`Skipping existing foreign key: ${fk}`);
+            if (existingFKs.includes(fkName))
                 continue;
-            }
             try {
                 await this.exec(fk);
             }
-            catch (err) {
-                if (err instanceof Error)
-                    console.warn("Foreign key creation failed:", err.message || err);
-            }
+            catch { }
         }
     }
-    // ==== CHECK IF TABLE EXISTS ====
+    // ==== APPLY DEFAULTS TO EXISTING ROWS ====
+    async applyDefaults(table, schema) {
+        for (const [col, info] of Object.entries(schema)) {
+            if (!info.meta?.default)
+                continue;
+            const def = info.meta.default;
+            if (def === null)
+                continue;
+            let value;
+            if (def === "CURRENT_TIMESTAMP") {
+                value = this.driver === "sqlite" ? "datetime('now')" : "CURRENT_TIMESTAMP";
+            }
+            else if (typeof def === "boolean") {
+                value = def ? 1 : 0; // ✅ coerce boolean to number
+            }
+            else if (typeof def === "string") {
+                value = `'${def}'`;
+            }
+            else {
+                value = def; // cast safely for numbers
+            }
+            await this.exec(`UPDATE "${table}" SET "${col}" = ${value} WHERE "${col}" IS NULL`);
+        }
+    }
+    // ==== TABLE CHECK ====
     async tableExists(table) {
-        let query;
+        let query = "";
         let params = [];
         switch (this.driver) {
             case "sqlite":
                 query = `SELECT name FROM sqlite_master WHERE type='table' AND name='${table}'`;
                 break;
             case "postgres":
-                query = `SELECT tablename AS name FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema') AND tablename=$1`;
+                query = `SELECT tablename FROM pg_catalog.pg_tables WHERE tablename=$1`;
                 params = [table];
                 break;
             case "mysql":
-                query = `SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name=?`;
+                query = `SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name=?`;
                 params = [table];
                 break;
-            default:
-                query = `SELECT name FROM sqlite_master WHERE type='table' AND name='${table}'`;
         }
         const res = await this.exec(query, params);
         return res.rows?.length > 0;
     }
-    // ==== GET EXISTING COLUMNS ====
     async getExistingColumns(table) {
-        let query;
-        let params = [];
+        let query = "";
         switch (this.driver) {
             case "sqlite":
                 query = `PRAGMA table_info("${table}")`;
                 break;
             case "postgres":
-                query = `SELECT column_name AS name FROM information_schema.columns WHERE table_name=$1`;
-                params = [table];
+                query = `SELECT column_name FROM information_schema.columns WHERE table_name=$1`;
                 break;
             case "mysql":
-                query = `SELECT column_name AS name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name=?`;
-                params = [table];
+                query = `SELECT column_name FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=?`;
                 break;
-            default:
-                query = `PRAGMA table_info("${table}")`;
         }
-        const info = await this.exec(query, params);
-        const rows = info?.rows || [];
-        return rows.map((r) => r.name.toLowerCase());
+        const res = await this.exec(query, this.driver === "sqlite" ? [] : [table]);
+        return (res.rows || []).map((r) => (r.name || r.column_name).toLowerCase());
     }
-    // ==== GET EXISTING INDEXES ====
     async getExistingIndexes(table) {
         let query = "";
         switch (this.driver) {
@@ -211,16 +180,15 @@ export class Migrator {
                 query = `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='${table}'`;
                 break;
             case "postgres":
-                query = `SELECT indexname AS name FROM pg_indexes WHERE tablename=$1`;
+                query = `SELECT indexname FROM pg_indexes WHERE tablename=$1`;
                 break;
             case "mysql":
-                query = `SELECT index_name AS name FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name=?`;
+                query = `SELECT index_name FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name=?`;
                 break;
         }
         const res = await this.exec(query, this.driver === "sqlite" ? [] : [table]);
-        return (res.rows || []).map((r) => r.name.toLowerCase());
+        return (res.rows || []).map((r) => (r.name || r.indexname).toLowerCase());
     }
-    // ==== GET EXISTING FOREIGN KEYS ====
     async getExistingFKs(table) {
         let query = "";
         switch (this.driver) {
@@ -228,13 +196,13 @@ export class Migrator {
                 query = `PRAGMA foreign_key_list("${table}")`;
                 break;
             case "postgres":
-                query = `SELECT constraint_name AS name FROM information_schema.table_constraints WHERE table_name=$1 AND constraint_type='FOREIGN KEY'`;
+                query = `SELECT constraint_name FROM information_schema.table_constraints WHERE table_name=$1 AND constraint_type='FOREIGN KEY'`;
                 break;
             case "mysql":
-                query = `SELECT constraint_name AS name FROM information_schema.table_constraints WHERE table_schema=DATABASE() AND table_name=? AND constraint_type='FOREIGN KEY'`;
+                query = `SELECT constraint_name FROM information_schema.table_constraints WHERE table_schema=DATABASE() AND table_name=? AND constraint_type='FOREIGN KEY'`;
                 break;
         }
         const res = await this.exec(query, this.driver === "sqlite" ? [] : [table]);
-        return (res.rows || []).map((r) => JSON.stringify(r).toLowerCase()); // crude but safe
+        return (res.rows || []).map((r) => JSON.stringify(r).toLowerCase());
     }
 }

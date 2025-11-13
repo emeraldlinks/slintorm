@@ -3,16 +3,15 @@ import { createModelFactory } from "./model.js";
 import generateSchema from "./generator.js";
 import path from "path";
 const getPaths = (dir = "/src") => {
-    const affix = dir.length > 0 ? "/**/*.ts" : "";
-    return path.join(process.cwd(), dir) + affix;
+    return path.join(process.cwd(), dir);
 };
-export async function createORM(cfg = {}, dir = "") {
+export async function createORM(cfg = {}) {
     const adapter = new DBAdapter({
         driver: cfg.driver,
         databaseUrl: cfg.databaseUrl,
     });
     // Always generate schema before model factory
-    await generateSchema(getPaths(dir));
+    await generateSchema(getPaths(cfg.dir));
     const defineModel = await createModelFactory(adapter);
     return { adapter, defineModel };
 }
@@ -25,9 +24,10 @@ export default class ORMManager {
         this.adapter = new DBAdapter({
             driver: this.cfg.driver,
             databaseUrl: this.cfg.databaseUrl,
+            dir: this.cfg.dir || "src"
         });
     }
-    async init() {
+    async migrate() {
         if (!schemaGenerated) {
             schemaGenerated = true;
             const schemaPath = getPaths(this.cfg.dir);
@@ -35,9 +35,9 @@ export default class ORMManager {
             console.log("✅ Schema generated:", schemaPath);
         }
     }
-    async defineModel(table, modelName) {
-        await this.init(); // <-- make sure schema exists before defining
+    async defineModel(table, modelName, hooks) {
         const defineModel = await createModelFactory(this.adapter);
-        return defineModel(table, modelName);
+        // Pass hooks directly to the model factory
+        return defineModel(table, modelName, hooks);
     }
 }

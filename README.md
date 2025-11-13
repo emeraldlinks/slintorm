@@ -47,48 +47,59 @@ const Teams = await orm.defineModel<Team>("team", "Team");
 
 ```ts
 
-
-interface User {
-  id?: number; // @index;auto
-  name: string;
-  lastname?: string;
-  posts?: Post[]; // @relation onetomany:Post;foreignKey:userId
-  profile?: Profile; // @relationship onetoone:Profile;foreignKey:userId
-}
-
+// ==== MODEL INTERFACES (UNCHANGED) ====
 interface Post {
-  id?: number; // @index;auto
+  // @index;auto
+  id?: number;
   title: string;
   userId?: number;
-  user?: User; // @relation manytoone:User;foreignKey:userId
+  // @relation manytoone:User;foreignKey:userId
+  user?: User;
+}
+
+interface User {
+  // @index;auto
+  id?: number;
+  name: string;
+  lastname?: string;
+  // @relation onetomany:Post;foreignKey:userId
+  posts?: Post[];
+  // @relationship onetoone:Profile;foreignKey:userId
+  profile?: Profile;
 }
 
 interface Profile {
-  id?: number; // @index;auto
-  user?: User; // @relationship onetoone:User;foreignKey:userId
+  // @index;auto
+  id?: number;
+  // @relationship onetoone:User;foreignKey:userId
+  user?: User;
   userId: number;
 }
 
 interface Todo {
-  id?: number; // @index;auto
+  // @index;auto
+  id?: number;
   title: string;
   detail: string;
   createdAt: string;
 }
 
 interface Task {
-  id?: number; // @index;auto
+  // @index;auto
+  id?: number;
   title: string;
   detail: string;
   createdAt: string;
 }
 
+
 interface Team {
-  id?: number; // @index;auto
+  // @index;auto
+  id?: number;
   title: string;
   detail: string;
-  open?: boolean;
-  tested?: boolean;
+  open?: boolean
+  tested?: boolean
 }
 
 

@@ -4,13 +4,12 @@ import generateSchema from "./generator.js";
 import path from "path";
 
 const getPaths = (dir = "/src") => {
-  const affix = dir.length > 0 ? "/**/*.ts" : "";
-  return path.join(process.cwd(), dir) + affix;
+  return path.join(process.cwd(), dir)
 };
 
 export async function createORM(
-  cfg: { driver?: string; databaseUrl?: string } = {},
-  dir = ""
+  cfg: { driver?: string; databaseUrl?: string, dir?: string } = {},
+
 ) {
   const adapter = new DBAdapter({
     driver: cfg.driver as any,
@@ -18,7 +17,7 @@ export async function createORM(
   });
 
   // Always generate schema before model factory
-  await generateSchema(getPaths(dir));
+  await generateSchema(getPaths(cfg.dir));
 
   const defineModel = await createModelFactory(adapter);
   return { adapter, defineModel };
@@ -26,20 +25,24 @@ export async function createORM(
 
 let schemaGenerated = false;
 
-
+type driver = | "sqlite"
+  | "postgres"
+  | "mysql"
+  | undefined;
 export default class ORMManager {
-  cfg: { driver?: string; databaseUrl?: string; dir?: string };
+  cfg: { driver?: driver; databaseUrl?: string; dir?: string };
   adapter: DBAdapter;
 
-  constructor(cfg: { driver?: string; databaseUrl?: string; dir?: string }) {
+  constructor(cfg: { driver?: driver; databaseUrl?: string; dir?: string }) {
     this.cfg = cfg;
     this.adapter = new DBAdapter({
       driver: this.cfg.driver as any,
       databaseUrl: this.cfg.databaseUrl,
+      dir: this.cfg.dir || "src"
     });
   }
 
-  private async ensureSchema() {
+  async migrate() {
     if (!schemaGenerated) {
       schemaGenerated = true;
       const schemaPath = getPaths(this.cfg.dir);
@@ -52,12 +55,21 @@ export default class ORMManager {
     table: string,
     modelName: string,
     hooks?: {
-      onCreate?: (item: T) => Promise<void> | void;
-      onUpdate?: (oldData: T | null, newData: Partial<T>) => Promise<void> | void;
-      onDelete?: (deleted: Partial<T>) => Promise<void> | void;
-    }
-  ) {
-    await this.ensureSchema();
+      onCreateBefore?: (item: T) => (T | void | Promise<T | void>);
+      onCreateAfter?: (item: T) => (void | Promise<void>);
+
+      onUpdateBefore?: (
+        oldData: T | null,
+        newData: Partial<T>
+      ) => (Partial<T> | void | Promise<Partial<T> | void>);
+      onUpdateAfter?: (
+        oldData: T | null,
+        newData: Partial<T>
+      ) => (void | Promise<void>);
+
+      onDeleteBefore?: (deleted: Partial<T>) => (void | Promise<void>);
+      onDeleteAfter?: (deleted: Partial<T>) => (void | Promise<void>);
+    }) {
 
     const defineModel = await createModelFactory(this.adapter);
     // Pass hooks directly to the model factory

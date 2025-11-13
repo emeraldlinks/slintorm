@@ -1,4 +1,5 @@
 import type { ExecFn, OpComparison } from "./types.ts";
+export declare function mapBooleans<T extends Record<string, any>>(row: T, schemaFields: Record<string, any>): T;
 type PreloadPath<T> = (keyof T & string) | `${Extract<keyof T, string>}.${string}`;
 export declare class QueryBuilder<T extends Record<string, any>> {
     private _selects;
@@ -8,6 +9,7 @@ export declare class QueryBuilder<T extends Record<string, any>> {
     private _offset;
     private _joins;
     private _preloads;
+    private _exclude;
     private table;
     private exec;
     private orm;
@@ -24,11 +26,15 @@ export declare class QueryBuilder<T extends Record<string, any>> {
     offset(n: number): this;
     join(table: string, onLeft: string, op: string, onRight: string): this;
     leftJoin(table: string, onLeft: string, op: string, onRight: string): this;
+    exclude(...columns: (keyof T | string)[]): this;
     preload<K extends PreloadPath<T>>(relation: K): this;
     ILike<K extends keyof T>(column: K, value: string): this;
     private buildSql;
     get(): Promise<T[]>;
     first(condition?: string): Promise<T | null>;
     private applyPreloads;
+    removeExcluded(obj: any, excludes: string[]): any;
+    private applyExcludes;
+    private _nestedExcludes;
 }
 export {};

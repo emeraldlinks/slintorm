@@ -1,140 +1,191 @@
 import { Migrator } from "./migrator.js";
-import { QueryBuilder } from "./queryBuilder.js";
+import { QueryBuilder, mapBooleans } from "./queryBuilder.js";
 import fs from "fs";
 import path from "path";
+/**
+ * Factory function to create models with CRUD and query capabilities.
+ *
+ * @param adapter - Database adapter instance
+ * @returns A function to define a model with optional hooks
+ */
 export async function createModelFactory(adapter) {
-    const schemaPath = path.join(process.cwd(), "schema", "generated.json");
+    const schemaPath = path.join(adapter.dir, "schema", "generated.json");
     const schemas = fs.existsSync(schemaPath)
         ? JSON.parse(fs.readFileSync(schemaPath, "utf8"))
         : {};
-    return function defineModel(table, modelName) {
+    /**
+     * Defines a new model for a specific table.
+     *
+     * @param table - Database table name
+     * @param modelName - Optional name for the model
+     * @param hooks - Optional lifecycle hooks for CRUD operations
+     * @returns The model API for interacting with the table
+     */
+    return function defineModel(table, modelName, hooks) {
         const tableName = table;
-        const name = modelName || Object.keys(schemas).find((k) => schemas[k].table === tableName) || tableName;
+        const name = modelName ||
+            Object.keys(schemas).find((k) => schemas[k].table === tableName) ||
+            tableName;
+        const sqlDriver = (adapter.driver === "sqlite" || adapter.driver === "postgres" || adapter.driver === "mysql")
+            ? adapter.driver
+            : undefined;
         const modelSchema = schemas[name] || { fields: {}, relations: [] };
-        // console.log("adapter: ", adapter)
         const driver = adapter.driver;
-        // console.log("Very:_ ", driver)
-        const migrator = new Migrator(adapter.exec.bind(adapter), driver);
+        const migrator = new Migrator(adapter.exec.bind(adapter), sqlDriver);
+        /** Ensures the table exists and is up-to-date */
         async function ensure() {
             await migrator.ensureTable(tableName, modelSchema.fields || {});
         }
+        /**
+         * Builds a WHERE clause for SQL queries
+         *
+         * @param filter - Object with key-value pairs to filter by
+         * @returns SQL clause and parameters
+         */
         function buildWhereClause(filter) {
             const keys = Object.keys(filter);
             if (!keys.length)
                 throw new Error("Filter must contain at least one field");
-            if (adapter.driver === "mongodb") {
+            if (adapter.driver === "mongodb")
                 return { mongoFilter: filter };
-            }
-            // For SQL adapters
             const clause = keys
-                .map((k, i) => `${k} = ${adapter.driver === "postgres" ? `$${i + 1}` : "?"}`)
+                .map((k, i) => `${k} = ${driver === "postgres" ? `$${i + 1}` : "?"}`)
                 .join(" AND ");
             const params = keys.map((k) => filter[k]);
             return { clause, params };
         }
         return {
+            /** @inheritdoc */
             async insert(item) {
                 await ensure();
-                if (adapter.driver === "mongodb") {
-                    const cmd = JSON.stringify({ collection: tableName, action: "insert", data: [item] });
-                    await adapter.exec(cmd);
+                if (hooks?.onCreateBefore) {
+                    const modified = await hooks.onCreateBefore(item);
+                    if (modified === undefined)
+                        return null;
+                    item = modified;
+                }
+                let insertedId;
+                if (driver === "mongodb") {
+                    await adapter.exec(JSON.stringify({ collection: tableName, action: "insert", data: [item] }));
                 }
                 else {
-                    const cols = Object.keys(item).filter(c => typeof item[c] !== "object"); // ignore relations
-                    let sql;
-                    let values = cols.map(c => item[c]);
-                    if (adapter.driver === "postgres") {
-                        const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
-                        sql = `INSERT INTO "${tableName}" (${cols.map(c => `"${c}"`).join(",")}) VALUES (${placeholders})`;
-                    }
-                    else if (adapter.driver === "mysql") {
-                        const placeholders = cols.map(() => "?").join(", ");
-                        sql = `INSERT INTO \`${tableName}\` (${cols.map(c => `\`${c}\``).join(",")}) VALUES (${placeholders})`;
-                    }
-                    else if (adapter.driver === "sqlite") {
-                        const placeholders = cols.map(() => "?").join(", ");
-                        sql = `INSERT INTO "${tableName}" (${cols.map(c => `"${c}"`).join(",")}) VALUES (${placeholders})`;
-                    }
-                    else {
-                        throw new Error(`Unsupported driver: ${adapter.driver}`);
-                    }
-                    await adapter.exec(sql, values);
-                    /////---->
+                    const cols = Object.keys(item).filter((c) => typeof item[c] !== "object");
+                    const values = cols.map((c) => item[c]);
+                    const placeholders = driver === "postgres" ? cols.map((_, i) => `$${i + 1}`).join(", ") : cols.map(() => "?").join(", ");
+                    const wrap = (c) => (driver === "mysql" ? `\`${c}\`` : `"${c}"`);
+                    const sql = `INSERT INTO ${wrap(tableName)} (${cols.map(wrap).join(",")}) VALUES (${placeholders})`;
+                    const result = await adapter.exec(sql, values);
+                    if (driver === "sqlite" && result?.lastID)
+                        insertedId = result.lastID;
+                    if (driver === "mysql" && result?.insertId)
+                        insertedId = result.insertId;
+                    if (driver === "postgres" && result?.rows?.[0]?.id)
+                        insertedId = result.rows[0].id;
+                    if (insertedId)
+                        item.id = insertedId;
                 }
-                return item;
+                const inserted = await this.get(item);
+                if (hooks?.onCreateAfter && inserted)
+                    await hooks.onCreateAfter(inserted);
+                return inserted;
             },
-            async update(filter, partial) {
+            /** @inheritdoc */
+            async update(where, data) {
                 await ensure();
-                if (!Object.keys(filter).length)
-                    throw new Error("Update filter cannot be empty");
-                if (!Object.keys(partial).length)
-                    return null;
-                if (adapter.driver === "mongodb") {
-                    const cmd = JSON.stringify({ collection: tableName, action: "update", filter, data: partial });
-                    await adapter.exec(cmd);
+                const before = await this.get(where);
+                if (!where || !Object.keys(where).length)
+                    throw new Error("Update 'where' condition required");
+                if (!data || !Object.keys(data).length)
+                    throw new Error("Update data cannot be empty");
+                if (hooks?.onUpdateBefore) {
+                    const modified = await hooks.onUpdateBefore(before, data);
+                    if (modified === undefined)
+                        return before;
+                    data = modified;
+                }
+                if (driver === "mongodb") {
+                    await adapter.exec(JSON.stringify({ collection: tableName, action: "update", filter: where, data }));
                 }
                 else {
-                    const setCols = Object.keys(partial);
-                    const setClause = setCols.map((c) => `${c} = ?`).join(", ");
-                    const { clause: whereClause, params: whereParams } = buildWhereClause(filter);
-                    const values = setCols.map((c) => partial[c] ?? null); // ensure no undefined
+                    const setCols = Object.keys(data);
+                    const setClause = setCols.map((c) => `${String(c)} = ?`).join(", ");
+                    const setValues = setCols.map((c) => data[c]);
+                    const whereCols = Object.keys(where);
+                    const whereClause = whereCols.map((c) => `${String(c)} = ?`).join(" AND ");
+                    const whereValues = whereCols.map((c) => where[c]);
                     const sql = `UPDATE ${tableName} SET ${setClause} WHERE ${whereClause}`;
-                    await adapter.exec(sql, [...values, ...whereParams]);
+                    await adapter.exec(sql, [...setValues, ...whereValues]);
                 }
-                return { ...filter, ...partial };
+                const after = await this.get(where);
+                if (hooks?.onUpdateAfter)
+                    await hooks.onUpdateAfter(before, after || data);
+                return after;
             },
+            /** @inheritdoc */
             async delete(filter) {
                 await ensure();
                 if (!Object.keys(filter).length)
                     throw new Error("Delete filter cannot be empty");
-                if (adapter.driver === "mongodb") {
-                    const cmd = JSON.stringify({ collection: tableName, action: "delete", filter });
-                    await adapter.exec(cmd);
+                const toDelete = await this.get(filter);
+                if (hooks?.onDeleteBefore) {
+                    const res = await hooks.onDeleteBefore(toDelete || filter);
+                    if (res === undefined)
+                        return filter;
+                }
+                if (driver === "mongodb") {
+                    await adapter.exec(JSON.stringify({ collection: tableName, action: "delete", filter }));
                 }
                 else {
                     const { clause, params } = buildWhereClause(filter);
                     const sql = `DELETE FROM ${tableName} WHERE ${clause}`;
-                    console.log("DELETE SQL:", sql, "PARAMS:", params);
                     await adapter.exec(sql, params);
                 }
+                if (hooks?.onDeleteAfter)
+                    await hooks.onDeleteAfter(toDelete || filter);
                 return filter;
             },
+            /** @inheritdoc */
             async get(filter) {
                 await ensure();
                 if (!Object.keys(filter).length)
                     throw new Error("Get filter cannot be empty");
-                if (adapter.driver === "mongodb") {
-                    const cmd = JSON.stringify({ collection: tableName, action: "find", filter });
-                    const res = await adapter.exec(cmd);
-                    return res.rows[0] || null;
+                let record = null;
+                if (driver === "mongodb") {
+                    const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "find", filter }));
+                    record = res.rows[0] || null;
                 }
                 else {
                     const { clause, params } = buildWhereClause(filter);
                     const sql = `SELECT * FROM ${tableName} WHERE ${clause} LIMIT 1`;
                     const res = await adapter.exec(sql, params);
-                    return res.rows[0] || null;
+                    record = res.rows[0] || null;
                 }
+                if (!record)
+                    return null;
+                record = mapBooleans(record, modelSchema.fields);
+                Object.defineProperty(record, "update", {
+                    value: async (data) => this.update(filter, data),
+                    enumerable: false,
+                });
+                return record;
             },
+            /** @inheritdoc */
             async getAll() {
                 await ensure();
-                if (adapter.driver === "mongodb") {
-                    const cmd = JSON.stringify({ collection: tableName, action: "find" });
-                    const res = await adapter.exec(cmd);
-                    return res.rows;
-                }
-                else {
-                    const res = await adapter.exec(`SELECT * FROM ${tableName}`);
-                    return res.rows;
-                }
+                const res = driver === "mongodb"
+                    ? await adapter.exec(JSON.stringify({ collection: tableName, action: "find" }))
+                    : await adapter.exec(`SELECT * FROM ${tableName}`);
+                return res.rows.map((r) => mapBooleans(r, modelSchema.fields));
             },
+            /** @inheritdoc */
             query() {
                 return new QueryBuilder(tableName, adapter.exec.bind(adapter));
             },
+            /** @inheritdoc */
             async count(filter) {
                 await ensure();
-                if (adapter.driver === "mongodb") {
-                    const cmd = JSON.stringify({ collection: tableName, action: "find", filter: filter || {} });
-                    const res = await adapter.exec(cmd);
+                if (driver === "mongodb") {
+                    const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "find", filter: filter || {} }));
                     return res.rows.length;
                 }
                 else {
@@ -144,38 +195,28 @@ export async function createModelFactory(adapter) {
                     return res.rows[0]?.count ?? 0;
                 }
             },
+            /** @inheritdoc */
             async exists(filter) {
                 await ensure();
-                if (!Object.keys(filter).length)
-                    throw new Error("Exists filter cannot be empty");
-                if (adapter.driver === "mongodb") {
-                    const cmd = JSON.stringify({ collection: tableName, action: "find", filter });
-                    const res = await adapter.exec(cmd);
-                    return res.rows.length > 0;
-                }
-                else {
-                    const { clause, params } = buildWhereClause(filter);
-                    const sql = `SELECT 1 FROM ${tableName} WHERE ${clause} LIMIT 1`;
-                    const res = await adapter.exec(sql, params);
-                    return !!res.rows.length;
-                }
+                const { clause, params } = buildWhereClause(filter);
+                const sql = `SELECT 1 FROM ${tableName} WHERE ${clause} LIMIT 1`;
+                const res = await adapter.exec(sql, params);
+                return !!res.rows.length;
             },
+            /** @inheritdoc */
             async truncate() {
                 await ensure();
-                if (adapter.driver === "mongodb") {
-                    const cmd = JSON.stringify({ collection: tableName, action: "delete", filter: {} });
-                    await adapter.exec(cmd);
-                }
-                else {
-                    await adapter.exec(`DELETE FROM ${tableName}`);
-                }
+                await adapter.exec(`DELETE FROM ${tableName}`);
             },
+            /** @inheritdoc */
             async withOne(_relation) {
-                throw new Error("withOne: call on query or entity. Implement later using relations");
+                throw new Error("withOne not yet implemented");
             },
+            /** @inheritdoc */
             async withMany(_relation) {
-                throw new Error("withMany: call on query or entity. Implement later using relations");
+                throw new Error("withMany not yet implemented");
             },
+            /** @inheritdoc */
             async preload(_relation) {
                 return;
             },

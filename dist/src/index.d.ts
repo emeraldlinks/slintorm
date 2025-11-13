@@ -2,13 +2,21 @@ import { DBAdapter } from "./dbAdapter.js";
 export declare function createORM(cfg?: {
     driver?: string;
     databaseUrl?: string;
-}, dir?: string): Promise<{
+    dir?: string;
+}): Promise<{
     adapter: DBAdapter;
-    defineModel: <T extends Record<string, any>>(table: string, modelName?: string) => {
-        insert(item: T): Promise<T>;
-        update(filter: Partial<T>, partial: Partial<T>): Promise<T | null>;
+    defineModel: <T extends Record<string, any>>(table: string, modelName?: string, hooks?: {
+        onCreateBefore?: (item: T) => T | void | Promise<T | void>;
+        onCreateAfter?: (item: T) => void | Promise<void>;
+        onUpdateBefore?: (oldData: T | null, newData: Partial<T>) => Partial<T> | void | Promise<Partial<T> | void>;
+        onUpdateAfter?: (oldData: T | null, newData: Partial<T>) => void | Promise<void>;
+        onDeleteBefore?: (deleted: Partial<T>) => void | Promise<void>;
+        onDeleteAfter?: (deleted: Partial<T>) => void | Promise<void>;
+    }) => {
+        insert(item: T): Promise<import("./types.js").EntityWithUpdate<T> | null>;
+        update(filter: Partial<T>, partial: Partial<T>): Promise<import("./types.js").EntityWithUpdate<T> | null>;
         delete(filter: Partial<T>): Promise<Partial<T>>;
-        get(filter: Partial<T>): Promise<T | null>;
+        get(filter: Partial<T>): Promise<import("./types.js").EntityWithUpdate<T> | null>;
         getAll(): Promise<T[]>;
         query(): import("./queryBuilder.js").QueryBuilder<T>;
         count(filter?: Partial<T> | undefined): Promise<number>;
@@ -19,24 +27,32 @@ export declare function createORM(cfg?: {
         preload<K extends keyof T & string>(relation: K): Promise<void>;
     };
 }>;
+type driver = "sqlite" | "postgres" | "mysql" | undefined;
 export default class ORMManager {
     cfg: {
-        driver?: string;
+        driver?: driver;
         databaseUrl?: string;
         dir?: string;
     };
     adapter: DBAdapter;
     constructor(cfg: {
-        driver?: string;
+        driver?: driver;
         databaseUrl?: string;
         dir?: string;
     });
-    init(): Promise<void>;
-    defineModel<T extends Record<string, any>>(table: string, modelName: string): Promise<{
-        insert(item: T): Promise<T>;
-        update(filter: Partial<T>, partial: Partial<T>): Promise<T | null>;
+    migrate(): Promise<void>;
+    defineModel<T extends Record<string, any>>(table: string, modelName: string, hooks?: {
+        onCreateBefore?: (item: T) => (T | void | Promise<T | void>);
+        onCreateAfter?: (item: T) => (void | Promise<void>);
+        onUpdateBefore?: (oldData: T | null, newData: Partial<T>) => (Partial<T> | void | Promise<Partial<T> | void>);
+        onUpdateAfter?: (oldData: T | null, newData: Partial<T>) => (void | Promise<void>);
+        onDeleteBefore?: (deleted: Partial<T>) => (void | Promise<void>);
+        onDeleteAfter?: (deleted: Partial<T>) => (void | Promise<void>);
+    }): Promise<{
+        insert(item: T): Promise<import("./types.js").EntityWithUpdate<T> | null>;
+        update(filter: Partial<T>, partial: Partial<T>): Promise<import("./types.js").EntityWithUpdate<T> | null>;
         delete(filter: Partial<T>): Promise<Partial<T>>;
-        get(filter: Partial<T>): Promise<T | null>;
+        get(filter: Partial<T>): Promise<import("./types.js").EntityWithUpdate<T> | null>;
         getAll(): Promise<T[]>;
         query(): import("./queryBuilder.js").QueryBuilder<T>;
         count(filter?: Partial<T> | undefined): Promise<number>;
@@ -47,3 +63,4 @@ export default class ORMManager {
         preload<K extends keyof T & string>(relation: K): Promise<void>;
     }>;
 }
+export {};

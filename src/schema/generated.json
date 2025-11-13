@@ -1,0 +1,168 @@
+{
+  "User": {
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "meta": {
+          "index": true,
+          "auto": true
+        }
+      },
+      "name": {
+        "type": "string",
+        "meta": {}
+      },
+      "lastname": {
+        "type": "string | undefined",
+        "meta": {}
+      },
+      "posts": {
+        "type": "Post[] | undefined",
+        "meta": {
+          "relation onetomany": "Post",
+          "foreignKey": "userId"
+        }
+      },
+      "profile": {
+        "type": "Profile | undefined",
+        "meta": {
+          "relationship onetoone": "Profile",
+          "foreignKey": "userId"
+        }
+      }
+    },
+    "relations": [],
+    "table": "users"
+  },
+  "Post": {
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "meta": {
+          "index": true,
+          "auto": true
+        }
+      },
+      "title": {
+        "type": "string",
+        "meta": {}
+      },
+      "userId": {
+        "type": "number | undefined",
+        "meta": {}
+      },
+      "user": {
+        "type": "User | undefined",
+        "meta": {
+          "relation manytoone": "User",
+          "foreignKey": "userId"
+        }
+      }
+    },
+    "relations": [],
+    "table": "post"
+  },
+  "Todo": {
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "meta": {
+          "index": true,
+          "auto": true
+        }
+      },
+      "title": {
+        "type": "string",
+        "meta": {}
+      },
+      "detail": {
+        "type": "string",
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string",
+        "meta": {}
+      }
+    },
+    "relations": [],
+    "table": "todo"
+  },
+  "Profile": {
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "meta": {
+          "index": true,
+          "auto": true
+        }
+      },
+      "user": {
+        "type": "User | undefined",
+        "meta": {
+          "relationship onetoone": "User",
+          "foreignKey": "userId"
+        }
+      },
+      "userId": {
+        "type": "number",
+        "meta": {}
+      }
+    },
+    "relations": [],
+    "table": "profile"
+  },
+  "Task": {
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "meta": {
+          "index": true,
+          "auto": true
+        }
+      },
+      "title": {
+        "type": "string",
+        "meta": {}
+      },
+      "detail": {
+        "type": "string",
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string",
+        "meta": {}
+      }
+    },
+    "relations": [],
+    "table": "tasks"
+  },
+  "Team": {
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "meta": {
+          "index": true,
+          "auto": true
+        }
+      },
+      "title": {
+        "type": "string",
+        "meta": {}
+      },
+      "detail": {
+        "type": "string",
+        "meta": {}
+      },
+      "open": {
+        "type": "boolean | undefined",
+        "meta": {}
+      },
+      "tested": {
+        "type": "boolean | undefined",
+        "meta": {}
+      }
+    },
+    "relations": [],
+    "table": "team"
+  }
+}

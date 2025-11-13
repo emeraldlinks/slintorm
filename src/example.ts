@@ -74,17 +74,25 @@ async function main() {
   const orm = new ORMManager({
     driver: "sqlite",
     databaseUrl: "./test.db",
+    dir: "src"
   });
 
+  orm.migrate()
   // Define models
   const Users = await orm.defineModel<User>("users", "User");
   const Posts = await orm.defineModel<Post>("post", "Post");
   const Todos = await orm.defineModel<Todo>("todo", "Todo");
   const Profiles = await orm.defineModel<Profile>("profile", "Profile");
   const Tasks = await orm.defineModel<Task>("tasks", "Task");
-   const Teams = await orm.defineModel<Team>("team", "Team", {
-    onCreate(item) {
-      console.log("new item: ", item)
+  const Teams = await orm.defineModel<Team>("team", "Team", {
+    onCreateBefore(item) {
+      console.log("before create Team: ", item)
+    },
+    onCreateAfter(item) {
+      console.log("after create: ", item)
+    },
+    onUpdateAfter(oldData, newData) {
+
     },
   });
 
@@ -97,17 +105,17 @@ async function main() {
     detail: "Wash all plates",
     createdAt: new Date().toISOString(),
   });
-  console.log("todos:", await Todos.getAll());
+  // console.log("todos:", await Todos.getAll());
 
   // ==== CREATE USERS AND POSTS ====
   const newUser = await Users.insert({
     name: "Catherine",
     lastname: "Christopher",
   });
-  console.log("newUser: ", newUser);
+  // console.log("newUser: ", newUser);
 
   const newPost = await Posts.insert({ title: "Hello Boys", userId: 2 });
-  console.log("newPost: ", newPost);
+  // console.log("newPost: ", newPost);
 
   // const oo = await Users.query().preload("posts").first()
   // console.log("profile: ", oo)
@@ -122,7 +130,7 @@ async function main() {
     // .preload("posts.user")
     .first("id = 2");
 
-  console.dir(userWithRelations, { depth: null });
+  // console.dir(userWithRelations, { depth: null });
 
   // ==== FETCH POST WITH USER RELATION ====
   console.log("posts with user =====>");
@@ -131,9 +139,9 @@ async function main() {
     .preload("user.posts")
     .preload("user.profile")
     .preload("user.posts.user")
-    .preload("user.posts.user.posts")
-    .get();
-  // console.dir(postWithUser, { depth: null });
+    .exclude("user.lastname")
+    .first();
+  console.dir(postWithUser, { depth: null });
 
   // ==== DELETE EXAMPLE ====
   try {
@@ -143,27 +151,30 @@ async function main() {
   }
 
 
-  const user = await Users.get({id: 1})
-  console.log("user: ", user)
+  const user = await Users.get({ id: 1 })
+  // console.log("user: ", user)
 
 
   try {
-   const uup = await Users.update({id: 1}, {name: "Amike Catherine"})
-   console.log("immediate update: ", uup)
+    const uup = await Users.update({ id: 1 }, { name: "Amike Catherine" })
+    //  console.log("immediate update: ", uup)
 
-  const upuser = await Users.get({id: 1})
-  console.log("fetched updated user: ", upuser)
-  const updated = await upuser?.update({ name: "Amike Egwamene" });
-console.log("Updated user:", updated);
-    
-  } catch (err)  {
+    const upuser = await Users.get({ id: 1 })
+    // console.log("fetched updated user: ", upuser)
+    const excupuser = await Users.query().exclude("profile").preload("posts").exclude("posts.user").first("id = 2")
+
+    const updated = await upuser?.update({ name: "Amike Egwamene" });
+    // console.log("Updated user:", updated);
+    // console.log("excluded user fields:", excupuser);
+
+  } catch (err) {
     console.log("error updated user: ", err)
-    
+
   }
 
 
- const pp = await Profiles.query().preload("user").preload("user.profile").preload("user.profile.user").first("userId = 2")
- console.log("profile: ", pp)
+  const pp = await Profiles.query().preload("user").preload("user.profile").preload("user.profile.user").first("userId = 2")
+  console.log("profile: ", pp)
 
 
   const nnew = await Teams.insert({
@@ -172,7 +183,7 @@ console.log("Updated user:", updated);
     open: true,
     tested: false
   });
-  console.log("Teams:", nnew);
+  // console.log("Teams:", nnew);
 
 
 

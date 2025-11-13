@@ -9,9 +9,10 @@ import { Project, SyntaxKind } from "ts-morph";
 import fs from "fs";
 import path from "path";
 // ==== Main Generator ====
-export default async function generateSchema(srcGlob = "src/**/*.ts") {
+export default async function generateSchema(srcGlob) {
     const project = new Project({ tsConfigFilePath: "tsconfig.json" });
-    const files = project.getSourceFiles(srcGlob);
+    const ssfilePath = srcGlob + "/**/*.ts";
+    const files = project.getSourceFiles(ssfilePath);
     console.log(`Scanning ${files.length} source files...`);
     const interfaces = new Map();
     // ==== 1. Gather interfaces ====
@@ -145,7 +146,7 @@ export default async function generateSchema(srcGlob = "src/**/*.ts") {
         });
     }
     // ==== 4. Write schema ====
-    const outDir = path.join(process.cwd(), "schema");
+    const outDir = path.join(srcGlob, "schema");
     if (!fs.existsSync(outDir))
         fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(path.join(outDir, "generated.json"), JSON.stringify(output, null, 2), "utf8");
