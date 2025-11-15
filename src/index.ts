@@ -72,6 +72,7 @@ export default class ORMManager {
     }) {
 
     const defineModel = await createModelFactory(this.adapter);
+    
     // Pass hooks directly to the model factory
     return defineModel<T>(table, modelName, hooks);
   }

@@ -14,7 +14,8 @@ export declare class QueryBuilder<T extends Record<string, any>> {
     private exec;
     private orm;
     private modelName;
-    constructor(table: string, exec: ExecFn, orm?: {
+    private dir;
+    constructor(table: string, dir: string, exec: ExecFn, orm?: {
         dialect?: string;
     });
     private normalizeModelName;

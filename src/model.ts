@@ -60,6 +60,8 @@ export async function createModelFactory(adapter: DBAdapter) {
   }
   const schemas = cachedSchema!
 
+  // console.log("schemas: ", schemas)
+
   
 
   /**
@@ -99,6 +101,11 @@ export async function createModelFactory(adapter: DBAdapter) {
     async function ensure() {
       await migrator.ensureTable(tableName, modelSchema.fields || {});
     }
+    (async () => {
+     await  ensure();
+    })()
+
+
 
     /**
      * Builds a WHERE clause for SQL queries
@@ -228,7 +235,7 @@ export async function createModelFactory(adapter: DBAdapter) {
 
       /** @inheritdoc */
       query() {
-        return new QueryBuilder<T>(tableName, adapter.exec.bind(adapter));
+        return new QueryBuilder<T>(tableName, adapter.dir!, adapter.exec.bind(adapter));
       },
 
       /** @inheritdoc */

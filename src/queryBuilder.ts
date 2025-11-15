@@ -28,9 +28,18 @@ export function mapBooleans<T extends Record<string, any>>(
 }
 
 let schemaCache: Record<string, any> | null = null;
-function getSchema() {
+function getSchema(dir: string) {
+  if (!dir) {
+    console.log("Error: ", "No directory provided");
+    return;
+  }
   if (!schemaCache) {
-    const schemaPath = path.join(process.cwd(), "schema", "generated.json");
+    const schemaPath = path.join(
+      process.cwd(),
+      dir,
+      "schema",
+      "generated.json"
+    );
     if (!fs.existsSync(schemaPath)) {
       throw new Error(`Schema file not found at ${schemaPath}`);
     }
@@ -87,22 +96,32 @@ export class QueryBuilder<T extends Record<string, any>> {
   private exec: ExecFn;
   private orm: { dialect?: string } | undefined;
   private modelName: string;
+  private dir: string;
 
-  constructor(table: string, exec: ExecFn, orm?: { dialect?: string }) {
+  constructor(
+    table: string,
+    dir: string,
+    exec: ExecFn,
+    orm?: { dialect?: string }
+  ) {
+    if (!dir) {
+      throw new Error("QueryBuilder requires a valid directory for schema.");
+    }
     this.table = table;
     this.exec = exec;
     this.orm = orm;
+    this.dir = dir;
     this.modelName = this.normalizeModelName(table);
   }
 
   private normalizeModelName(name: string) {
-    const schema = getSchema();
+    const schema = getSchema(this.dir);
     const normalized = name[0].toUpperCase() + name.slice(1);
-    if (schema[normalized]) return normalized;
+    if (schema![normalized]) return normalized;
     const singular = normalized.endsWith("s")
       ? normalized.slice(0, -1)
       : normalized;
-    if (schema[singular]) return singular;
+    if (schema![singular]) return singular;
     return normalized;
   }
 
@@ -159,7 +178,10 @@ export class QueryBuilder<T extends Record<string, any>> {
 
   ILike<K extends keyof T>(column: K, value: string) {
     const dialect = Dialects[this.orm?.dialect || "sqlite"];
-    const clause = dialect.caseInsensitiveLike(String(column), this._where.length);
+    const clause = dialect.caseInsensitiveLike(
+      String(column),
+      this._where.length
+    );
     const val = `%${value}%`;
     this._where.push({ raw: clause, value: val });
     return this;
@@ -206,7 +228,7 @@ export class QueryBuilder<T extends Record<string, any>> {
       rows = await this.applyPreloads(rows); // uses this._preloads internally
     }
 
-    const schemaFields = getSchema()[this.modelName].fields;
+    const schemaFields = getSchema(this.dir)![this.modelName].fields;
 
     // Apply mapBooleans (top-level)
     rows = rows.map((r) => mapBooleans(r, schemaFields));
@@ -239,8 +261,8 @@ export class QueryBuilder<T extends Record<string, any>> {
   private async applyPreloads(rows: any[]): Promise<any[]> {
     if (!rows.length) return rows;
 
-    const schema = getSchema();
-    const modelSchema = schema[this.modelName];
+    const schema = getSchema(this.dir);
+    const modelSchema = schema![this.modelName];
     if (!modelSchema) return rows;
 
     const dialect = Dialects[this.orm?.dialect || "sqlite"];
@@ -278,7 +300,7 @@ export class QueryBuilder<T extends Record<string, any>> {
       const relation = relationFields.find((r) => r.fieldName === root);
       if (!relation) continue;
 
-      const targetSchema = schema[relation.targetModel];
+      const targetSchema = schema![relation.targetModel];
       if (!targetSchema) continue;
 
       const { kind, foreignKey, relatedKey, through } = relation;
@@ -291,8 +313,12 @@ export class QueryBuilder<T extends Record<string, any>> {
           const parentIds = rows.map((r) => r.id).filter(Boolean);
           if (!parentIds.length) break;
 
-          const placeholders = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
-          const sql = `SELECT * FROM ${dialect.quoteIdentifier(targetSchema.table)} WHERE ${dialect.quoteIdentifier(foreignKey)} IN (${placeholders})`;
+          const placeholders = parentIds
+            .map((_, i) => dialect.formatPlaceholder(i))
+            .join(",");
+          const sql = `SELECT * FROM ${dialect.quoteIdentifier(
+            targetSchema.table
+          )} WHERE ${dialect.quoteIdentifier(foreignKey)} IN (${placeholders})`;
           relatedRows = (await this.exec(sql, parentIds)).rows || [];
 
           for (const row of rows) {
@@ -302,7 +328,8 @@ export class QueryBuilder<T extends Record<string, any>> {
                 // convert booleans then apply nested excludes
                 let clean = mapBooleans(r, targetSchema.fields);
                 const nestedExcludes = this._nestedExcludes(root);
-                if (nestedExcludes.length) clean = this.removeExcluded(clean, nestedExcludes);
+                if (nestedExcludes.length)
+                  clean = this.removeExcluded(clean, nestedExcludes);
                 return clean;
               });
           }
@@ -320,27 +347,41 @@ export class QueryBuilder<T extends Record<string, any>> {
             : rows.map((r) => r.id).filter(Boolean);
           if (!parentIds.length) break;
 
-          const placeholders = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+          const placeholders = parentIds
+            .map((_, i) => dialect.formatPlaceholder(i))
+            .join(",");
           const sql = childFKOnRow
-            ? `SELECT * FROM ${dialect.quoteIdentifier(targetSchema.table)} WHERE id IN (${placeholders})`
-            : `SELECT * FROM ${dialect.quoteIdentifier(targetSchema.table)} WHERE ${dialect.quoteIdentifier(foreignKey)} IN (${placeholders})`;
+            ? `SELECT * FROM ${dialect.quoteIdentifier(
+                targetSchema.table
+              )} WHERE id IN (${placeholders})`
+            : `SELECT * FROM ${dialect.quoteIdentifier(
+                targetSchema.table
+              )} WHERE ${dialect.quoteIdentifier(
+                foreignKey
+              )} IN (${placeholders})`;
           relatedRows = (await this.exec(sql, parentIds)).rows || [];
 
           for (const row of rows) {
             if (childFKOnRow) {
-              const found = relatedRows.find((rel: any) => rel.id === row[foreignKey]);
+              const found = relatedRows.find(
+                (rel: any) => rel.id === row[foreignKey]
+              );
               if (found) {
                 let clean = mapBooleans(found, targetSchema.fields);
                 const nestedExcludes = this._nestedExcludes(root);
-                if (nestedExcludes.length) clean = this.removeExcluded(clean, nestedExcludes);
+                if (nestedExcludes.length)
+                  clean = this.removeExcluded(clean, nestedExcludes);
                 row[root] = clean;
               } else row[root] = null;
             } else {
-              const found = relatedRows.find((rel: any) => rel[foreignKey] === row.id);
+              const found = relatedRows.find(
+                (rel: any) => rel[foreignKey] === row.id
+              );
               if (found) {
                 let clean = mapBooleans(found, targetSchema.fields);
                 const nestedExcludes = this._nestedExcludes(root);
-                if (nestedExcludes.length) clean = this.removeExcluded(clean, nestedExcludes);
+                if (nestedExcludes.length)
+                  clean = this.removeExcluded(clean, nestedExcludes);
                 row[root] = clean;
               } else row[root] = null;
             }
@@ -353,15 +394,26 @@ export class QueryBuilder<T extends Record<string, any>> {
           const parentIds = rows.map((r) => r.id).filter(Boolean);
           if (!parentIds.length) break;
 
-          const placeholders = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
-          const junctionSql = `SELECT * FROM ${dialect.quoteIdentifier(through)} WHERE ${dialect.quoteIdentifier(foreignKey)} IN (${placeholders})`;
-          const junctionRows = (await this.exec(junctionSql, parentIds)).rows || [];
+          const placeholders = parentIds
+            .map((_, i) => dialect.formatPlaceholder(i))
+            .join(",");
+          const junctionSql = `SELECT * FROM ${dialect.quoteIdentifier(
+            through
+          )} WHERE ${dialect.quoteIdentifier(foreignKey)} IN (${placeholders})`;
+          const junctionRows =
+            (await this.exec(junctionSql, parentIds)).rows || [];
 
-          const targetIds = [...new Set(junctionRows.map((j: any) => j[relatedKey]))];
+          const targetIds = [
+            ...new Set(junctionRows.map((j: any) => j[relatedKey])),
+          ];
           if (!targetIds.length) break;
 
-          const targetPlaceholders = targetIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
-          const targetSql = `SELECT * FROM ${dialect.quoteIdentifier(targetSchema.table)} WHERE id IN (${targetPlaceholders})`;
+          const targetPlaceholders = targetIds
+            .map((_, i) => dialect.formatPlaceholder(i))
+            .join(",");
+          const targetSql = `SELECT * FROM ${dialect.quoteIdentifier(
+            targetSchema.table
+          )} WHERE id IN (${targetPlaceholders})`;
           relatedRows = (await this.exec(targetSql, targetIds)).rows || [];
 
           for (const row of rows) {
@@ -373,7 +425,8 @@ export class QueryBuilder<T extends Record<string, any>> {
               .map((t: any) => {
                 let clean = mapBooleans(t, targetSchema.fields);
                 const nestedExcludes = this._nestedExcludes(root);
-                if (nestedExcludes.length) clean = this.removeExcluded(clean, nestedExcludes);
+                if (nestedExcludes.length)
+                  clean = this.removeExcluded(clean, nestedExcludes);
                 return clean;
               });
           }
@@ -386,9 +439,18 @@ export class QueryBuilder<T extends Record<string, any>> {
       }
 
       // If there are nested preloads for the related rows, call applyPreloads recursively.
-      if (nestedPreloads.length && Array.isArray(relatedRows) && relatedRows.length) {
+      if (
+        nestedPreloads.length &&
+        Array.isArray(relatedRows) &&
+        relatedRows.length
+      ) {
         // Create a temporary QueryBuilder for the related table to leverage its applyPreloads
-        const qb = new QueryBuilder(targetSchema.table, this.exec, this.orm);
+        const qb = new QueryBuilder(
+          targetSchema.table,
+          this.dir,
+          this.exec,
+          this.orm
+        );
         // Pass nested preloads and nested excludes to the child builder
         qb._preloads = nestedPreloads;
         qb._exclude = this._nestedExcludes(root);
@@ -450,7 +512,8 @@ export class QueryBuilder<T extends Record<string, any>> {
   }
 
   private _nestedExcludes(root: string): string[] {
-    return this._exclude.filter((f) => typeof f === "string" && f.startsWith(root + "."))
+    return this._exclude
+      .filter((f) => typeof f === "string" && f.startsWith(root + "."))
       .map((f) => f.slice(root.length + 1));
   }
 }

@@ -14,7 +14,7 @@ async function main() {
     // });
     const orm = new ORMManager({
         driver: "sqlite",
-        databaseUrl: "./test.db",
+        databaseUrl: "./testx.db",
         dir: "src"
     });
     orm.migrate();

@@ -12,9 +12,13 @@ export function mapBooleans(row, schemaFields) {
     return newRow;
 }
 let schemaCache = null;
-function getSchema() {
+function getSchema(dir) {
+    if (!dir) {
+        console.log("Error: ", "No directory provided");
+        return;
+    }
     if (!schemaCache) {
-        const schemaPath = path.join(process.cwd(), "schema", "generated.json");
+        const schemaPath = path.join(process.cwd(), dir, "schema", "generated.json");
         if (!fs.existsSync(schemaPath)) {
             throw new Error(`Schema file not found at ${schemaPath}`);
         }
@@ -53,14 +57,19 @@ export class QueryBuilder {
     exec;
     orm;
     modelName;
-    constructor(table, exec, orm) {
+    dir;
+    constructor(table, dir, exec, orm) {
+        if (!dir) {
+            throw new Error("QueryBuilder requires a valid directory for schema.");
+        }
         this.table = table;
         this.exec = exec;
         this.orm = orm;
+        this.dir = dir;
         this.modelName = this.normalizeModelName(table);
     }
     normalizeModelName(name) {
-        const schema = getSchema();
+        const schema = getSchema(this.dir);
         const normalized = name[0].toUpperCase() + name.slice(1);
         if (schema[normalized])
             return normalized;
@@ -157,7 +166,7 @@ export class QueryBuilder {
         if (this._preloads.length) {
             rows = await this.applyPreloads(rows); // uses this._preloads internally
         }
-        const schemaFields = getSchema()[this.modelName].fields;
+        const schemaFields = getSchema(this.dir)[this.modelName].fields;
         // Apply mapBooleans (top-level)
         rows = rows.map((r) => mapBooleans(r, schemaFields));
         // Apply top-level excludes (no dotted keys here)
@@ -187,7 +196,7 @@ export class QueryBuilder {
     async applyPreloads(rows) {
         if (!rows.length)
             return rows;
-        const schema = getSchema();
+        const schema = getSchema(this.dir);
         const modelSchema = schema[this.modelName];
         if (!modelSchema)
             return rows;
@@ -239,7 +248,9 @@ export class QueryBuilder {
                     const parentIds = rows.map((r) => r.id).filter(Boolean);
                     if (!parentIds.length)
                         break;
-                    const placeholders = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+                    const placeholders = parentIds
+                        .map((_, i) => dialect.formatPlaceholder(i))
+                        .join(",");
                     const sql = `SELECT * FROM ${dialect.quoteIdentifier(targetSchema.table)} WHERE ${dialect.quoteIdentifier(foreignKey)} IN (${placeholders})`;
                     relatedRows = (await this.exec(sql, parentIds)).rows || [];
                     for (const row of rows) {
@@ -267,7 +278,9 @@ export class QueryBuilder {
                         : rows.map((r) => r.id).filter(Boolean);
                     if (!parentIds.length)
                         break;
-                    const placeholders = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+                    const placeholders = parentIds
+                        .map((_, i) => dialect.formatPlaceholder(i))
+                        .join(",");
                     const sql = childFKOnRow
                         ? `SELECT * FROM ${dialect.quoteIdentifier(targetSchema.table)} WHERE id IN (${placeholders})`
                         : `SELECT * FROM ${dialect.quoteIdentifier(targetSchema.table)} WHERE ${dialect.quoteIdentifier(foreignKey)} IN (${placeholders})`;
@@ -306,13 +319,19 @@ export class QueryBuilder {
                     const parentIds = rows.map((r) => r.id).filter(Boolean);
                     if (!parentIds.length)
                         break;
-                    const placeholders = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+                    const placeholders = parentIds
+                        .map((_, i) => dialect.formatPlaceholder(i))
+                        .join(",");
                     const junctionSql = `SELECT * FROM ${dialect.quoteIdentifier(through)} WHERE ${dialect.quoteIdentifier(foreignKey)} IN (${placeholders})`;
                     const junctionRows = (await this.exec(junctionSql, parentIds)).rows || [];
-                    const targetIds = [...new Set(junctionRows.map((j) => j[relatedKey]))];
+                    const targetIds = [
+                        ...new Set(junctionRows.map((j) => j[relatedKey])),
+                    ];
                     if (!targetIds.length)
                         break;
-                    const targetPlaceholders = targetIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+                    const targetPlaceholders = targetIds
+                        .map((_, i) => dialect.formatPlaceholder(i))
+                        .join(",");
                     const targetSql = `SELECT * FROM ${dialect.quoteIdentifier(targetSchema.table)} WHERE id IN (${targetPlaceholders})`;
                     relatedRows = (await this.exec(targetSql, targetIds)).rows || [];
                     for (const row of rows) {
@@ -336,9 +355,11 @@ export class QueryBuilder {
                     break;
             }
             // If there are nested preloads for the related rows, call applyPreloads recursively.
-            if (nestedPreloads.length && Array.isArray(relatedRows) && relatedRows.length) {
+            if (nestedPreloads.length &&
+                Array.isArray(relatedRows) &&
+                relatedRows.length) {
                 // Create a temporary QueryBuilder for the related table to leverage its applyPreloads
-                const qb = new QueryBuilder(targetSchema.table, this.exec, this.orm);
+                const qb = new QueryBuilder(targetSchema.table, this.dir, this.exec, this.orm);
                 // Pass nested preloads and nested excludes to the child builder
                 qb._preloads = nestedPreloads;
                 qb._exclude = this._nestedExcludes(root);
@@ -399,7 +420,8 @@ export class QueryBuilder {
         return copy;
     }
     _nestedExcludes(root) {
-        return this._exclude.filter((f) => typeof f === "string" && f.startsWith(root + "."))
+        return this._exclude
+            .filter((f) => typeof f === "string" && f.startsWith(root + "."))
             .map((f) => f.slice(root.length + 1));
     }
 }

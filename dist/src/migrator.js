@@ -9,9 +9,9 @@ export class Migrator {
     }
     // ==== MIGRATE FULL SCHEMA ====
     async migrateSchema(schema) {
-        for (const model of Object.values(schema)) {
+        for (const [name, model] of Object.entries(schema)) {
             if (!model.table)
-                continue;
+                model.table = name.toLowerCase();
             this.ensureTimestamps(model.fields);
             await this.ensureTable(model.table, model.fields);
             await this.applyDefaults(model.table, model.fields);

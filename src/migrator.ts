@@ -26,14 +26,14 @@ export class Migrator {
 
   // ==== MIGRATE FULL SCHEMA ====
   async migrateSchema(schema: Record<string, SchemaModel>) {
-    for (const model of Object.values(schema)) {
-      if (!model.table) continue;
-
-      this.ensureTimestamps(model.fields);
-      await this.ensureTable(model.table, model.fields);
-      await this.applyDefaults(model.table, model.fields);
-    }
+  for (const [name, model] of Object.entries(schema)) {
+    if (!model.table) model.table = name.toLowerCase();
+    this.ensureTimestamps(model.fields);
+    await this.ensureTable(model.table, model.fields);
+    await this.applyDefaults(model.table, model.fields);
   }
+}
+
 
   // ==== ADD TIMESTAMP FIELDS ====
   private ensureTimestamps(fields: Record<string, FieldInfo>) {
