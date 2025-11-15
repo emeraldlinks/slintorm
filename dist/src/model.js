@@ -2,6 +2,7 @@ import { Migrator } from "./migrator.js";
 import { QueryBuilder, mapBooleans } from "./queryBuilder.js";
 import fs from "fs";
 import path from "path";
+let cachedSchema = null;
 /**
  * Factory function to create models with CRUD and query capabilities.
  *
@@ -9,10 +10,13 @@ import path from "path";
  * @returns A function to define a model with optional hooks
  */
 export async function createModelFactory(adapter) {
-    const schemaPath = path.join(adapter.dir, "schema", "generated.json");
-    const schemas = fs.existsSync(schemaPath)
-        ? JSON.parse(fs.readFileSync(schemaPath, "utf8"))
-        : {};
+    const schemaPath = path.join(process.cwd(), adapter.dir, "schema", "generated.json");
+    if (!cachedSchema) {
+        cachedSchema = fs.existsSync(schemaPath)
+            ? JSON.parse(fs.readFileSync(schemaPath, "utf8"))
+            : {};
+    }
+    const schemas = cachedSchema;
     /**
      * Defines a new model for a specific table.
      *

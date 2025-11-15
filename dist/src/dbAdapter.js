@@ -147,4 +147,6 @@ export class DBAdapter {
                 return [];
         }
     }
+
+    // returns nothing here
 }

@@ -43,6 +43,7 @@ type ModelAPI<T extends Record<string, any>> = {
   preload<K extends keyof T & string>(relation: K): Promise<void>;
 };
 
+let cachedSchema: Record<string, any> | null = null
 /**
  * Factory function to create models with CRUD and query capabilities.
  *
@@ -50,11 +51,16 @@ type ModelAPI<T extends Record<string, any>> = {
  * @returns A function to define a model with optional hooks
  */
 export async function createModelFactory(adapter: DBAdapter) {
-  const schemaPath = path.join(adapter.dir!, "schema", "generated.json");
-
-  const schemas: Record<string, any> = fs.existsSync(schemaPath)
+  const schemaPath = path.join(process.cwd(), adapter.dir!, "schema", "generated.json");
+  if (!cachedSchema){
+     cachedSchema = fs.existsSync(schemaPath)
     ? JSON.parse(fs.readFileSync(schemaPath, "utf8"))
     : {};
+    
+  }
+  const schemas = cachedSchema!
+
+  
 
   /**
    * Defines a new model for a specific table.

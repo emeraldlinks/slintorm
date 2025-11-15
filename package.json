@@ -1,6 +1,6 @@
 {
   "name": "slintorm",
-  "version": "0.0.14",
+  "version": "0.0.16",
   "description": "Minimal fully typed orm for typescript",
   "license": "MIT",
   "author": "Joseph Christopher",
@@ -13,7 +13,7 @@
     "README.md",
     "dist"
   ],
- "main": "./dist/src/index.js",
+  "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "exports": {
     ".": {
@@ -47,5 +47,3 @@
     "typescript": "^5.9.3"
   }
 }
-
-
