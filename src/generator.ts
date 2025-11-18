@@ -147,43 +147,95 @@ export default async function generateSchema(srcGlob: string) {
     }
   }
 
-  // ==== 3. Map defineModel calls ====
-  const output: Record<
-    string,
-    {
-      fields: Record<string, FieldMeta>;
-      relations: RelationDef[];
-      table?: string;
-    }
-  > = {};
-  for (const sf of files) {
-    sf.forEachDescendant((node) => {
-      if (node.getKind() === SyntaxKind.CallExpression) {
-        const call = node.asKind(SyntaxKind.CallExpression)!;
-        const expr = call.getExpression().getText();
+  // ==== 2.5 Detect primaryKey or generate one ====
+for (const [modelName, intf] of interfaces.entries()) {
+  let primaryEntry = Object.entries(intf.fields).find(
+    ([, f]) => f.meta.primaryKey === true
+  );
 
-        if (expr.endsWith("defineModel")) {
-          const typeArg = call.getTypeArguments()[0];
-          const arg0 = call.getArguments()[0];
-          if (!typeArg || !arg0) return;
-
-          const typeSymbol = typeArg.getType().getSymbol();
-          const modelName = typeSymbol?.getName();
-          if (!modelName) return;
-
-          const tableName = arg0.getText().replace(/['"]/g, "");
-          const intf = interfaces.get(modelName);
-          if (!intf) return;
-
-          output[modelName] = {
-            fields: intf.fields,
-            relations: intf.relations,
-            table: tableName,
-          };
-        }
-      }
-    });
+  if (!primaryEntry) {
+    primaryEntry = Object.entries(intf.fields).find(
+      ([, f]) => f.meta.index === true
+    );
   }
+
+  if (primaryEntry) {
+    const [fieldName] = primaryEntry;
+    intf.fields[fieldName].meta.primaryKey = true;
+    continue;
+  }
+
+  intf.fields["id"] = {
+    type: "number",
+    meta: { primaryKey: true, auto: true }
+  };
+}
+
+
+// ==== 2.6 Auto timestamps ====
+for (const intf of interfaces.values()) {
+  if (!intf.fields["createdAt"]) {
+    intf.fields["createdAt"] = {
+      type: "string",
+      meta: { index: true, default: "CURRENT_TIMESTAMP" }
+    };
+  }
+  if (!intf.fields["updatedAt"]) {
+    intf.fields["updatedAt"] = {
+      type: "string",
+      meta: { index: true, default: "CURRENT_TIMESTAMP" }
+    };
+  }
+}
+
+
+
+  // ==== 3. Map defineModel calls ====
+const output: Record<
+  string,
+  {
+    primaryKey: string;
+    fields: Record<string, FieldMeta>;
+    relations: RelationDef[];
+    table?: string;
+  }
+> = {};
+
+for (const sf of files) {
+  sf.forEachDescendant((node) => {
+    if (node.getKind() === SyntaxKind.CallExpression) {
+      const call = node.asKind(SyntaxKind.CallExpression)!;
+      const expr = call.getExpression().getText();
+
+      if (expr.endsWith("defineModel")) {
+        const typeArg = call.getTypeArguments()[0];
+        const arg0 = call.getArguments()[0];
+        if (!typeArg || !arg0) return;
+
+        const typeSymbol = typeArg.getType().getSymbol();
+        const modelName = typeSymbol?.getName();
+        if (!modelName) return;
+
+        const tableName = arg0.getText().replace(/['"]/g, "");
+        const intf = interfaces.get(modelName);
+        if (!intf) return;
+
+        // Find primary key for this model
+        const primaryField = Object.entries(intf.fields).find(
+          ([, f]) => f.meta.primaryKey === true
+        )?.[0];
+
+        output[modelName] = {
+          primaryKey: primaryField || "id",
+          fields: intf.fields,
+          relations: intf.relations,
+          table: tableName,
+        };
+      }
+    }
+  });
+}
+
 
   // ==== 4. Write schema ====
   const outDir = path.join(srcGlob, "schema");

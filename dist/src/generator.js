@@ -116,6 +116,37 @@ export default async function generateSchema(srcGlob) {
             }
         }
     }
+    // ==== 2.5 Detect primaryKey or generate one ====
+    for (const [modelName, intf] of interfaces.entries()) {
+        let primaryEntry = Object.entries(intf.fields).find(([, f]) => f.meta.primaryKey === true);
+        if (!primaryEntry) {
+            primaryEntry = Object.entries(intf.fields).find(([, f]) => f.meta.index === true);
+        }
+        if (primaryEntry) {
+            const [fieldName] = primaryEntry;
+            intf.fields[fieldName].meta.primaryKey = true;
+            continue;
+        }
+        intf.fields["id"] = {
+            type: "number",
+            meta: { primaryKey: true, auto: true }
+        };
+    }
+    // ==== 2.6 Auto timestamps ====
+    for (const intf of interfaces.values()) {
+        if (!intf.fields["createdAt"]) {
+            intf.fields["createdAt"] = {
+                type: "string",
+                meta: { index: true, default: "CURRENT_TIMESTAMP" }
+            };
+        }
+        if (!intf.fields["updatedAt"]) {
+            intf.fields["updatedAt"] = {
+                type: "string",
+                meta: { index: true, default: "CURRENT_TIMESTAMP" }
+            };
+        }
+    }
     // ==== 3. Map defineModel calls ====
     const output = {};
     for (const sf of files) {
@@ -136,7 +167,10 @@ export default async function generateSchema(srcGlob) {
                     const intf = interfaces.get(modelName);
                     if (!intf)
                         return;
+                    // Find primary key for this model
+                    const primaryField = Object.entries(intf.fields).find(([, f]) => f.meta.primaryKey === true)?.[0];
                     output[modelName] = {
+                        primaryKey: primaryField || "id",
                         fields: intf.fields,
                         relations: intf.relations,
                         table: tableName,

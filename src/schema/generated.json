@@ -1,12 +1,18 @@
 {
   "User": {
+    "primaryKey": "id",
     "fields": {
       "id": {
         "type": "number | undefined",
         "meta": {
           "index": true,
-          "auto": true
+          "auto": true,
+          "primaryKey": true
         }
+      },
+      "firstName": {
+        "type": "string | undefined",
+        "meta": {}
       },
       "name": {
         "type": "string",
@@ -29,18 +35,34 @@
           "relationship onetoone": "Profile",
           "foreignKey": "userId"
         }
+      },
+      "createdAt": {
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "updatedAt": {
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       }
     },
     "relations": [],
     "table": "users"
   },
   "Post": {
+    "primaryKey": "id",
     "fields": {
       "id": {
         "type": "number | undefined",
         "meta": {
           "index": true,
-          "auto": true
+          "auto": true,
+          "primaryKey": true
         }
       },
       "title": {
@@ -57,18 +79,34 @@
           "relation manytoone": "User",
           "foreignKey": "userId"
         }
+      },
+      "createdAt": {
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "updatedAt": {
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       }
     },
     "relations": [],
     "table": "post"
   },
   "Todo": {
+    "primaryKey": "id",
     "fields": {
       "id": {
         "type": "number | undefined",
         "meta": {
           "index": true,
-          "auto": true
+          "auto": true,
+          "primaryKey": true
         }
       },
       "title": {
@@ -82,18 +120,27 @@
       "createdAt": {
         "type": "string",
         "meta": {}
+      },
+      "updatedAt": {
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       }
     },
     "relations": [],
     "table": "todo"
   },
   "Profile": {
+    "primaryKey": "id",
     "fields": {
       "id": {
         "type": "number | undefined",
         "meta": {
           "index": true,
-          "auto": true
+          "auto": true,
+          "primaryKey": true
         }
       },
       "user": {
@@ -106,18 +153,34 @@
       "userId": {
         "type": "number",
         "meta": {}
+      },
+      "createdAt": {
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "updatedAt": {
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       }
     },
     "relations": [],
     "table": "profile"
   },
   "Task": {
+    "primaryKey": "id",
     "fields": {
       "id": {
         "type": "number | undefined",
         "meta": {
           "index": true,
-          "auto": true
+          "auto": true,
+          "primaryKey": true
         }
       },
       "title": {
@@ -131,18 +194,27 @@
       "createdAt": {
         "type": "string",
         "meta": {}
+      },
+      "updatedAt": {
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       }
     },
     "relations": [],
     "table": "tasks"
   },
   "Team": {
+    "primaryKey": "id",
     "fields": {
       "id": {
         "type": "number | undefined",
         "meta": {
           "index": true,
-          "auto": true
+          "auto": true,
+          "primaryKey": true
         }
       },
       "title": {
@@ -160,6 +232,20 @@
       "tested": {
         "type": "boolean | undefined",
         "meta": {}
+      },
+      "createdAt": {
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "updatedAt": {
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       }
     },
     "relations": [],

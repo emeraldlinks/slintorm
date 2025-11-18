@@ -18,7 +18,7 @@ export declare function createORM(cfg?: {
         delete(filter: Partial<T>): Promise<Partial<T>>;
         get(filter: Partial<T>): Promise<import("./types.js").EntityWithUpdate<T> | null>;
         getAll(): Promise<T[]>;
-        query(): import("./queryBuilder.js").QueryBuilder<T>;
+        query(): import("./extra_clauses.js").AdvancedQueryBuilder<T>;
         count(filter?: Partial<T> | undefined): Promise<number>;
         exists(filter: Partial<T>): Promise<boolean>;
         truncate(): Promise<void>;
@@ -54,7 +54,7 @@ export default class ORMManager {
         delete(filter: Partial<T>): Promise<Partial<T>>;
         get(filter: Partial<T>): Promise<import("./types.js").EntityWithUpdate<T> | null>;
         getAll(): Promise<T[]>;
-        query(): import("./queryBuilder.js").QueryBuilder<T>;
+        query(): import("./extra_clauses.js").AdvancedQueryBuilder<T>;
         count(filter?: Partial<T> | undefined): Promise<number>;
         exists(filter: Partial<T>): Promise<boolean>;
         truncate(): Promise<void>;

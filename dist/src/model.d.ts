@@ -1,6 +1,6 @@
 import { DBAdapter } from "./dbAdapter.js";
-import { QueryBuilder } from "./queryBuilder.js";
 import type { EntityWithUpdate } from "./types";
+import { AdvancedQueryBuilder } from "./extra_clauses.js";
 type ModelAPI<T extends Record<string, any>> = {
     /** Inserts a new record into the table */
     insert(item: T): Promise<EntityWithUpdate<T> | null>;
@@ -13,7 +13,7 @@ type ModelAPI<T extends Record<string, any>> = {
     /** Retrieves all records from the table */
     getAll(): Promise<T[]>;
     /** Returns a query builder instance for custom queries */
-    query(): QueryBuilder<T>;
+    query(): AdvancedQueryBuilder<T>;
     /** Counts the number of records matching the filter */
     count(filter?: Partial<T>): Promise<number>;
     /** Checks if any record exists matching the filter */

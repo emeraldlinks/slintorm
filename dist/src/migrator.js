@@ -20,9 +20,9 @@ export class Migrator {
     // ==== ADD TIMESTAMP FIELDS ====
     ensureTimestamps(fields) {
         const timestampDefaults = {
-            createdAt: { type: "Date", meta: { default: "CURRENT_TIMESTAMP" } },
-            updatedAt: { type: "Date", meta: { default: "CURRENT_TIMESTAMP" } },
-            deletedAt: { type: "Date", meta: { default: null } },
+            createdAt: { type: "Date", meta: { default: "CURRENT_TIMESTAMP", index: true } },
+            updatedAt: { type: "Date", meta: { default: "CURRENT_TIMESTAMP", index: true } },
+            deletedAt: { type: "Date", meta: { default: null, index: true } },
         };
         for (const [key, def] of Object.entries(timestampDefaults)) {
             if (!fields[key])
@@ -36,20 +36,37 @@ export class Migrator {
         const colsSql = [];
         const indexSql = [];
         const fkSql = [];
-        // Build column definitions
         for (const [col, info] of Object.entries(schema)) {
-            let sqlType = tsTypeToSqlType(info.type);
+            let sqlType = "";
+            // driver-aware timestamp mapping
+            if (info.type === "Date") {
+                if (this.driver === "sqlite")
+                    sqlType = "INTEGER"; // store as epoch
+                if (this.driver === "postgres")
+                    sqlType = "TIMESTAMP"; // or TIMESTAMPTZ if you prefer
+                if (this.driver === "mysql")
+                    sqlType = "DATETIME";
+            }
+            else {
+                sqlType = tsTypeToSqlType(info.type);
+            }
             const isNullable = info.type.includes("undefined") ? "" : "NOT NULL";
+            // handle default values
             let defaultClause = "";
             if (info.meta?.default !== undefined) {
                 const def = info.meta.default;
-                if (def === "CURRENT_TIMESTAMP")
-                    defaultClause = "DEFAULT CURRENT_TIMESTAMP";
+                if (def === "CURRENT_TIMESTAMP") {
+                    if (this.driver === "sqlite")
+                        defaultClause = "DEFAULT (strftime('%s','now'))";
+                    else
+                        defaultClause = "DEFAULT CURRENT_TIMESTAMP";
+                }
                 else if (typeof def === "string")
                     defaultClause = `DEFAULT '${def}'`;
                 else if (typeof def === "boolean")
                     defaultClause = `DEFAULT ${def ? 1 : 0}`;
             }
+            // auto primary key
             if (info.meta?.auto) {
                 if (this.driver === "sqlite")
                     sqlType = "INTEGER PRIMARY KEY AUTOINCREMENT";
@@ -75,9 +92,8 @@ export class Migrator {
                 }
             }
         }
-        if (!exists) {
-            await this.exec(`CREATE TABLE "${table}" (${colsSql.join(", ")})`);
-        }
+        if (!exists)
+            await this.exec(`CREATE TABLE IF NOT EXISTS "${table}" (${colsSql.join(", ")})`);
         else {
             const existingCols = await this.getExistingColumns(table);
             for (const colDef of colsSql) {
@@ -90,7 +106,7 @@ export class Migrator {
                 catch { }
             }
         }
-        // Create indexes
+        // indexes
         const existingIndexes = await this.getExistingIndexes(table);
         for (const idx of indexSql) {
             const idxName = idx.match(/idx_[^\s]+/)?.[0]?.toLowerCase() || "";
@@ -101,7 +117,7 @@ export class Migrator {
             }
             catch { }
         }
-        // Create foreign keys
+        // foreign keys
         const existingFKs = await this.getExistingFKs(table);
         for (const fk of fkSql) {
             const fkName = fk.toLowerCase();
@@ -123,16 +139,16 @@ export class Migrator {
                 continue;
             let value;
             if (def === "CURRENT_TIMESTAMP") {
-                value = this.driver === "sqlite" ? "datetime('now')" : "CURRENT_TIMESTAMP";
+                value = this.driver === "sqlite" ? "strftime('%s','now')" : "CURRENT_TIMESTAMP";
             }
             else if (typeof def === "boolean") {
-                value = def ? 1 : 0; // ✅ coerce boolean to number
+                value = def ? 1 : 0;
             }
             else if (typeof def === "string") {
                 value = `'${def}'`;
             }
             else {
-                value = def; // cast safely for numbers
+                value = def;
             }
             await this.exec(`UPDATE "${table}" SET "${col}" = ${value} WHERE "${col}" IS NULL`);
         }

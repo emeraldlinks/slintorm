@@ -1,7 +1,18 @@
 import { Migrator } from "./migrator.js";
-import { QueryBuilder, mapBooleans } from "./queryBuilder.js";
+import { mapBooleans } from "./queryBuilder.js";
 import fs from "fs";
 import path from "path";
+import { AdvancedQueryBuilder } from "./extra_clauses.js";
+function q(driver, col) {
+    if (driver === "postgres")
+        return `"${col}"`;
+    if (driver === "mysql")
+        return `\`${col}\``;
+    return col; // sqlite
+}
+function placeholder(driver, index) {
+    return driver === "postgres" ? `$${index}` : "?";
+}
 let cachedSchema = null;
 /**
  * Factory function to create models with CRUD and query capabilities.
@@ -31,10 +42,15 @@ export async function createModelFactory(adapter) {
         const name = modelName ||
             Object.keys(schemas).find((k) => schemas[k].table === tableName) ||
             tableName;
-        const sqlDriver = (adapter.driver === "sqlite" || adapter.driver === "postgres" || adapter.driver === "mysql")
+        const sqlDriver = adapter.driver === "sqlite" ||
+            adapter.driver === "postgres" ||
+            adapter.driver === "mysql"
             ? adapter.driver
             : undefined;
-        const modelSchema = schemas[name] || { fields: {}, relations: [] };
+        const modelSchema = schemas[name] || {
+            fields: {},
+            relations: [],
+        };
         const driver = adapter.driver;
         const migrator = new Migrator(adapter.exec.bind(adapter), sqlDriver);
         /** Ensures the table exists and is up-to-date */
@@ -54,10 +70,14 @@ export async function createModelFactory(adapter) {
             const keys = Object.keys(filter);
             if (!keys.length)
                 throw new Error("Filter must contain at least one field");
-            if (adapter.driver === "mongodb")
+            const driverType = adapter.driver;
+            if (driverType === "mongodb") {
                 return { mongoFilter: filter };
+            }
             const clause = keys
-                .map((k, i) => `${k} = ${driver === "postgres" ? `$${i + 1}` : "?"}`)
+                .map((k, i) => driverType === "postgres"
+                ? `"${k}" = $${i + 1}` // QUOTE THE FIELD
+                : `${k} = ?`)
                 .join(" AND ");
             const params = keys.map((k) => filter[k]);
             return { clause, params };
@@ -74,15 +94,27 @@ export async function createModelFactory(adapter) {
                 }
                 let insertedId;
                 if (driver === "mongodb") {
-                    await adapter.exec(JSON.stringify({ collection: tableName, action: "insert", data: [item] }));
+                    await adapter.exec(JSON.stringify({
+                        collection: tableName,
+                        action: "insert",
+                        data: [item],
+                    }));
                 }
                 else {
+                    // Only keep primitive values
                     const cols = Object.keys(item).filter((c) => typeof item[c] !== "object");
                     const values = cols.map((c) => item[c]);
-                    const placeholders = driver === "postgres" ? cols.map((_, i) => `$${i + 1}`).join(", ") : cols.map(() => "?").join(", ");
-                    const wrap = (c) => (driver === "mysql" ? `\`${c}\`` : `"${c}"`);
-                    const sql = `INSERT INTO ${wrap(tableName)} (${cols.map(wrap).join(",")}) VALUES (${placeholders})`;
+                    // PostgreSQL uses $1, $2... placeholders
+                    const placeholders = driver === "postgres"
+                        ? cols.map((_, i) => `$${i + 1}`).join(", ")
+                        : cols.map(() => "?").join(", ");
+                    // Quote columns for MySQL/Postgres
+                    const wrap = (c) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
+                    // Ensure columns match DB exactly: convert JS keys to match DB
+                    const sqlCols = cols.map(wrap).join(",");
+                    const sql = `INSERT INTO ${wrap(tableName)} (${sqlCols}) VALUES (${placeholders}) RETURNING *`;
                     const result = await adapter.exec(sql, values);
+                    // Handle inserted ID
                     if (driver === "sqlite" && result?.lastID)
                         insertedId = result.lastID;
                     if (driver === "mysql" && result?.insertId)
@@ -92,9 +124,11 @@ export async function createModelFactory(adapter) {
                     if (insertedId)
                         item.id = insertedId;
                 }
+                // Retrieve inserted row to include defaults, etc.
                 const inserted = await this.get(item);
-                if (hooks?.onCreateAfter && inserted)
+                if (hooks?.onCreateAfter && inserted) {
                     await hooks.onCreateAfter(inserted);
+                }
                 return inserted;
             },
             /** @inheritdoc */
@@ -112,16 +146,29 @@ export async function createModelFactory(adapter) {
                     data = modified;
                 }
                 if (driver === "mongodb") {
-                    await adapter.exec(JSON.stringify({ collection: tableName, action: "update", filter: where, data }));
+                    await adapter.exec(JSON.stringify({
+                        collection: tableName,
+                        action: "update",
+                        filter: where,
+                        data,
+                    }));
                 }
                 else {
+                    const isPg = driver === "postgres";
                     const setCols = Object.keys(data);
-                    const setClause = setCols.map((c) => `${String(c)} = ?`).join(", ");
-                    const setValues = setCols.map((c) => data[c]);
                     const whereCols = Object.keys(where);
-                    const whereClause = whereCols.map((c) => `${String(c)} = ?`).join(" AND ");
+                    const setClause = setCols
+                        .map((c, i) => (isPg ? `"${c}" = $${i + 1}` : `${c} = ?`))
+                        .join(", ");
+                    const whereClause = whereCols
+                        .map((c, i) => isPg ? `"${c}" = $${setCols.length + i + 1}` : `${c} = ?`)
+                        .join(" AND ");
+                    const setValues = setCols.map((c) => data[c]);
                     const whereValues = whereCols.map((c) => where[c]);
-                    const sql = `UPDATE ${tableName} SET ${setClause} WHERE ${whereClause}`;
+                    const sql = `UPDATE ${isPg ? `"${tableName}"` : tableName}
+                 SET ${setClause}
+                 WHERE ${whereClause}`;
+                    // console.log(sql, [...setValues, ...whereValues]);
                     await adapter.exec(sql, [...setValues, ...whereValues]);
                 }
                 const after = await this.get(where);
@@ -187,17 +234,23 @@ export async function createModelFactory(adapter) {
             },
             /** @inheritdoc */
             query() {
-                return new QueryBuilder(tableName, adapter.dir, adapter.exec.bind(adapter));
+                return new AdvancedQueryBuilder(tableName, adapter.dir, adapter.exec.bind(adapter), { dialect: adapter.driver });
             },
             /** @inheritdoc */
             async count(filter) {
                 await ensure();
                 if (driver === "mongodb") {
-                    const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "find", filter: filter || {} }));
+                    const res = await adapter.exec(JSON.stringify({
+                        collection: tableName,
+                        action: "find",
+                        filter: filter || {},
+                    }));
                     return res.rows.length;
                 }
                 else {
-                    const where = filter && Object.keys(filter).length ? buildWhereClause(filter) : { clause: "1=1", params: [] };
+                    const where = filter && Object.keys(filter).length
+                        ? buildWhereClause(filter)
+                        : { clause: "1=1", params: [] };
                     const sql = `SELECT COUNT(*) as count FROM ${tableName} WHERE ${where.clause}`;
                     const res = await adapter.exec(sql, where.params);
                     return res.rows[0]?.count ?? 0;
