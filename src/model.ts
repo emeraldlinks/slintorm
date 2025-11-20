@@ -5,6 +5,9 @@ import fs from "fs";
 import path from "path";
 import type { RelationDef, EntityWithUpdate } from "./types";
 import { AdvancedQueryBuilder } from "./extra_clauses.js";
+import { fileURLToPath } from "url";
+
+
 
 function q(driver: string, col: string) {
   if (driver === "postgres") return `"${col}"`;
@@ -57,6 +60,29 @@ type ModelAPI<T extends Record<string, any>> = {
   preload<K extends keyof T & string>(relation: K): Promise<void>;
 };
 
+
+
+async function loadSchema(adapterDir: string) {
+      // Use process.cwd() to get the project root
+    const jsPath = path.join(process.cwd(), adapterDir, "schema", "generated.js");
+    const tsPath = path.join(process.cwd(), adapterDir, "schema", "generated.ts");
+  try {
+    if (fs.existsSync(jsPath)) {
+      const { schema } = await import(`file://${jsPath}`);
+      return schema;
+    } else if (fs.existsSync(tsPath)) {
+      const { schema } = await import(`file://${tsPath}`);
+      return schema;
+    } else {
+      console.error("tried: ", jsPath, tsPath)
+
+      throw new Error("No schema file found (js or ts).");
+    }
+  } catch (err) {
+    console.error("Failed to import schema:", err);
+    throw err;
+  }
+}
 let cachedSchema: Record<string, any> | null = null;
 /**
  * Factory function to create models with CRUD and query capabilities.
@@ -65,19 +91,7 @@ let cachedSchema: Record<string, any> | null = null;
  * @returns A function to define a model with optional hooks
  */
 export async function createModelFactory(adapter: DBAdapter) {
-  const schemaPath = path.join(
-    process.cwd(),
-    adapter.dir!,
-    "schema",
-    "generated.json"
-  );
-  if (!cachedSchema) {
-    cachedSchema = fs.existsSync(schemaPath)
-      ? JSON.parse(fs.readFileSync(schemaPath, "utf8"))
-      : {};
-  }
-  const schemas = cachedSchema!;
-
+  const schemas = await loadSchema(adapter.dir!);
   // console.log("schemas: ", schemas)
 
   /**
@@ -134,9 +148,7 @@ export async function createModelFactory(adapter: DBAdapter) {
     async function ensure() {
       await migrator.ensureTable(tableName, modelSchema.fields || {});
     }
-    (async () => {
-      await ensure();
-    })();
+  
 
     /**
      * Builds a WHERE clause for SQL queries
@@ -355,11 +367,13 @@ async insert(item: T) {
       },
 
       /** @inheritdoc */
-      query(): AdvancedQueryBuilder<T> {
+     query(): AdvancedQueryBuilder<T> {
   return new AdvancedQueryBuilder<T>(
     tableName,
     adapter.dir!,
     adapter.exec.bind(adapter),
+    modelName!, 
+    schemas,                   
     { dialect: adapter.driver }
   );
 },

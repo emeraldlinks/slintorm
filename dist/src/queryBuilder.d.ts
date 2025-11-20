@@ -34,7 +34,8 @@ export declare class QueryBuilder<T extends Record<string, any>> {
     } | undefined;
     protected modelName: string;
     protected dir: string;
-    constructor(table: string, dir: string, exec: ExecFn, orm?: {
+    protected schema: Record<string, any> | any;
+    constructor(table: string, dir: string, exec: ExecFn, modelName: string, schema: Record<string, any>, orm?: {
         dialect?: string;
     });
     private normalizeModelName;

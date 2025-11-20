@@ -13,6 +13,29 @@ function q(driver, col) {
 function placeholder(driver, index) {
     return driver === "postgres" ? `$${index}` : "?";
 }
+async function loadSchema(adapterDir) {
+    // Use process.cwd() to get the project root
+    const jsPath = path.join(process.cwd(), adapterDir, "schema", "generated.js");
+    const tsPath = path.join(process.cwd(), adapterDir, "schema", "generated.ts");
+    try {
+        if (fs.existsSync(jsPath)) {
+            const { schema } = await import(`file://${jsPath}`);
+            return schema;
+        }
+        else if (fs.existsSync(tsPath)) {
+            const { schema } = await import(`file://${tsPath}`);
+            return schema;
+        }
+        else {
+            console.error("tried: ", jsPath, tsPath);
+            throw new Error("No schema file found (js or ts).");
+        }
+    }
+    catch (err) {
+        console.error("Failed to import schema:", err);
+        throw err;
+    }
+}
 let cachedSchema = null;
 /**
  * Factory function to create models with CRUD and query capabilities.
@@ -21,13 +44,7 @@ let cachedSchema = null;
  * @returns A function to define a model with optional hooks
  */
 export async function createModelFactory(adapter) {
-    const schemaPath = path.join(process.cwd(), adapter.dir, "schema", "generated.json");
-    if (!cachedSchema) {
-        cachedSchema = fs.existsSync(schemaPath)
-            ? JSON.parse(fs.readFileSync(schemaPath, "utf8"))
-            : {};
-    }
-    const schemas = cachedSchema;
+    const schemas = await loadSchema(adapter.dir);
     // console.log("schemas: ", schemas)
     /**
      * Defines a new model for a specific table.
@@ -57,9 +74,6 @@ export async function createModelFactory(adapter) {
         async function ensure() {
             await migrator.ensureTable(tableName, modelSchema.fields || {});
         }
-        (async () => {
-            await ensure();
-        })();
         /**
          * Builds a WHERE clause for SQL queries
          *
@@ -234,7 +248,7 @@ export async function createModelFactory(adapter) {
             },
             /** @inheritdoc */
             query() {
-                return new AdvancedQueryBuilder(tableName, adapter.dir, adapter.exec.bind(adapter), { dialect: adapter.driver });
+                return new AdvancedQueryBuilder(tableName, adapter.dir, adapter.exec.bind(adapter), modelName, schemas, { dialect: adapter.driver });
             },
             /** @inheritdoc */
             async count(filter) {

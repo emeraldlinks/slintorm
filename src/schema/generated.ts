@@ -1,4 +1,8 @@
-{
+
+// AUTO-GENERATED SCHEMA
+// DO NOT EDIT
+
+export const schema = {
   "User": {
     "primaryKey": "id",
     "fields": {
@@ -206,6 +210,40 @@
     "relations": [],
     "table": "tasks"
   },
+  "Tasksx": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "meta": {
+          "index": true,
+          "auto": true,
+          "primaryKey": true
+        }
+      },
+      "title": {
+        "type": "string",
+        "meta": {}
+      },
+      "detail": {
+        "type": "string",
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string",
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      }
+    },
+    "relations": [],
+    "table": "tasksx"
+  },
   "Team": {
     "primaryKey": "id",
     "fields": {
@@ -251,4 +289,4 @@
     "relations": [],
     "table": "team"
   }
-}
+};

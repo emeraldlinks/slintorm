@@ -27,7 +27,7 @@ export declare function createORM(cfg?: {
         preload<K extends keyof T & string>(relation: K): Promise<void>;
     };
 }>;
-type driver = "sqlite" | "postgres" | "mysql" | undefined;
+type driver = "sqlite" | "postgres" | "mysql" | "mongodb" | undefined;
 export default class ORMManager {
     cfg: {
         driver?: driver;

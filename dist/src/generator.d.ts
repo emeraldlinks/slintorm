@@ -13,4 +13,4 @@ export interface RelationDef {
     foreignKey: string;
     through?: string;
 }
-export default function generateSchema(srcGlob: string): Promise<boolean>;
+export default function generateSchema(srcGlob: string): Promise<Record<string, any>>;

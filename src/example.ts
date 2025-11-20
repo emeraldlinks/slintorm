@@ -46,6 +46,14 @@ interface Task {
   createdAt: string;
 }
 
+interface Tasksx {
+  // @index;auto
+  id?: number;
+  title: string;
+  detail: string;
+  createdAt: string;
+}
+
 
 interface Team {
   // @index;auto
@@ -65,18 +73,18 @@ async function main() {
   //     "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
   // }, );
 
-    const orm = new ORMManager({
-    driver: "postgres",
-    databaseUrl: "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
-    dir: "src",
-  });
-
-
-  // const orm = new ORMManager({
-  //   driver: "sqlite",
-  //   databaseUrl: "./testx.db",
-  //   dir: "src"
+  //   const orm = new ORMManager({
+  //   driver: "postgres",
+  //   databaseUrl: "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
+  //   dir: "src",
   // });
+
+
+  const orm = new ORMManager({
+    driver: "sqlite",
+    databaseUrl: "./testx.db",
+    dir: "src"
+  });
 
   await orm.migrate()
   // Define models
@@ -85,6 +93,7 @@ async function main() {
   const Todos = await orm.defineModel<Todo>("todo", "Todo");
   const Profiles = await orm.defineModel<Profile>("profile", "Profile");
   const Tasks = await orm.defineModel<Task>("tasks", "Task");
+  const Tasksx = await orm.defineModel<Tasksx>("tasksx", "Tasksx");
   const Teams = await orm.defineModel<Team>("team", "Team", {
     onCreateBefore(item) {
       console.log("before create Team: ", item)
@@ -96,6 +105,7 @@ async function main() {
 
     },
   });
+  Tasksx.query().first()
     const uu =  await Users.insert({name: "McGarret", firstName: "Helpper" });
    console.log("instered: ", uu)
 
@@ -108,7 +118,7 @@ async function main() {
     detail: "Wash all plates",
     createdAt: new Date().toISOString(),
   });
-  console.log("todos:", await Todos.getAll());
+  // console.log("todos:", await Todos.getAll());
 
   // ==== CREATE USERS AND POSTS ====
   // const newUser = await Users.insert({

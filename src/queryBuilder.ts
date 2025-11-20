@@ -27,26 +27,7 @@ export function mapBooleans<T extends Record<string, any>>(
   return newRow as T;
 }
 
-let schemaCache: Record<string, any> | null = null;
-function getSchema(dir: string) {
-  if (!dir) {
-    console.log("Error: ", "No directory provided");
-    return;
-  }
-  if (!schemaCache) {
-    const schemaPath = path.join(
-      process.cwd(),
-      dir,
-      "schema",
-      "generated.json"
-    );
-    if (!fs.existsSync(schemaPath)) {
-      throw new Error(`Schema file not found at ${schemaPath}`);
-    }
-    schemaCache = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
-  }
-  return schemaCache!;
-}
+
 
 type DialectAdapter = {
   formatPlaceholder: (index: number) => string;
@@ -101,12 +82,15 @@ export class QueryBuilder<T extends Record<string, any>> {
   protected orm: { dialect?: string } | undefined;
   protected modelName: string;
   protected dir: string;
+  protected schema: Record<string, any> | any
 
   constructor(
     table: string,
     dir: string,
     exec: ExecFn,
-    orm?: { dialect?: string }
+    modelName: string,
+    schema: Record<string, any>,
+    orm?: { dialect?: string },
   ) {
     if (!dir) {
       throw new Error("QueryBuilder requires a valid directory for schema.");
@@ -116,19 +100,34 @@ export class QueryBuilder<T extends Record<string, any>> {
     this.exec = exec;
     this.orm = orm;
     this.dir = dir;
-    this.modelName = this.normalizeModelName(table);
+    this.schema = schema
+    this.modelName = modelName;
+    if (!schema){
+            throw new Error("Schema not found")
+        }
+        if (!this.modelName){
+            throw new Error("modelName not found")
+
+        }
+      
   }
 
-  private normalizeModelName(name: string) {
-    const schema = getSchema(this.dir);
+
+  private normalizeModelName(name: string, explicit?: string) {
+    if (explicit && this.schema[explicit]) return explicit;
+
     const normalized = name[0].toUpperCase() + name.slice(1);
-    if (schema![normalized]) return normalized;
-    const singular = normalized.endsWith("s")
-      ? normalized.slice(0, -1)
-      : normalized;
-    if (schema![singular]) return singular;
+    if (this.schema[normalized]) return normalized;
+
+    const singular = normalized.endsWith("s") ? normalized.slice(0, -1) : normalized;
+    if (this.schema[singular]) return singular;
+        console.log("model name: ", normalized)
+        console.log("model explicit: ", explicit)
+        console.log("model normalized: ", normalized)
+
     return normalized;
-  }
+}
+
 /**
  * Select columns to fetch.
  * @template K - Keys of the table
@@ -340,7 +339,7 @@ async get(): Promise<T[]> {
         rows = await this.applyPreloads(rows);
     }
 
-    const schemaFields = getSchema(this.dir)![this.modelName].fields;
+    const schemaFields = this.schema![this.modelName].fields;
     rows = rows.map((r) => mapBooleans(r, schemaFields));
 
     if (this._exclude.length) {
@@ -365,8 +364,7 @@ async get(): Promise<T[]> {
  */
 async first(condition?: WhereCondition<T> | string): Promise<T | null> {
     const dialect = Dialects[this.orm?.dialect || "sqlite"];
-    const schema = getSchema(this.dir);
-    const modelSchema = schema ? schema[this.modelName] : undefined;
+    const modelSchema = this.schema ? this.schema[this.modelName] : undefined;
     const modelCols = modelSchema ? Object.keys(modelSchema.fields || {}) : [];
 
     if (condition) {
@@ -419,8 +417,7 @@ private cleanRow(row: any, targetSchema: any, root?: string) {
 private async applyPreloads(rows: any[]): Promise<any[]> {
   if (!rows.length) return rows;
 
-  const schema = getSchema(this.dir);
-  const modelSchema = schema![this.modelName];
+  const modelSchema = this.schema![this.modelName];
   if (!modelSchema) return rows;
 
   const dialect = Dialects[this.orm?.dialect || "sqlite"];
@@ -465,7 +462,7 @@ private async applyPreloads(rows: any[]): Promise<any[]> {
     const relation = relations.find(r => r.fieldName === root);
     if (!relation) continue;
 
-    const targetSchema = schema![relation.targetModel];
+    const targetSchema = this.schema![relation.targetModel];
     if (!targetSchema) continue;
 
     const targetPK = targetSchema.primaryKey || "id";
@@ -583,7 +580,7 @@ private async applyPreloads(rows: any[]): Promise<any[]> {
     //
     const nested = grouped[root];
     if (nested.length && relatedRows.length) {
-      const qb = new QueryBuilder(targetSchema.table, this.dir, this.exec, this.orm);
+      const qb = new QueryBuilder(targetSchema.table, this.dir, this.exec, this.modelName, this.schema, this.orm);
       qb._preloads = nested;
       qb._exclude = this._nestedExcludes(root);
 

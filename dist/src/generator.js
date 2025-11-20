@@ -183,7 +183,15 @@ export default async function generateSchema(srcGlob) {
     const outDir = path.join(srcGlob, "schema");
     if (!fs.existsSync(outDir))
         fs.mkdirSync(outDir, { recursive: true });
-    fs.writeFileSync(path.join(outDir, "generated.json"), JSON.stringify(output, null, 2), "utf8");
-    console.log("schema/generated.json written successfully");
-    return true;
+    const outFile = path.join(outDir, "generated.ts");
+    const json = JSON.stringify(output, null, 2);
+    const jsContent = `
+// AUTO-GENERATED SCHEMA
+// DO NOT EDIT
+
+export const schema = ${json};
+`;
+    fs.writeFileSync(outFile, jsContent, "utf8");
+    console.log("schema/generated.ts written successfully");
+    return output;
 }

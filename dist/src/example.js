@@ -7,16 +7,16 @@ async function main() {
     //   databaseUrl:
     //     "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
     // }, );
-    const orm = new ORMManager({
-        driver: "postgres",
-        databaseUrl: "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
-        dir: "src",
-    });
-    // const orm = new ORMManager({
-    //   driver: "sqlite",
-    //   databaseUrl: "./testx.db",
-    //   dir: "src"
+    //   const orm = new ORMManager({
+    //   driver: "postgres",
+    //   databaseUrl: "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
+    //   dir: "src",
     // });
+    const orm = new ORMManager({
+        driver: "sqlite",
+        databaseUrl: "./testx.db",
+        dir: "src"
+    });
     await orm.migrate();
     // Define models
     const Users = await orm.defineModel("users", "User");
@@ -24,6 +24,7 @@ async function main() {
     const Todos = await orm.defineModel("todo", "Todo");
     const Profiles = await orm.defineModel("profile", "Profile");
     const Tasks = await orm.defineModel("tasks", "Task");
+    const Tasksx = await orm.defineModel("tasksx", "Tasksx");
     const Teams = await orm.defineModel("team", "Team", {
         onCreateBefore(item) {
             console.log("before create Team: ", item);
@@ -34,6 +35,7 @@ async function main() {
         onUpdateAfter(oldData, newData) {
         },
     });
+    Tasksx.query().first();
     const uu = await Users.insert({ name: "McGarret", firstName: "Helpper" });
     console.log("instered: ", uu);
     console.log("=== ORM Example ===");
@@ -43,7 +45,7 @@ async function main() {
         detail: "Wash all plates",
         createdAt: new Date().toISOString(),
     });
-    console.log("todos:", await Todos.getAll());
+    // console.log("todos:", await Todos.getAll());
     // ==== CREATE USERS AND POSTS ====
     // const newUser = await Users.insert({
     //   name: "Catherine",
