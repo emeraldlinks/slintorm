@@ -7,129 +7,215 @@ export const schema = {
     "primaryKey": "id",
     "fields": {
       "id": {
-        "type": "number | undefined",
+        "type": "number",
         "meta": {
-          "index": true,
-          "auto": true,
-          "primaryKey": true
+          "primaryKey": true,
+          "auto": true
         }
       },
       "firstName": {
         "type": "string | undefined",
-        "meta": {}
+        "meta": {
+          "nullable": true,
+          "length": "100",
+          "comment": "First name"
+        }
       },
       "name": {
         "type": "string",
-        "meta": {}
+        "meta": {
+          "length": "100",
+          "not null": true,
+          "comment": "Last name"
+        }
       },
       "lastname": {
         "type": "string | undefined",
-        "meta": {}
-      },
-      "posts": {
-        "type": "Post[] | undefined",
         "meta": {
-          "relation onetomany": "Post",
-          "foreignKey": "userId"
+          "nullable": true,
+          "length": "100",
+          "comment": "Last name"
         }
       },
-      "profile": {
-        "type": "Profile | undefined",
+      "email": {
+        "type": "string | undefined",
+        "meta": {}
+      },
+      "meta": {
+        "type": "Record<string, any> | undefined",
         "meta": {
-          "relationship onetoone": "Profile",
-          "foreignKey": "userId"
+          "json": true,
+          "nullable": true,
+          "comment": "Extra user info"
         }
       },
       "createdAt": {
-        "type": "string",
-        "meta": {
-          "index": true,
-          "default": "CURRENT_TIMESTAMP"
-        }
+        "type": "string | undefined",
+        "meta": {}
       },
       "updatedAt": {
-        "type": "string",
+        "type": "string | undefined",
+        "meta": {}
+      },
+      "deletedAt": {
+        "type": "string | undefined",
         "meta": {
-          "index": true,
-          "default": "CURRENT_TIMESTAMP"
+          "softDelete": true
+        }
+      },
+      "status": {
+        "type": "\"active\" | \"inactive\" | \"banned\" | undefined",
+        "meta": {
+          "enum": "(active,inactive,banned)"
         }
       }
     },
-    "relations": [],
+    "relations": [
+      {
+        "sourceModel": "User",
+        "fieldName": "posts",
+        "kind": "onetomany",
+        "targetModel": "Post",
+        "foreignKey": "userId",
+        "meta": {
+          "relationship onetomany": "Post",
+          "foreignKey": "userId"
+        }
+      },
+      {
+        "sourceModel": "User",
+        "fieldName": "profile",
+        "kind": "onetoone",
+        "targetModel": "Profile",
+        "foreignKey": "userId",
+        "meta": {
+          "relationship onetoone": "Profile",
+          "foreignKey": "userId",
+          "onDelete": "CASCADE"
+        }
+      }
+    ],
     "table": "users"
   },
   "Post": {
     "primaryKey": "id",
     "fields": {
       "id": {
-        "type": "number | undefined",
+        "type": "number",
         "meta": {
-          "index": true,
-          "auto": true,
-          "primaryKey": true
+          "primaryKey": true,
+          "auto": true
         }
       },
       "title": {
         "type": "string",
-        "meta": {}
+        "meta": {
+          "length": "255",
+          "not null": true,
+          "comment": "Post title"
+        }
       },
       "userId": {
         "type": "number | undefined",
-        "meta": {}
-      },
-      "user": {
-        "type": "User | undefined",
         "meta": {
-          "relation manytoone": "User",
-          "foreignKey": "userId"
+          "nullable": true,
+          "comment": "Author user ID"
+        }
+      },
+      "meta": {
+        "type": "Record<string, any> | undefined",
+        "meta": {
+          "json": true,
+          "nullable": true,
+          "comment": "Extra post data"
         }
       },
       "createdAt": {
-        "type": "string",
-        "meta": {
-          "index": true,
-          "default": "CURRENT_TIMESTAMP"
-        }
+        "type": "string | undefined",
+        "meta": {}
       },
       "updatedAt": {
-        "type": "string",
+        "type": "string | undefined",
+        "meta": {}
+      },
+      "deletedAt": {
+        "type": "string | undefined",
         "meta": {
-          "index": true,
-          "default": "CURRENT_TIMESTAMP"
+          "softDelete": true
+        }
+      },
+      "status": {
+        "type": "\"draft\" | \"published\" | \"archived\" | undefined",
+        "meta": {
+          "enum": "(draft,published,archived)"
         }
       }
     },
-    "relations": [],
+    "relations": [
+      {
+        "sourceModel": "Post",
+        "fieldName": "user",
+        "kind": "manytoone",
+        "targetModel": "User",
+        "foreignKey": "userId",
+        "meta": {
+          "relation manytoone": "User",
+          "foreignKey": "userId",
+          "onDelete": "SET NULL"
+        }
+      }
+    ],
     "table": "post"
   },
   "Todo": {
     "primaryKey": "id",
     "fields": {
       "id": {
-        "type": "number | undefined",
+        "type": "number",
         "meta": {
-          "index": true,
-          "auto": true,
-          "primaryKey": true
+          "primaryKey": true,
+          "auto": true
         }
       },
       "title": {
         "type": "string",
-        "meta": {}
+        "meta": {
+          "length": "255",
+          "not null": true
+        }
       },
       "detail": {
         "type": "string",
-        "meta": {}
+        "meta": {
+          "nullable": true,
+          "length": "1000"
+        }
       },
       "createdAt": {
-        "type": "string",
+        "type": "string | undefined",
         "meta": {}
       },
       "updatedAt": {
-        "type": "string",
+        "type": "string | undefined",
+        "meta": {}
+      },
+      "deletedAt": {
+        "type": "string | undefined",
         "meta": {
-          "index": true,
-          "default": "CURRENT_TIMESTAMP"
+          "softDelete": true
+        }
+      },
+      "meta": {
+        "type": "Record<string, any> | undefined",
+        "meta": {
+          "json": true,
+          "nullable": true
+        }
+      },
+      "priority": {
+        "type": "\"low\" | \"medium\" | \"high\" | undefined",
+        "meta": {
+          "enum": "(low,medium,high)"
         }
       }
     },
@@ -140,70 +226,109 @@ export const schema = {
     "primaryKey": "id",
     "fields": {
       "id": {
-        "type": "number | undefined",
+        "type": "number",
         "meta": {
-          "index": true,
-          "auto": true,
-          "primaryKey": true
-        }
-      },
-      "user": {
-        "type": "User | undefined",
-        "meta": {
-          "relationship onetoone": "User",
-          "foreignKey": "userId"
+          "primaryKey": true,
+          "auto": true
         }
       },
       "userId": {
         "type": "number",
         "meta": {}
       },
-      "createdAt": {
-        "type": "string",
+      "meta": {
+        "type": "Record<string, any> | undefined",
         "meta": {
-          "index": true,
-          "default": "CURRENT_TIMESTAMP"
+          "json": true,
+          "nullable": true,
+          "comment": "Extra profile data"
         }
       },
+      "createdAt": {
+        "type": "string | undefined",
+        "meta": {}
+      },
       "updatedAt": {
-        "type": "string",
+        "type": "string | undefined",
+        "meta": {}
+      },
+      "deletedAt": {
+        "type": "string | undefined",
         "meta": {
-          "index": true,
-          "default": "CURRENT_TIMESTAMP"
+          "softDelete": true
+        }
+      },
+      "gender": {
+        "type": "\"male\" | \"female\" | \"other\" | undefined",
+        "meta": {
+          "enum": "(male,female, other)"
         }
       }
     },
-    "relations": [],
+    "relations": [
+      {
+        "sourceModel": "Profile",
+        "fieldName": "user",
+        "kind": "onetoone",
+        "targetModel": "User",
+        "foreignKey": "userId",
+        "meta": {
+          "relation onetoone": "User",
+          "foreignKey": "userId"
+        }
+      }
+    ],
     "table": "profile"
   },
   "Task": {
     "primaryKey": "id",
     "fields": {
       "id": {
-        "type": "number | undefined",
+        "type": "number",
         "meta": {
-          "index": true,
-          "auto": true,
-          "primaryKey": true
+          "primaryKey": true,
+          "auto": true
         }
       },
       "title": {
         "type": "string",
-        "meta": {}
+        "meta": {
+          "length": "255",
+          "not null": true
+        }
       },
       "detail": {
         "type": "string",
-        "meta": {}
+        "meta": {
+          "nullable": true,
+          "length": "1000"
+        }
       },
       "createdAt": {
-        "type": "string",
+        "type": "string | undefined",
         "meta": {}
       },
       "updatedAt": {
-        "type": "string",
+        "type": "string | undefined",
+        "meta": {}
+      },
+      "deletedAt": {
+        "type": "string | undefined",
         "meta": {
-          "index": true,
-          "default": "CURRENT_TIMESTAMP"
+          "softDelete": true
+        }
+      },
+      "meta": {
+        "type": "Record<string, any> | undefined",
+        "meta": {
+          "json": true,
+          "nullable": true
+        }
+      },
+      "status": {
+        "type": "\"todo\" | \"inprogress\" | \"done\" | undefined",
+        "meta": {
+          "enum": "(todo,inprogress,done)"
         }
       }
     },
@@ -214,30 +339,51 @@ export const schema = {
     "primaryKey": "id",
     "fields": {
       "id": {
-        "type": "number | undefined",
+        "type": "number",
         "meta": {
-          "index": true,
-          "auto": true,
-          "primaryKey": true
+          "primaryKey": true,
+          "auto": true
         }
       },
       "title": {
         "type": "string",
-        "meta": {}
+        "meta": {
+          "length": "255",
+          "not null": true
+        }
       },
       "detail": {
         "type": "string",
-        "meta": {}
+        "meta": {
+          "nullable": true,
+          "length": "1000"
+        }
       },
       "createdAt": {
-        "type": "string",
+        "type": "string | undefined",
         "meta": {}
       },
       "updatedAt": {
-        "type": "string",
+        "type": "string | undefined",
+        "meta": {}
+      },
+      "deletedAt": {
+        "type": "string | undefined",
         "meta": {
-          "index": true,
-          "default": "CURRENT_TIMESTAMP"
+          "softDelete": true
+        }
+      },
+      "meta": {
+        "type": "Record<string, any> | undefined",
+        "meta": {
+          "json": true,
+          "nullable": true
+        }
+      },
+      "status": {
+        "type": "\"todo\" | \"inprogress\" | \"done\" | undefined",
+        "meta": {
+          "enum": "(todo, inprogress, done)"
         }
       }
     },
@@ -248,41 +394,63 @@ export const schema = {
     "primaryKey": "id",
     "fields": {
       "id": {
-        "type": "number | undefined",
+        "type": "number",
         "meta": {
-          "index": true,
-          "auto": true,
-          "primaryKey": true
+          "primaryKey": true,
+          "auto": true
         }
       },
       "title": {
         "type": "string",
-        "meta": {}
+        "meta": {
+          "length": "255",
+          "not null": true
+        }
       },
       "detail": {
         "type": "string",
-        "meta": {}
+        "meta": {
+          "nullable": true,
+          "length": "1000"
+        }
       },
       "open": {
         "type": "boolean | undefined",
-        "meta": {}
+        "meta": {
+          "nullable": true
+        }
       },
       "tested": {
         "type": "boolean | undefined",
-        "meta": {}
-      },
-      "createdAt": {
-        "type": "string",
         "meta": {
-          "index": true,
-          "default": "CURRENT_TIMESTAMP"
+          "nullable": true
         }
       },
-      "updatedAt": {
-        "type": "string",
+      "meta": {
+        "type": "Record<string, any> | undefined",
         "meta": {
-          "index": true,
-          "default": "CURRENT_TIMESTAMP"
+          "json": true,
+          "nullable": true
+        }
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "meta": {}
+      },
+      "deletedAt": {
+        "type": "string | undefined",
+        "meta": {
+          "softDelete": true
+        }
+      },
+      "status": {
+        "type": "\"active\" | \"archived\" | undefined",
+        "meta": {
+          "enum": "(active,archived)"
         }
       }
     },

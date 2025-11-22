@@ -19,3 +19,27 @@ export interface RelationDef {
   foreignKey?: string;    // e.g. "userId" (on target)
   through?: string;       // pivot table for manytomany
 }
+
+
+interface FieldMeta {
+  nullable?: boolean;
+  unsigned?: boolean;
+  collate?: string;
+  comment?: string;
+  index?: boolean;
+  unique?: boolean;
+  auto?: boolean;
+  default?: string | number | boolean;
+  defaultFn?: string;
+  generatedAlways?: string;
+  onUpdateNow?: boolean;
+  json?: boolean;
+  array?: boolean;
+  length?: number;
+  precision?: number;
+  scale?: number;
+  enum?: string[];
+  check?: string;
+  jsonDefault?: any;
+  uniqueComposite?: string[][];
+}

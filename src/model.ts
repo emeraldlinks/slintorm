@@ -146,7 +146,7 @@ export async function createModelFactory(adapter: DBAdapter) {
 
     /** Ensures the table exists and is up-to-date */
     async function ensure() {
-      await migrator.ensureTable(tableName, modelSchema.fields || {});
+      await migrator.ensureTable(tableName, modelSchema.fields || {}, modelSchema?.relations);
     }
   
 

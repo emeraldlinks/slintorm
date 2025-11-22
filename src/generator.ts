@@ -1,9 +1,9 @@
 /**
- * ORM Schema Generator using ts-morph (Fully working)
+ * ORM Schema Generator using ts-morph
  *
  * Usage:
  *   import generateSchema from './generator';
- *   await generateSchema();
+ *   await generateSchema("src");
  */
 
 import { Project, SyntaxKind } from "ts-morph";
@@ -18,6 +18,7 @@ export interface RelationDef {
   targetModel: string;
   foreignKey: string;
   through?: string;
+  meta?: Record<string, string | boolean>;
 }
 
 interface FieldMeta {
@@ -33,8 +34,7 @@ interface InterfaceInfo {
 // ==== Main Generator ====
 export default async function generateSchema(srcGlob: string) {
   const project = new Project({ tsConfigFilePath: "tsconfig.json" });
-  const ssfilePath = srcGlob + "/**/*.ts"
-  const files = project.getSourceFiles(ssfilePath);
+  const files = project.getSourceFiles(srcGlob + "/**/*.ts");
   console.log(`Scanning ${files.length} source files...`);
 
   const interfaces = new Map<string, InterfaceInfo>();
@@ -42,216 +42,189 @@ export default async function generateSchema(srcGlob: string) {
   // ==== 1. Gather interfaces ====
   for (const sf of files) {
     for (const intf of sf.getInterfaces()) {
-      const name = intf.getName();
+      const intfName = intf.getName();
       const fields: Record<string, FieldMeta> = {};
       const relations: RelationDef[] = [];
 
       for (const prop of intf.getProperties()) {
         const propName = prop.getName();
         let typeNode = prop.getTypeNode();
-        let type = typeNode
-          ? typeNode.getText()
-          : prop.getType().getText();
-
-        // Normalize and clean verbose import paths like import("...").Task
+        let type = typeNode ? typeNode.getText() : prop.getType().getText();
         type = type.replace(/import\(["'][^"']+["']\)\./g, "");
-
-        // Optional cleanup for edge cases like 'typeof import("...").default'
         type = type.replace(/typeof\s+/, "");
 
         const isOptional = prop.hasQuestionToken();
         const tsType = isOptional ? `${type} | undefined` : type;
 
-        let relationComment = "";
+        // ==== Parse directives ====
         const directives: Record<string, string | boolean> = {};
-
-        // ==== Parse JSDoc or inline comments ====
+        let relationComment = "";
         const jsDocs = prop.getJsDocs();
-        if (jsDocs.length)
-          relationComment = jsDocs.map((j) => j.getComment() || "").join(" ");
+        if (jsDocs.length) relationComment = jsDocs.map(j => j.getComment() || "").join(" ");
         if (!relationComment) {
           const trailingMatch = prop.getText().match(/\/\/\s*@(.+)/);
           if (trailingMatch) relationComment = trailingMatch[1];
         }
         if (!relationComment) {
-          const leadingComments = prop
-            .getLeadingCommentRanges()
-            .map((r) => r.getText())
-            .join(" ");
+          const leadingComments = prop.getLeadingCommentRanges().map(r => r.getText()).join(" ");
           const leadingMatch = leadingComments.match(/@([^\n\r*]+)/);
           if (leadingMatch) relationComment = leadingMatch[1].trim();
         }
 
-        // ==== Parse directives ====
         if (relationComment) {
-          const parts = relationComment.split(";").map((p) => p.trim());
+          const parts = relationComment.split(";").map(p => p.trim());
           for (const part of parts) {
-            const [k, v] = part.split(":").map((x) => x.trim());
-            if (!v) directives[k] = true;
-            else directives[k] = v;
+            const [k, v] = part.split(":").map(x => x.trim());
+            directives[k] = v ?? true;
           }
         }
+        // ==== Detect relation using any comment (leading or trailing) ====
+        
+        const leading = prop
+          .getLeadingCommentRanges()
+          .map((r) => r.getText())
+          .join(" ");
+        const trailing = prop
+          .getTrailingCommentRanges()
+          .map((r) => r.getText())
+          .join(" ");
+        const comment = (jsDocs + " " + leading + " " + trailing).trim();
 
-        // ==== Handle @relation ====
-        if (directives["relation"]) {
-          const relationParts = directives["relation"]
-            .toString()
-            .split(";")
-            .map((p) => p.trim());
-          const [kindTarget, ...extras] = relationParts;
-          const [kind, targetModelRaw] = kindTarget
-            .split(":")
-            .map((x) => x.trim());
-          const targetModel = targetModelRaw || propName.replace(/s$/, "");
-
+        if (/(@relation|@relationship)/.test(comment)) {
+          // Properly parse kind and targetModel
+          let kind: RelationDef["kind"] = "onetomany";
+          let targetModel = propName.replace(/s$/, "");
           let foreignKey = "";
-          let through = "";
-          for (const extra of extras) {
-            const [k, v] = extra.split(":").map((x) => x.trim());
-            if (k === "foreignKey" && v) foreignKey = v;
-            if (k === "through" && v) through = v;
+          let through: string | undefined;
+
+          // Match the main relation pattern: @relation|@relationship kind:TargetModel
+          const relMatch = comment.match(
+            /@(?:relation|relationship)\s+(\w+):(\w+)/
+          );
+          if (relMatch) {
+            kind = relMatch[1] as any; // e.g., "onetoone"
+            targetModel = relMatch[2]; // e.g., "User"
+          }
+
+          // Match optional foreignKey and through
+          const fkMatch = comment.match(/foreignKey:([a-zA-Z0-9_]+)/);
+          if (fkMatch) foreignKey = fkMatch[1];
+
+          const throughMatch = comment.match(/through:([a-zA-Z0-9_]+)/);
+          if (throughMatch) through = throughMatch[1];
+
+          // Auto-fill default foreignKey if missing
+          if (!foreignKey) {
+            if (kind === "manytoone")
+              foreignKey = `${targetModel.toLowerCase()}Id`;
+            else if (kind === "onetomany")
+              foreignKey = `${intfName.toLowerCase()}Id`;
+            else foreignKey = "id";
           }
 
           relations.push({
-            sourceModel: name,
+            sourceModel: intfName,
             fieldName: propName,
-            kind: kind as RelationDef["kind"],
+            kind,
             targetModel,
-            foreignKey: foreignKey, // auto-detect later if empty
-            through: through || undefined,
+            foreignKey,
+            through,
+            meta: directives,
           });
 
-          continue; // Skip adding as normal field
+          continue; // skip adding this property to fields
         }
 
         // ==== Normal field ====
         fields[propName] = { type: tsType, meta: directives };
       }
 
-      interfaces.set(name, { fields, relations });
+      interfaces.set(intfName, { fields, relations });
     }
   }
 
-  // ==== 2. Auto-fill missing foreignKeys ====
-  for (const intf of interfaces.values()) {
-    for (const rel of intf.relations) {
-      if (!rel.foreignKey) {
-        if (rel.kind === "manytoone") {
-          rel.foreignKey = `${rel.targetModel.toLowerCase()}Id`;
-        } else if (rel.kind === "onetomany") {
-          rel.foreignKey = `${rel.sourceModel.toLowerCase()}Id`;
-        } else {
-          rel.foreignKey = "id";
-        }
-      }
-    }
-  }
-
-  // ==== 2.5 Detect primaryKey or generate one ====
-for (const [modelName, intf] of interfaces.entries()) {
-  let primaryEntry = Object.entries(intf.fields).find(
-    ([, f]) => f.meta.primaryKey === true
-  );
-
-  if (!primaryEntry) {
-    primaryEntry = Object.entries(intf.fields).find(
-      ([, f]) => f.meta.index === true
+  // ==== 2. Add primary key and timestamps if missing ====
+  for (const [modelName, intf] of interfaces.entries()) {
+    // Primary key
+    const primary = Object.entries(intf.fields).find(
+      ([, f]) => f.meta.primaryKey === true
     );
+    if (!primary)
+      intf.fields["id"] = {
+        type: "number",
+        meta: { primaryKey: true, auto: true },
+      };
+    else intf.fields[primary[0]].meta.primaryKey = true;
+
+    // Timestamps
+    if (!intf.fields["createdAt"])
+      intf.fields["createdAt"] = {
+        type: "string",
+        meta: { index: true, default: "CURRENT_TIMESTAMP" },
+      };
+    if (!intf.fields["updatedAt"])
+      intf.fields["updatedAt"] = {
+        type: "string",
+        meta: { index: true, default: "CURRENT_TIMESTAMP" },
+      };
   }
 
-  if (primaryEntry) {
-    const [fieldName] = primaryEntry;
-    intf.fields[fieldName].meta.primaryKey = true;
-    continue;
-  }
-
-  intf.fields["id"] = {
-    type: "number",
-    meta: { primaryKey: true, auto: true }
-  };
-}
-
-
-// ==== 2.6 Auto timestamps ====
-for (const intf of interfaces.values()) {
-  if (!intf.fields["createdAt"]) {
-    intf.fields["createdAt"] = {
-      type: "string",
-      meta: { index: true, default: "CURRENT_TIMESTAMP" }
-    };
-  }
-  if (!intf.fields["updatedAt"]) {
-    intf.fields["updatedAt"] = {
-      type: "string",
-      meta: { index: true, default: "CURRENT_TIMESTAMP" }
-    };
-  }
-}
-
-
-
-  // ==== 3. Map defineModel calls ====
-const output: Record<
-  string,
-  {
-    primaryKey: string;
-    fields: Record<string, FieldMeta>;
-    relations: RelationDef[];
-    table?: string;
-  }
-> = {};
-
-for (const sf of files) {
-  sf.forEachDescendant((node) => {
-    if (node.getKind() === SyntaxKind.CallExpression) {
-      const call = node.asKind(SyntaxKind.CallExpression)!;
-      const expr = call.getExpression().getText();
-
-      if (expr.endsWith("defineModel")) {
-        const typeArg = call.getTypeArguments()[0];
-        const arg0 = call.getArguments()[0];
-        if (!typeArg || !arg0) return;
-
-        const typeSymbol = typeArg.getType().getSymbol();
-        const modelName = typeSymbol?.getName();
-        if (!modelName) return;
-
-        const tableName = arg0.getText().replace(/['"]/g, "");
-        const intf = interfaces.get(modelName);
-        if (!intf) return;
-
-        // Find primary key for this model
-        const primaryField = Object.entries(intf.fields).find(
-          ([, f]) => f.meta.primaryKey === true
-        )?.[0];
-
-        output[modelName] = {
-          primaryKey: primaryField || "id",
-          fields: intf.fields,
-          relations: intf.relations,
-          table: tableName,
-        };
-      }
+  // ==== 3. Map table names from defineModel calls ====
+  const output: Record<
+    string,
+    {
+      primaryKey: string;
+      fields: Record<string, FieldMeta>;
+      relations: RelationDef[];
+      table?: string;
     }
-  });
-}
+  > = {};
 
+  for (const sf of files) {
+    sf.forEachDescendant((node) => {
+      if (node.getKind() !== SyntaxKind.CallExpression) return;
+      const call = node.asKind(SyntaxKind.CallExpression)!;
+      if (!call.getExpression().getText().endsWith("defineModel")) return;
 
-  // ==== 4. Write schema ====
- const outDir = path.join(srcGlob, "schema");
+      const typeArg = call.getTypeArguments()[0];
+      const arg0 = call.getArguments()[0];
+      if (!typeArg || !arg0) return;
+
+      const typeSymbol = typeArg.getType().getSymbol();
+      const modelName = typeSymbol?.getName();
+      if (!modelName) return;
+
+      const tableName = arg0.getText().replace(/['"]/g, "");
+      const intf = interfaces.get(modelName);
+      if (!intf) return;
+
+      const primaryField =
+        Object.entries(intf.fields).find(([, f]) => f.meta.primaryKey)?.[0] ||
+        "id";
+
+      output[modelName] = {
+        primaryKey: primaryField,
+        fields: intf.fields,
+        relations: intf.relations,
+        table: tableName,
+      };
+    });
+  }
+
+  // ==== 4. Write schema to file ====
+  const outDir = path.join(srcGlob, "schema");
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-
   const outFile = path.join(outDir, "generated.ts");
-const json = JSON.stringify(output, null, 2)
+
   const jsContent = `
 // AUTO-GENERATED SCHEMA
 // DO NOT EDIT
 
-export const schema = ${json};
+export const schema = ${JSON.stringify(output, null, 2)};
 `;
 
   fs.writeFileSync(outFile, jsContent, "utf8");
   console.log("schema/generated.ts written successfully");
 
-  return output as unknown as Record<string, any> ;
+  return output as Record<string, any>;
 }

@@ -1,68 +1,144 @@
 import ORMManager, { createORM } from "./index";
 
-// ==== MODEL INTERFACES (UNCHANGED) ====
+/** Post table */
 interface Post {
-  // @index;auto
+  // @index;
   id?: number;
+  // @length:255;not null;comment:Post title
   title: string;
+  // @nullable;comment:Author user ID
   userId?: number;
-  // @relation manytoone:User;foreignKey:userId
+  // @relation manytoone:User;foreignKey:userId;onDelete:SET NULL
   user?: User;
+  // @json;nullable;comment:Extra post data
+  meta?: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
+  // @softDelete
+  deletedAt?: string;
+  // @enum:(draft,published,archived)
+  status?: "draft" | "published" | "archived";
 }
 
+/** User table */
 interface User {
-  // @index;auto;primaryKey
+  // @index;auto;comment:primary key
   id?: number;
-  firstName?: string
+  // @nullable;length:100;comment:First name
+  firstName?: string;
+  // @length:100;not null;comment:Last name
   name: string;
+  // @nullable;length:100;comment:Last name
   lastname?: string;
-  // @relation onetomany:Post;foreignKey:userId
+  // unique;comment:Email
+  email?: string;
+  // @relationship onetomany:Post;foreignKey:userId
   posts?: Post[];
-  // @relationship onetoone:Profile;foreignKey:userId
+  // @relationship onetoone:Profile;foreignKey:userId;onDelete:CASCADE
   profile?: Profile;
+  // @json;nullable;comment:Extra user info
+  meta?: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
+  // @softDelete
+  deletedAt?: string;
+  // @enum:(active,inactive,banned)
+  status?: "active" | "inactive" | "banned";
 }
 
+/** Profile table */
 interface Profile {
-  // @index;auto
+  // @index;auto;comment:primary key
   id?: number;
-  // @relationship onetoone:User;foreignKey:userId
+  // @relation onetoone:User;foreignKey:userId
   user?: User;
   userId: number;
+  // @json;nullable;comment:Extra profile data
+  meta?: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
+  // @softDelete
+  deletedAt?: string;
+  // @enum:(male,female, other)
+  gender?: "male" | "female" | "other";
 }
 
+/** Todo table */
 interface Todo {
-  // @index;auto
+  // @index;auto;comment:primary key
   id?: number;
+  // @length:255;not null
   title: string;
+  // @nullable;length:1000
   detail: string;
-  createdAt: string;
+  createdAt?: string;
+  updatedAt?: string;
+  // @softDelete
+  deletedAt?: string;
+  // @json;nullable
+  meta?: Record<string, any>;
+  // @enum:(low,medium,high)
+  priority?: "low" | "medium" | "high";
 }
 
+/** Task table */
 interface Task {
   // @index;auto
   id?: number;
+  // @length:255;not null
   title: string;
+  // @nullable;length:1000
   detail: string;
-  createdAt: string;
+  createdAt?: string;
+  updatedAt?: string;
+  // @softDelete
+  deletedAt?: string;
+  // @json;nullable
+  meta?: Record<string, any>;
+  // @enum:(todo,inprogress,done)
+  status?: "todo" | "inprogress" | "done";
 }
 
+/** Tasksx table */
 interface Tasksx {
   // @index;auto
   id?: number;
+  // @length:255;not null
   title: string;
+  // @nullable;length:1000
   detail: string;
-  createdAt: string;
+  createdAt?: string;
+  updatedAt?: string;
+  // @softDelete
+  deletedAt?: string;
+  // @json;nullable
+  meta?: Record<string, any>;
+  // @enum:(todo, inprogress, done)
+  status?: "todo" | "inprogress" | "done";
 }
 
-
+/** Team table */
 interface Team {
   // @index;auto
   id?: number;
+  // @length:255;not null
   title: string;
+  // @nullable;length:1000
   detail: string;
-  open?: boolean
-  tested?: boolean
+  // @nullable
+  open?: boolean;
+  // @nullable
+  tested?: boolean;
+  // @json;nullable
+  meta?: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
+  // @softDelete
+  deletedAt?: string;
+  // @enum:(active,archived)
+  status?: "active" | "archived";
 }
+
 
 // ==== MAIN FUNCTION ====
 async function main() {
@@ -106,8 +182,8 @@ async function main() {
     },
   });
   Tasksx.query().first()
-    const uu =  await Users.insert({name: "McGarret", firstName: "Helpper" });
-   console.log("instered: ", uu)
+    // const uu =  await Users.insert({name: "McGarret", firstName: "Helpper" });
+  //  console.log("instered: ", uu)
 
 
   console.log("=== ORM Example ===");
@@ -128,31 +204,34 @@ async function main() {
   // });
   // console.log("newUser: ", newUser);
 
-  const newPost = await Posts.insert({ title: "Hello Boys", userId: 2 });
-  console.log("newPost: ", newPost);
+  // const newPost = await Posts.insert({ title: "Hello Boys", userId: 2 });
+  // console.log("newPost: ", newPost);
 
-  const oo = await Users.query().preload("posts").first()
-  console.log("profile: ", oo)
+  const oo = await Users.query()
+  // .preload("posts")
+  .preload("profile").first()
+  // console.log("profile:x ", oo)
 
   // ==== CREATE PROFILE FOR USER (one-to-one) ====
 
   // ==== FETCH USER WITH POSTS AND PROFILE ====
   const userWithRelations = await Users.query()
-    .preload("posts")
+    // .preload("posts")
     .preload("profile")
+    .preload("profile.user")
     // .preload("posts.user")
     .first("id = 2");
-
-  console.dir(userWithRelations, { depth: null });
+console.log("userxs: ", userWithRelations)
+  // console.dir(userWithRelations, { depth: null });
 
   // ==== FETCH POST WITH USER RELATION ====
   console.log("posts with user =====>");
   const postWithUser = await Posts.query()
   
     .preload("user")
-    .preload("user.posts")
+    // .preload("user.posts")
     .preload("user.profile")
-    .preload("user.posts.user")
+    // .preload("user.posts.user")
     .exclude("user.lastname")
     .first();
   // console.dir(postWithUser, { depth: null });
@@ -193,8 +272,8 @@ const rankedUsers = await Users.query()
     .first()
 
     const updated = await upuser?.update({ name: "Amike Egwamene" });
-    console.log("Updated user:", updated);
-    console.log("excluded user fields:", excupuser);
+    // console.log("Updated user:", updated);
+    // console.log("excluded user fields:", excupuser);
 
   } catch (err) {
     console.log("error updated user: ", err)
@@ -204,17 +283,18 @@ const rankedUsers = await Users.query()
 
   const pp = await Profiles.query()
   .preload("user").preload("user.profile").preload("user.profile.user")
+  .preload("user.profile.user.profile.user")
   .exclude("user.name")
   .first(`userId = ${2}`)
   console.log("profile: ", pp)
 
 
-  const nnew = await Teams.insert({
-    title: "To watch plates",
-    detail: "Wash all plates",
-    open: true,
-    tested: false
-  });
+  // const nnew = await Teams.insert({
+  //   title: "To watch plates",
+  //   detail: "Wash all plates",
+  //   open: true,
+  //   tested: false
+  // });
   // console.log("Teams:", nnew);
 
 
