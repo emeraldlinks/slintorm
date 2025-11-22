@@ -27,59 +27,144 @@ npm install slintorm
 ## Model Interfaces
 
 ```ts
-// ==== MODEL INTERFACES (UNCHANGED) ====
+
+/** Post table */
 interface Post {
-  // @index;auto
+  // @index;
   id?: number;
+  // @length:255;not null;comment:Post title
   title: string;
+  // @nullable;comment:Author user ID
   userId?: number;
-  // @relation manytoone:User;foreignKey:userId
+  // @relation manytoone:User;foreignKey:userId;onDelete:SET NULL
   user?: User;
+  // @json;nullable;comment:Extra post data
+  meta?: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
+  // @softDelete
+  deletedAt?: string;
+  // @enum:(draft,published,archived)
+  status?: "draft" | "published" | "archived";
 }
 
+/** User table */
 interface User {
-  // @index;auto;primaryKey
+  // @index;auto;comment:primary key
   id?: number;
+  // @nullable;length:100;comment:First name
+  firstName?: string;
+  // @length:100;not null;comment:Last name
   name: string;
+  // @nullable;length:100;comment:Last name
   lastname?: string;
-  // @relation onetomany:Post;foreignKey:userId
+  // unique;comment:Email
+  email?: string;
+  // @relationship onetomany:Post;foreignKey:userId
   posts?: Post[];
-  // @relationship onetoone:Profile;foreignKey:userId
+  // @relationship onetoone:Profile;foreignKey:userId;onDelete:CASCADE
   profile?: Profile;
+  // @json;nullable;comment:Extra user info
+  meta?: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
+  // @softDelete
+  deletedAt?: string;
+  // @enum:(active,inactive,banned)
+  status?: "active" | "inactive" | "banned";
 }
 
+/** Profile table */
 interface Profile {
-  // @index;auto
+  // @index;auto;comment:primary key
   id?: number;
-  // @relationship onetoone:User;foreignKey:userId
+  // @relation onetoone:User;foreignKey:userId
   user?: User;
   userId: number;
+  // @json;nullable;comment:Extra profile data
+  meta?: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
+  // @softDelete
+  deletedAt?: string;
+  // @enum:(male,female, other)
+  gender?: "male" | "female" | "other";
 }
 
+/** Todo table */
 interface Todo {
-  // @index;auto
+  // @index;auto;comment:primary key
   id?: number;
+  // @length:255;not null
   title: string;
+  // @nullable;length:1000
   detail: string;
-  createdAt: string;
+  createdAt?: string;
+  updatedAt?: string;
+  // @softDelete
+  deletedAt?: string;
+  // @json;nullable
+  meta?: Record<string, any>;
+  // @enum:(low,medium,high)
+  priority?: "low" | "medium" | "high";
 }
 
+/** Task table */
 interface Task {
   // @index;auto
   id?: number;
+  // @length:255;not null
   title: string;
+  // @nullable;length:1000
   detail: string;
-  createdAt: string;
+  createdAt?: string;
+  updatedAt?: string;
+  // @softDelete
+  deletedAt?: string;
+  // @json;nullable
+  meta?: Record<string, any>;
+  // @enum:(todo,inprogress,done)
+  status?: "todo" | "inprogress" | "done";
+} 
+
+/** Tasksx table */
+interface Tasksx {
+  // @index;auto
+  id?: number;
+  // @length:255;not null
+  title: string;
+  // @nullable;length:1000
+  detail: string;
+  createdAt?: string;
+  updatedAt?: string;
+  // @softDelete
+  deletedAt?: string;
+  // @json;nullable
+  meta?: Record<string, any>;
+  // @enum:(todo, inprogress, done)
+  status?: "todo" | "inprogress" | "done";
 }
 
-
+/** Team table */
 interface Team {
   // @index;auto
   id?: number;
+  // @length:255;not null
   title: string;
+  // @nullable;length:1000
   detail: string;
-  open?: boolean
-  tested?: boolean
+  // @nullable
+  open?: boolean;
+  // @nullable
+  tested?: boolean;
+  // @json;nullable
+  meta?: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
+  // @softDelete
+  deletedAt?: string;
+  // @enum:(active,archived)
+  status?: "active" | "archived";
 }
 ```
 
