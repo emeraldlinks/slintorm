@@ -157,16 +157,27 @@ export default async function generateSchema(srcGlob: string) {
     else intf.fields[primary[0]].meta.primaryKey = true;
 
     // Timestamps
-    if (!intf.fields["createdAt"])
+    if (!intf.fields["createdAt"]){
       intf.fields["createdAt"] = {
         type: "string",
         meta: { index: true, default: "CURRENT_TIMESTAMP" },
-      };
-    if (!intf.fields["updatedAt"])
+    }} else{
+      intf.fields["createdAt"] = {
+        type: "string",
+        meta: { index: true, default: "CURRENT_TIMESTAMP" }
+      }
+    } ;
+    if (!intf.fields["updatedAt"]){
       intf.fields["updatedAt"] = {
         type: "string",
         meta: { index: true, default: "CURRENT_TIMESTAMP" },
       };
+    } else{
+      intf.fields["updatedAt"] = {
+        type: "string",
+        meta: { index: true, default: "CURRENT_TIMESTAMP" },
+      };
+    }
   }
 
   // ==== 3. Map table names from defineModel calls ====

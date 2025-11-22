@@ -55,11 +55,13 @@ export default class ORMManager {
 const sqlDriver = ["sqlite", "postgres", "mysql"].includes(this.adapter.driver!)
   ? this.adapter.driver as "sqlite" | "postgres" | "mysql"
   : undefined;
-    const migrator = new Migrator(this.adapter.exec.bind(this.adapter), sqlDriver);
-    for (const modelName of Object.keys(schema)) {
+  const migrator = new Migrator(this.adapter.exec.bind(this.adapter), sqlDriver);
+  for (const modelName of Object.keys(schema)) {
+    
+    const model = schema[modelName];
+    // console.log(model.table || modelName, model,  model?.relations)
 
-      const model = schema[modelName];
-      await migrator.ensureTable(model.table || modelName, model.fields);
+      await migrator.ensureTable(model.table || modelName, model?.fields,  model?.relations);
     }
   }
 }

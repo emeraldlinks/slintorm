@@ -146,7 +146,7 @@ export async function createModelFactory(adapter: DBAdapter) {
 
     /** Ensures the table exists and is up-to-date */
     async function ensure() {
-      await migrator.ensureTable(tableName, modelSchema.fields || {}, modelSchema?.relations);
+      await migrator.ensureTable(tableName, modelSchema || {}, modelSchema?.relations);
     }
   
 
@@ -182,7 +182,7 @@ export async function createModelFactory(adapter: DBAdapter) {
     return {
       /** @inheritdoc */
 async insert(item: T) {
-  await ensure();
+   
 
   if (hooks?.onCreateBefore) {
     const modified = await hooks.onCreateBefore(item);
@@ -247,7 +247,7 @@ async insert(item: T) {
 
       /** @inheritdoc */
       async update(where: Partial<T>, data: Partial<T>) {
-        await ensure();
+         
         const before = await this.get(where);
 
         if (!where || !Object.keys(where).length)
@@ -307,7 +307,7 @@ async insert(item: T) {
       },
       /** @inheritdoc */
       async delete(filter: Partial<T>) {
-        await ensure();
+         
         if (!Object.keys(filter).length)
           throw new Error("Delete filter cannot be empty");
         const toDelete = await this.get(filter);
@@ -330,7 +330,7 @@ async insert(item: T) {
 
       /** @inheritdoc */
       async get(filter: Partial<T>) {
-        await ensure();
+         
         if (!Object.keys(filter).length)
           throw new Error("Get filter cannot be empty");
         let record: T | null = null;
@@ -356,7 +356,7 @@ async insert(item: T) {
 
       /** @inheritdoc */
       async getAll() {
-        await ensure();
+         
         const res =
           driver === "mongodb"
             ? await adapter.exec(
@@ -379,7 +379,7 @@ async insert(item: T) {
 },
       /** @inheritdoc */
       async count(filter?: Partial<T>) {
-        await ensure();
+         
         if (driver === "mongodb") {
           const res = await adapter.exec(
             JSON.stringify({
@@ -402,7 +402,7 @@ async insert(item: T) {
 
       /** @inheritdoc */
       async exists(filter: Partial<T>) {
-        await ensure();
+         
         const { clause, params } = buildWhereClause(filter);
         const sql = `SELECT 1 FROM ${tableName} WHERE ${clause} LIMIT 1`;
         const res = await adapter.exec(sql, params);
@@ -411,7 +411,7 @@ async insert(item: T) {
 
       /** @inheritdoc */
       async truncate() {
-        await ensure();
+         
         await adapter.exec(`DELETE FROM ${tableName}`);
       },
 

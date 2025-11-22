@@ -30,7 +30,7 @@ interface User {
   name: string;
   // @nullable;length:100;comment:Last name
   lastname?: string;
-  // unique;comment:Email
+  // @unique;comment:Email
   email?: string;
   // @relationship onetomany:Post;foreignKey:userId
   posts?: Post[];
@@ -149,18 +149,18 @@ async function main() {
   //     "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
   // }, );
 
-  //   const orm = new ORMManager({
-  //   driver: "postgres",
-  //   databaseUrl: "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
-  //   dir: "src",
-  // });
-
-
-  const orm = new ORMManager({
-    driver: "sqlite",
-    databaseUrl: "./testx.db",
-    dir: "src"
+    const orm = new ORMManager({
+    driver: "postgres",
+    databaseUrl: "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
+    dir: "src",
   });
+
+
+  // const orm = new ORMManager({
+  //   driver: "sqlite",
+  //   databaseUrl: "./testx.db",
+  //   dir: "src"
+  // });
 
   await orm.migrate()
   // Define models
@@ -197,14 +197,16 @@ async function main() {
   // console.log("todos:", await Todos.getAll());
 
   // ==== CREATE USERS AND POSTS ====
-  // const newUser = await Users.insert({
-  //   name: "Catherine",
-  //   lastname: "Christopher",
-  //   firstName: "Chris"
-  // });
-  // console.log("newUser: ", newUser);
+  const newUser = await Users.insert({
+    name: "Catherine",
+    lastname: "Christopher",
+    firstName: "Chris",
+    email: "jj@test.com"
+  });
+  console.log("newUser: ", newUser);
+  // const profile = await Profiles.insert({userId: 2})
 
-  // const newPost = await Posts.insert({ title: "Hello Boys", userId: 2 });
+  const newPost = await Posts.insert({ title: "Hello Boys", userId: 2 });
   // console.log("newPost: ", newPost);
 
   const oo = await Users.query()

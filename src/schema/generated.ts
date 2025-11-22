@@ -39,7 +39,10 @@ export const schema = {
       },
       "email": {
         "type": "string | undefined",
-        "meta": {}
+        "meta": {
+          "unique": true,
+          "comment": "Email"
+        }
       },
       "meta": {
         "type": "Record<string, any> | undefined",
@@ -50,12 +53,18 @@ export const schema = {
         }
       },
       "createdAt": {
-        "type": "string | undefined",
-        "meta": {}
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       },
       "updatedAt": {
-        "type": "string | undefined",
-        "meta": {}
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       },
       "deletedAt": {
         "type": "string | undefined",
@@ -131,12 +140,18 @@ export const schema = {
         }
       },
       "createdAt": {
-        "type": "string | undefined",
-        "meta": {}
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       },
       "updatedAt": {
-        "type": "string | undefined",
-        "meta": {}
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       },
       "deletedAt": {
         "type": "string | undefined",
@@ -192,12 +207,18 @@ export const schema = {
         }
       },
       "createdAt": {
-        "type": "string | undefined",
-        "meta": {}
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       },
       "updatedAt": {
-        "type": "string | undefined",
-        "meta": {}
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       },
       "deletedAt": {
         "type": "string | undefined",
@@ -245,12 +266,18 @@ export const schema = {
         }
       },
       "createdAt": {
-        "type": "string | undefined",
-        "meta": {}
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       },
       "updatedAt": {
-        "type": "string | undefined",
-        "meta": {}
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       },
       "deletedAt": {
         "type": "string | undefined",
@@ -305,12 +332,18 @@ export const schema = {
         }
       },
       "createdAt": {
-        "type": "string | undefined",
-        "meta": {}
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       },
       "updatedAt": {
-        "type": "string | undefined",
-        "meta": {}
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       },
       "deletedAt": {
         "type": "string | undefined",
@@ -360,12 +393,18 @@ export const schema = {
         }
       },
       "createdAt": {
-        "type": "string | undefined",
-        "meta": {}
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       },
       "updatedAt": {
-        "type": "string | undefined",
-        "meta": {}
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       },
       "deletedAt": {
         "type": "string | undefined",
@@ -434,12 +473,18 @@ export const schema = {
         }
       },
       "createdAt": {
-        "type": "string | undefined",
-        "meta": {}
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       },
       "updatedAt": {
-        "type": "string | undefined",
-        "meta": {}
+        "type": "string",
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
       },
       "deletedAt": {
         "type": "string | undefined",

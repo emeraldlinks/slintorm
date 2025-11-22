@@ -64,318 +64,179 @@ export class Migrator {
     }
   }
   // inside Migrator class - replace ensureTable with this implementation
-  async ensureTable(
-    table: string,
-    schema: Record<string, FieldInfo>,
-    relations?: Relation[]
-  ) {
-    table = table.toLowerCase();
-    if (processedTables.has(table)) return;
-  processedTables.add(table);
-    const exists = await this.tableExists(table);
+async ensureTable(
+  table: string,
+  schema: Record<string, FieldInfo>,
+  relations?: Relation[]
+) {
+  table = table.toLowerCase();
+  if (processedTables.has(table)) return;
 
-    const colsSql: string[] = [];
-    const indexSql: string[] = [];
-    const fkConstraintsInline: string[] = []; // used when creating table fresh
-    const postCreateFkSql: string[] = []; // ALTER ... ADD CONSTRAINT ... (for existing tables or safer FK adds)
-    const commentSql: string[] = [];
+  const exists = await this.tableExists(table);
+  const addToProcessed = () => processedTables.add(table);
 
-    // track if we've declared a primary key in this run (so we don't declare twice)
-    let primaryDeclared = false;
+  const colsSql: string[] = [];
+  const indexSql: string[] = [];
+  const inlineConstraints: string[] = [];
+  const postConstraints: string[] = [];
+  const commentSql: string[] = [];
 
-    // build column definitions
-    for (const [col, info] of Object.entries(schema)) {
-      if (!info || !info.type) continue;
+  let primaryDeclared = false;
 
-      let sqlType = "";
-      // ----- ENUMS -----
-      if (info.meta?.enum) {
-        // parse and create/return a type for Postgres, or fallback to varchar for others
-        const enumValues = this.parseEnumValues(info.meta.enum as string);
-        if (this.driver === "postgres") {
-          // create type (if not exists) and use it
-          sqlType = await this.createEnumColumn(table, col, enumValues);
-        } else {
-          sqlType = "VARCHAR(255)";
-        }
+  for (const [col, info] of Object.entries(schema)) {
+    if (!info || !info.type) continue;
 
-        // ----- JSON -----
-      } else if (info.meta?.json) {
-        if (this.driver === "postgres") sqlType = "JSONB";
-        else if (this.driver === "sqlite") sqlType = "TEXT";
-        else sqlType = "JSON";
-
-        // ----- DATE/TIMESTAMP -----
-      } else if (info.type === "Date") {
-        if (this.driver === "sqlite") sqlType = "INTEGER";
-        else if (this.driver === "postgres") sqlType = "TIMESTAMP";
-        else sqlType = "DATETIME";
-
-        // ----- LENGTH / DEFAULT MAPPING -----
-      } else {
-        sqlType = tsTypeToSqlType(info.type);
-        if (info.meta?.length && /char|varchar/i.test(sqlType)) {
-          sqlType = sqlType.replace(/\(.+\)$/, "") + `(${info.meta.length})`;
-        }
-      }
-
-      // ----- GENERATED ALWAYS (computed) -----
-      const generated = info.meta?.generatedAlways
-        ? `GENERATED ALWAYS AS (${info.meta.generatedAlways}) STORED`
-        : "";
-
-      // ----- CHECK / COLLATE / COMMENT / OTHER CLAUSES -----
-      const collate = info.meta?.collate ? `COLLATE ${info.meta.collate}` : "";
-      const check = Array.isArray(info.meta?.enum)
-        ? `CHECK ("${col}" IN (${(info.meta!.enum as string[])
-            .map((v) => `'${v}'`)
-            .join(", ")}))`
-        : info.meta?.check
-        ? `CHECK (${info.meta.check})`
-        : "";
-
-      // ----- NULLABLE -----
-      // meta.nullable OR type includes undefined -> allow NULL, else NOT NULL
-      const isNullable =
-        info.meta?.nullable || info.type.includes("undefined")
-          ? ""
-          : "NOT NULL";
-
-      // ----- DEFAULT -----
-      let defaultClause = "";
-      if (info.meta?.default !== undefined) {
-        const def = info.meta.default;
-        if (def === "CURRENT_TIMESTAMP") {
-          defaultClause =
-            this.driver === "sqlite"
-              ? "DEFAULT (datetime('now'))"
-              : "DEFAULT CURRENT_TIMESTAMP";
-        } else if (typeof def === "string") {
-          defaultClause = `DEFAULT '${def}'`;
-        } else if (typeof def === "boolean") {
-          defaultClause = `DEFAULT ${def ? 1 : 0}`;
-        } else {
-          defaultClause = `DEFAULT ${def}`;
-        }
-      }
-      if (info.meta?.defaultFn) {
-        defaultClause = `DEFAULT ${info.meta.defaultFn}`;
-      }
-      // json default (store as string)
-      if (info.meta?.json && info.meta?.jsonDefault) {
-        defaultClause = `DEFAULT '${JSON.stringify(info.meta.jsonDefault)}'`;
-      }
-
-      // ----- AUTO (implies primary key) -----
-      let pkFragment = "";
-      if (info.meta?.auto) {
-        if (!primaryDeclared) {
-          if (this.driver === "sqlite") {
-            sqlType = "INTEGER";
-            pkFragment = "PRIMARY KEY AUTOINCREMENT";
-          } else if (this.driver === "postgres") {
-            sqlType = "SERIAL";
-            pkFragment = "PRIMARY KEY";
-          } else {
-            sqlType = "INTEGER";
-            pkFragment = "AUTO_INCREMENT PRIMARY KEY";
-          }
-          primaryDeclared = true;
-        } else {
-          // auto requested but we've already declared a PK - emit column WITHOUT PRIMARY KEY
-          if (this.driver === "postgres") sqlType = "INTEGER";
-        }
-      } else if (info.meta?.primaryKey === true) {
-        if (!primaryDeclared) {
-          pkFragment = "PRIMARY KEY";
-          primaryDeclared = true;
-        } else {
-          // skip adding second primary key
-          pkFragment = "";
-        }
-      }
-
-      // ----- GENERATED ALWAYS handled earlier, ensure default/onUpdate handled -----
-      if (info.meta?.onUpdateNow && this.driver === "mysql") {
-        if (defaultClause) defaultClause += " ON UPDATE CURRENT_TIMESTAMP";
-        else defaultClause = "ON UPDATE CURRENT_TIMESTAMP";
-      }
-
-      // ----- SOFT DELETE handling: default null (allow nulls) -----
-      if (info.meta?.softDelete) {
-        if (!defaultClause) defaultClause = "DEFAULT NULL";
-      }
-
-      // ----- build column SQL fragment -----
-      const parts = [
-        `"${col}"`,
-        sqlType,
-        pkFragment,
-        isNullable,
-        defaultClause,
-        generated,
-        collate,
-        check,
-      ]
-        .filter(Boolean)
-        .join(" ");
-
-      colsSql.push(parts);
-
-      // ----- comments (Postgres only; run after create) -----
-      if (info.meta?.comment && this.driver === "postgres") {
-        commentSql.push(
-          `COMMENT ON COLUMN "${table}"."${col}" IS '${String(
-            info.meta.comment
-          )}'`
-        );
-      }
-
-      // ----- indexes / unique -----
-      if (info.meta?.index) {
-        indexSql.push(
-          `CREATE INDEX IF NOT EXISTS idx_${table}_${col} ON "${table}"("${col}")`
-        );
-      }
-      if (info.meta?.unique) {
-        indexSql.push(
-          `CREATE UNIQUE INDEX IF NOT EXISTS unq_${table}_${col} ON "${table}"("${col}")`
-        );
-      }
-
-      // ----- foreign key declared on column meta.foreignKey -----
-      if (info.meta?.foreignKey) {
-        const ref = String(info.meta.foreignKey);
-        const fkStmt = `FOREIGN KEY ("${col}") REFERENCES "${ref}"(id)`;
-        // if table doesn't exist yet, put fk inline; otherwise schedule ALTER
-        if (!exists) fkConstraintsInline.push(fkStmt);
-        else postCreateFkSql.push(`ALTER TABLE "${table}" ADD ${fkStmt}`);
-      }
-    } // end columns loop
-
-    // ----- create/alter table -----
-    if (!exists) {
-      const createSQL =
-        `CREATE TABLE IF NOT EXISTS "${table}" (\n` +
-        colsSql.join(",\n") +
-        (fkConstraintsInline.length
-          ? ",\n" + fkConstraintsInline.join(",\n")
-          : "") +
-        `\n);`;
-      console.log(`Creating table ${table}`);
-      await this.exec(createSQL);
+    let sqlType = "";
+    if (info.meta?.enum) {
+      const enumValues = this.parseEnumValues(info.meta.enum as string);
+      sqlType = this.driver === "postgres"
+        ? await this.createEnumColumn(table, col, enumValues)
+        : "VARCHAR(255)";
+    } else if (info.meta?.json) {
+      sqlType = this.driver === "postgres" ? "JSONB" : this.driver === "sqlite" ? "TEXT" : "JSON";
+    } else if (info.type === "Date") {
+      sqlType = this.driver === "sqlite" ? "INTEGER" : this.driver === "postgres" ? "TIMESTAMP" : "DATETIME";
     } else {
-      // add missing columns to existing table
-      const existingCols = await this.getExistingColumns(table);
-      for (const colDef of colsSql) {
-        // parse name out of colDef: should start with "colname"
-        const m = colDef.match(/^"([^"]+)"/);
-        if (!m) continue;
-        const name = m[1].toLowerCase();
-        if (existingCols.includes(name)) continue;
-
-        // Avoid trying to add PRIMARY KEY to existing tables — strip PRIMARY KEY phrase for ALTER
-        const safeColDef = colDef.replace(
-          /\s+PRIMARY KEY( AUTOINCREMENT|)/i,
-          ""
-        );
-        try {
-          console.log(`Adding missing column ${name} to ${table}`);
-          await this.exec(`ALTER TABLE "${table}" ADD COLUMN ${safeColDef}`);
-        } catch (err) {
-          console.error(`Failed to add column ${name} to ${table}:`, err);
-        }
+      sqlType = tsTypeToSqlType(info.type);
+      if (info.meta?.length && /char|varchar/i.test(sqlType)) {
+        sqlType = sqlType.replace(/\(.+\)$/, "") + `(${info.meta.length})`;
       }
     }
 
-    // ----- run comments AFTER create/alter (postgres) -----
-    for (const c of commentSql) {
-      try {
-        await this.exec(c);
-      } catch (err) {
-        console.error("COMMENT failed:", err);
-      }
+    const generated = info.meta?.generatedAlways ? `GENERATED ALWAYS AS (${info.meta.generatedAlways}) STORED` : "";
+    const collate = info.meta?.collate ? `COLLATE ${info.meta.collate}` : "";
+    const check = Array.isArray(info.meta?.enum)
+      ? `CHECK ("${col}" IN (${(info.meta!.enum as string[]).map((v) => `'${v}'`).join(", ")}))`
+      : info.meta?.check ? `CHECK (${info.meta.check})` : "";
+
+    const isNullable = info.meta?.nullable || info.type.includes("undefined") ? "" : "NOT NULL";
+
+    let defaultClause = "";
+    if (info.meta?.default !== undefined) {
+      const def = info.meta.default;
+      if (def === "CURRENT_TIMESTAMP") defaultClause = this.driver === "sqlite" ? "DEFAULT (datetime('now'))" : "DEFAULT CURRENT_TIMESTAMP";
+      else if (typeof def === "string") defaultClause = `DEFAULT '${def}'`;
+      else if (typeof def === "boolean") defaultClause = `DEFAULT ${def ? 1 : 0}`;
+      else defaultClause = `DEFAULT ${def}`;
+    }
+    if (info.meta?.defaultFn) defaultClause = `DEFAULT ${info.meta.defaultFn}`;
+    if (info.meta?.json && info.meta?.jsonDefault) defaultClause = `DEFAULT '${JSON.stringify(info.meta.jsonDefault)}'`;
+    if (info.meta?.softDelete && !defaultClause) defaultClause = "DEFAULT NULL";
+    if (info.meta?.onUpdateNow && this.driver === "mysql") {
+      defaultClause = defaultClause ? defaultClause + " ON UPDATE CURRENT_TIMESTAMP" : "ON UPDATE CURRENT_TIMESTAMP";
     }
 
-    // ----- create indexes -----
-    const existingIndexes = await this.getExistingIndexes(table);
-    for (const idx of indexSql) {
-      const idxName = (
-        idx.match(/(?:idx_|unq_)[^\s]+/)?.[0] || ""
-      ).toLowerCase();
-      if (!idxName) continue;
-      if (existingIndexes.includes(idxName)) continue;
-      try {
-        await this.exec(idx);
-      } catch (err) {
-        console.error("Index create failed:", err);
-      }
+    let pkFragment = "";
+    if (info.meta?.auto && !primaryDeclared) {
+      if (this.driver === "sqlite") { sqlType = "INTEGER"; pkFragment = "PRIMARY KEY AUTOINCREMENT"; }
+      else if (this.driver === "postgres") { sqlType = "SERIAL"; pkFragment = "PRIMARY KEY"; }
+      else { sqlType = "INTEGER"; pkFragment = "AUTO_INCREMENT PRIMARY KEY"; }
+      primaryDeclared = true;
+    } else if (info.meta?.primaryKey === true && !primaryDeclared) {
+      pkFragment = "PRIMARY KEY";
+      primaryDeclared = true;
     }
 
-    // ----- relations array: add foreign keys with onDelete/onUpdate/match/deferrable -----
-    if (relations && relations.length) {
-      const existingFKs = await this.getExistingFKs(table);
-      await Promise.all(
-        relations.map(async (rel) => {
-          const fkCol = rel.foreignKey;
-          const refTable = rel.targetModel?.toLowerCase();
-          if (!fkCol || !refTable) return;
-          const refExists = await this.tableExists(refTable);
-          if (!refExists) return;
+    const parts = [`"${col}"`, sqlType, pkFragment, isNullable, defaultClause, generated, collate, check]
+      .filter(Boolean).join(" ");
 
-          const onDelete = rel.meta?.onDelete
-            ? ` ON DELETE ${rel.meta.onDelete}`
-            : "";
-          const onUpdate = rel.meta?.onUpdate
-            ? ` ON UPDATE ${rel.meta.onUpdate}`
-            : "";
-          const match = rel.meta?.match ? ` MATCH ${rel.meta.match}` : "";
-          const deferrable = rel.meta?.deferrable
-            ? " DEFERRABLE INITIALLY DEFERRED"
-            : "";
+    colsSql.push(parts);
 
-          const fkStatement = `ALTER TABLE "${table}" ADD FOREIGN KEY ("${fkCol}") REFERENCES "${refTable}"(id)${match}${onDelete}${onUpdate}${deferrable}`;
-          const uniqueStatement =
-            rel.kind === "onetoone" && this.driver !== "sqlite"
-              ? `ALTER TABLE "${table}" ADD CONSTRAINT unique_${table}_${fkCol} UNIQUE ("${fkCol}")`
-              : null;
-
-          // simple de-dup check
-          if (!existingFKs.includes(fkStatement.toLowerCase())) {
-            try {
-              await this.exec(fkStatement);
-            } catch (err) {
-              console.error("FK add failed:", err);
-            }
-          }
-          if (
-            uniqueStatement &&
-            !existingFKs.includes(uniqueStatement.toLowerCase())
-          ) {
-            try {
-              await this.exec(uniqueStatement);
-            } catch (err) {
-              console.error("Unique FK failed:", err);
-            }
-          }
-        })
-      );
+    if (info.meta?.comment && this.driver === "postgres") {
+      commentSql.push(`COMMENT ON COLUMN "${table}"."${col}" IS '${String(info.meta.comment)}'`);
     }
 
-    // ----- post-create FK SQLs (from column metadata for existing tables) -----
-    const existingFKsNow = await this.getExistingFKs(table);
-    for (const fk of postCreateFkSql) {
-      if (existingFKsNow.includes(fk.toLowerCase())) continue;
-      try {
-        await this.exec(fk);
-      } catch (err) {
-        console.error("Post-create FK failed:", err);
-      }
+    if (info.meta?.index) {
+      indexSql.push(`CREATE INDEX IF NOT EXISTS idx_${table}_${col} ON "${table}"("${col}")`);
     }
 
-    // finished
-    console.log(`=== Finished ensuring table: "${table}" ===`);
+    if (info.meta?.unique) {
+      // Use inline constraint if table does not exist
+      if (!exists) inlineConstraints.push(`CONSTRAINT unq_${table}_${col} UNIQUE ("${col}")`);
+      else postConstraints.push(`ALTER TABLE "${table}" ADD CONSTRAINT unq_${table}_${col} UNIQUE ("${col}")`);
+    }
+
+    if (info.meta?.foreignKey) {
+      const refTable = String(info.meta.foreignKey);
+      const fkStmt = `FOREIGN KEY ("${col}") REFERENCES "${refTable}"(id)` +
+        (info.meta?.onDelete ? ` ON DELETE ${info.meta.onDelete}` : "") +
+        (info.meta?.onUpdate ? ` ON UPDATE ${info.meta.onUpdate}` : "") +
+        (info.meta?.match ? ` MATCH ${info.meta.match}` : "") +
+        (info.meta?.deferrable ? " DEFERRABLE INITIALLY DEFERRED" : "");
+
+      if (!exists) inlineConstraints.push(fkStmt);
+      else postConstraints.push(`ALTER TABLE "${table}" ADD ${fkStmt}`);
+    }
   }
+
+  // Create or alter table
+  if (!exists) {
+    const createSQL = `CREATE TABLE IF NOT EXISTS "${table}" (\n${colsSql.concat(inlineConstraints).join(",\n")}\n);`;
+    console.log(`Creating table ${table}`);
+    await this.exec(createSQL);
+    addToProcessed();
+  } else {
+    const existingCols = await this.getExistingColumns(table);
+    for (const colDef of colsSql) {
+      const m = colDef.match(/^"([^"]+)"/);
+      if (!m) continue;
+      const name = m[1].toLowerCase();
+      if (existingCols.includes(name)) continue;
+      const safeColDef = colDef.replace(/\s+PRIMARY KEY( AUTOINCREMENT|)/i, "");
+      try { await this.exec(`ALTER TABLE "${table}" ADD COLUMN ${safeColDef}`); } catch {}
+    }
+    addToProcessed();
+  }
+
+  // Comments
+  for (const c of commentSql) { try { await this.exec(c); } catch {} }
+
+  // Indexes
+  const existingIndexes = await this.getExistingIndexes(table);
+  for (const idx of indexSql) {
+    const idxName = (idx.match(/(?:idx_|unq_)[^\s]+/)?.[0] || "").toLowerCase();
+    if (!idxName || existingIndexes.includes(idxName)) continue;
+    try { await this.exec(idx); } catch {}
+  }
+
+  // Relations array
+  if (relations && relations.length) {
+    const existingFKs = await this.getExistingFKs(table);
+    await Promise.all(relations.map(async (rel) => {
+      const fkCol = rel.foreignKey;
+      const refTable = rel.targetModel?.toLowerCase();
+      if (!fkCol || !refTable) return;
+      const refExists = await this.tableExists(refTable);
+      if (!refExists) return;
+
+      const fkStatement = `ALTER TABLE "${table}" ADD FOREIGN KEY ("${fkCol}") REFERENCES "${refTable}"(id)` +
+        (rel.meta?.onDelete ? ` ON DELETE ${rel.meta.onDelete}` : "") +
+        (rel.meta?.onUpdate ? ` ON UPDATE ${rel.meta.onUpdate}` : "") +
+        (rel.meta?.match ? ` MATCH ${rel.meta.match}` : "") +
+        (rel.meta?.deferrable ? " DEFERRABLE INITIALLY DEFERRED" : "");
+
+      const uniqueStatement = rel.kind === "onetoone" && this.driver !== "sqlite"
+        ? `ALTER TABLE "${table}" ADD CONSTRAINT unique_${table}_${fkCol} UNIQUE ("${fkCol}")`
+        : null;
+
+      if (!existingFKs.includes(fkStatement.toLowerCase())) {
+        try { await this.exec(fkStatement); } catch {}
+      }
+      if (uniqueStatement && !existingFKs.includes(uniqueStatement.toLowerCase())) {
+        try { await this.exec(uniqueStatement); } catch {}
+      }
+    }));
+  }
+
+  // Post-create constraints
+  const existingFKsNow = await this.getExistingFKs(table);
+  for (const fk of postConstraints) {
+    if (existingFKsNow.includes(fk.toLowerCase())) continue;
+    try { await this.exec(fk); } catch {}
+  }
+
+  console.log(`=== Finished ensuring table: "${table}" ===`);
+}
 
   private parseEnumValues(enumMeta: string): string[] {
     // accepts formats like "('a','b')" or "(a,b)" or "a,b" and returns ['a','b']
