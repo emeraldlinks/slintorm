@@ -11,6 +11,7 @@ type RelationMeta = {
   relatedKey?: string;
   through?: string;
 };
+// orm relations settings
 
 export function mapBooleans<T extends Record<string, any>>(
   row: T,
@@ -58,8 +59,8 @@ type PreloadPath<T> =
 type WhereCondition<T> =
   | Partial<T>
   | {
-      [K in keyof T]?: { op: OpComparison; value: T[K] };
-    };
+    [K in keyof T]?: { op: OpComparison; value: T[K] };
+  };
 
 export class QueryBuilder<T extends Record<string, any>> {
   protected _selects: (keyof T | string)[] | null = null;
@@ -287,8 +288,8 @@ export class QueryBuilder<T extends Record<string, any>> {
     let sql = "SELECT ";
     sql += this._selects?.length
       ? (this._selects as string[])
-          .map((c) => dialect.quoteIdentifier(c))
-          .join(", ")
+        .map((c) => dialect.quoteIdentifier(c))
+        .join(", ")
       : "*";
     sql += ` FROM ${dialect.quoteIdentifier(this.table)}`;
     if (this._joins.length) sql += " " + this._joins.join(" ");
@@ -308,9 +309,8 @@ export class QueryBuilder<T extends Record<string, any>> {
             params.push(w.value);
             const placeholder = dialect.formatPlaceholder(paramIndex);
             paramIndex++;
-            return `${dialect.quoteIdentifier(String(w.column))} ${
-              w.op
-            } ${placeholder}`;
+            return `${dialect.quoteIdentifier(String(w.column))} ${w.op
+              } ${placeholder}`;
           })
           .join(" AND ");
     }
@@ -430,192 +430,192 @@ export class QueryBuilder<T extends Record<string, any>> {
     return clean;
   }
 
- // ---------------------------
-// applyPreloads (handles nested & circular)
-// ---------------------------
-private async applyPreloads(
-  rows: any[],
-  visited = new Set<string>()
-): Promise<any[]> {
-  if (!rows.length) return rows;
+  // ---------------------------
+  // applyPreloads (handles nested & circular)
+  // ---------------------------
+  private async applyPreloads(
+    rows: any[],
+    visited = new Set<string>()
+  ): Promise<any[]> {
+    if (!rows.length) return rows;
 
-  const modelSchema = this.schema![this.modelName];
-  if (!modelSchema) return rows;
+    const modelSchema = this.schema![this.modelName];
+    if (!modelSchema) return rows;
 
-  const dialect = Dialects[this.orm?.dialect || "sqlite"];
-  const rootPK = modelSchema.primaryKey;
+    const dialect = Dialects[this.orm?.dialect || "sqlite"];
+    const rootPK = modelSchema.primaryKey;
 
-  // Build relation metadata
-  const relations: RelationMeta[] = modelSchema.relations.map((r: any) => ({
-    fieldName: r.fieldName,
-    kind: r.kind,
-    targetModel: r.targetModel,
-    foreignKey: r.foreignKey,
-    relatedKey: r.relatedKey,
-    through: r.through,
-  }));
+    // Build relation metadata
+    const relations: RelationMeta[] = modelSchema.relations.map((r: any) => ({
+      fieldName: r.fieldName,
+      kind: r.kind,
+      targetModel: r.targetModel,
+      foreignKey: r.foreignKey,
+      relatedKey: r.relatedKey,
+      through: r.through,
+    }));
 
-  if (!relations.length) return rows;
+    if (!relations.length) return rows;
 
-  // Group nested preloads
-  const grouped: Record<string, string[]> = {};
-  for (const preload of this._preloads) {
-    const parts = preload.split(".");
-    const root = parts.shift()!;
-    if (!grouped[root]) grouped[root] = [];
-    if (parts.length) grouped[root].push(parts.join("."));
-  }
-
-  const hasValues = (arr: any[]) => Array.isArray(arr) && arr.length > 0;
-
-  const fetchRelation = async (relation: RelationMeta, parentRows: any[]) => {
-    const cycleKey = `${this.modelName}:${relation.fieldName}`;
-    if (visited.has(cycleKey)) return [];
-    visited.add(cycleKey);
-
-    const targetSchema = this.schema![relation.targetModel];
-    if (!targetSchema) return [];
-
-    const targetPK = targetSchema.primaryKey || "id";
-    const { kind, foreignKey, relatedKey, through } = relation;
-
-    const parentIds = Array.from(
-      new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))
-    );
-    if (!hasValues(parentIds)) {
-      parentRows.forEach(
-        (r) => (r[relation.fieldName] = kind.includes("many") ? [] : null)
-      );
-      return [];
+    // Group nested preloads
+    const grouped: Record<string, string[]> = {};
+    for (const preload of this._preloads) {
+      const parts = preload.split(".");
+      const root = parts.shift()!;
+      if (!grouped[root]) grouped[root] = [];
+      if (parts.length) grouped[root].push(parts.join("."));
     }
 
-    let relatedRows: any[] = [];
+    const hasValues = (arr: any[]) => Array.isArray(arr) && arr.length > 0;
 
-    if (kind === "onetomany") {
-      const ph = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
-      const sql = `SELECT * FROM ${dialect.quoteIdentifier(
-        targetSchema.table
-      )} WHERE ${dialect.quoteIdentifier(foreignKey!)} IN (${ph})`;
-      relatedRows = (await this.exec(sql, parentIds)).rows || [];
+    const fetchRelation = async (relation: RelationMeta, parentRows: any[]) => {
+      const cycleKey = `${this.modelName}:${relation.fieldName}`;
+      if (visited.has(cycleKey)) return [];
+      visited.add(cycleKey);
 
-      const map = new Map<number, any[]>();
-      relatedRows.forEach((r) => {
-        const key = r[foreignKey!];
-        if (!map.has(key)) map.set(key, []);
-        map.get(key)!.push(r);
-      });
-      parentRows.forEach(
-        (r) => (r[relation.fieldName] = map.get(r[rootPK]) || [])
-      );
-    } else if (kind === "onetoone") {
-      const parentIdsList = Array.from(
+      const targetSchema = this.schema![relation.targetModel];
+      if (!targetSchema) return [];
+
+      const targetPK = targetSchema.primaryKey || "id";
+      const { kind, foreignKey, relatedKey, through } = relation;
+
+      const parentIds = Array.from(
         new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))
       );
-      if (!hasValues(parentIdsList)) {
-        parentRows.forEach((r) => (r[relation.fieldName] = null));
+      if (!hasValues(parentIds)) {
+        parentRows.forEach(
+          (r) => (r[relation.fieldName] = kind.includes("many") ? [] : null)
+        );
         return [];
       }
 
-      const parentHasFK = parentRows.some((r) => r.hasOwnProperty(foreignKey));
+      let relatedRows: any[] = [];
 
-      // Reverse lookup (child holds FK: child.fk = parent.id)
-      if (!parentHasFK) {
-        const ph = parentIdsList.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+      if (kind === "onetomany") {
+        const ph = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
         const sql = `SELECT * FROM ${dialect.quoteIdentifier(
           targetSchema.table
         )} WHERE ${dialect.quoteIdentifier(foreignKey!)} IN (${ph})`;
+        relatedRows = (await this.exec(sql, parentIds)).rows || [];
 
-        relatedRows = (await this.exec(sql, parentIdsList)).rows || [];
-        const map = new Map(relatedRows.map((r) => [r[foreignKey!], r]));
+        const map = new Map<number, any[]>();
+        relatedRows.forEach((r) => {
+          const key = r[foreignKey!];
+          if (!map.has(key)) map.set(key, []);
+          map.get(key)!.push(r);
+        });
+        parentRows.forEach(
+          (r) => (r[relation.fieldName] = map.get(r[rootPK]) || [])
+        );
+      } else if (kind === "onetoone") {
+        const parentIdsList = Array.from(
+          new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))
+        );
+        if (!hasValues(parentIdsList)) {
+          parentRows.forEach((r) => (r[relation.fieldName] = null));
+          return [];
+        }
+
+        const parentHasFK = parentRows.some((r) => r.hasOwnProperty(foreignKey));
+
+        // Reverse lookup (child holds FK: child.fk = parent.id)
+        if (!parentHasFK) {
+          const ph = parentIdsList.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+          const sql = `SELECT * FROM ${dialect.quoteIdentifier(
+            targetSchema.table
+          )} WHERE ${dialect.quoteIdentifier(foreignKey!)} IN (${ph})`;
+
+          relatedRows = (await this.exec(sql, parentIdsList)).rows || [];
+          const map = new Map(relatedRows.map((r) => [r[foreignKey!], r]));
+
+          parentRows.forEach((r) => {
+            r[relation.fieldName] = map.get(r[rootPK]) || null;
+          });
+
+          return relatedRows;
+        }
+
+        // Forward lookup (parent has FK: parent.fk = child.id)
+        const fkValues = Array.from(
+          new Set(parentRows.map((r) => r[foreignKey!]).filter(Boolean))
+        );
+        if (!hasValues(fkValues)) {
+          parentRows.forEach((r) => (r[relation.fieldName] = null));
+          return [];
+        }
+
+        const ph = fkValues.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+        const sql = `SELECT * FROM ${dialect.quoteIdentifier(
+          targetSchema.table
+        )} WHERE ${dialect.quoteIdentifier(targetPK)} IN (${ph})`;
+
+        relatedRows = (await this.exec(sql, fkValues)).rows || [];
+        const map = new Map(relatedRows.map((r) => [r[targetPK], r]));
 
         parentRows.forEach((r) => {
-          r[relation.fieldName] = map.get(r[rootPK]) || null;
+          r[relation.fieldName] = map.get(r[foreignKey!]) || null;
         });
 
         return relatedRows;
+      } else if (kind === "manytomany") {
+        if (!through || !foreignKey || !relatedKey) return [];
+        const ph = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+        const junctionSql = `SELECT * FROM ${dialect.quoteIdentifier(
+          through
+        )} WHERE ${dialect.quoteIdentifier(foreignKey)} IN (${ph})`;
+        const junction = (await this.exec(junctionSql, parentIds)).rows || [];
+
+        const targetIds = [...new Set(junction.map((j) => j[relatedKey]))];
+        if (!hasValues(targetIds)) {
+          parentRows.forEach((r) => (r[relation.fieldName] = []));
+          return [];
+        }
+
+        const tph = targetIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+        const tSql = `SELECT * FROM ${dialect.quoteIdentifier(
+          targetSchema.table
+        )} WHERE ${dialect.quoteIdentifier(targetPK)} IN (${tph})`;
+        relatedRows = (await this.exec(tSql, targetIds)).rows || [];
+
+        const targetMap = new Map(relatedRows.map((r) => [r[targetPK], r]));
+        const parentMap = new Map<number, any[]>();
+        junction.forEach((j) => {
+          const arr = parentMap.get(j[foreignKey]) || [];
+          if (targetMap.has(j[relatedKey])) arr.push(targetMap.get(j[relatedKey]));
+          parentMap.set(j[foreignKey], arr);
+        });
+        parentRows.forEach(
+          (r) => (r[relation.fieldName] = parentMap.get(r[rootPK]) || [])
+        );
       }
 
-      // Forward lookup (parent has FK: parent.fk = child.id)
-      const fkValues = Array.from(
-        new Set(parentRows.map((r) => r[foreignKey!]).filter(Boolean))
-      );
-      if (!hasValues(fkValues)) {
-        parentRows.forEach((r) => (r[relation.fieldName] = null));
-        return [];
+      // Nested preloads
+      const nested = grouped[relation.fieldName];
+      if (nested.length && hasValues(relatedRows)) {
+        const qb = new QueryBuilder(
+          targetSchema.table,
+          this.dir,
+          this.exec,
+          relation.targetModel,
+          this.schema,
+          this.orm
+        );
+        qb._preloads = nested;
+        qb._exclude = this._nestedExcludes(relation.fieldName);
+        await qb.applyPreloads(relatedRows, visited); // pass visited!
       }
-
-      const ph = fkValues.map((_, i) => dialect.formatPlaceholder(i)).join(",");
-      const sql = `SELECT * FROM ${dialect.quoteIdentifier(
-        targetSchema.table
-      )} WHERE ${dialect.quoteIdentifier(targetPK)} IN (${ph})`;
-
-      relatedRows = (await this.exec(sql, fkValues)).rows || [];
-      const map = new Map(relatedRows.map((r) => [r[targetPK], r]));
-
-      parentRows.forEach((r) => {
-        r[relation.fieldName] = map.get(r[foreignKey!]) || null;
-      });
 
       return relatedRows;
-    } else if (kind === "manytomany") {
-      if (!through || !foreignKey || !relatedKey) return [];
-      const ph = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
-      const junctionSql = `SELECT * FROM ${dialect.quoteIdentifier(
-        through
-      )} WHERE ${dialect.quoteIdentifier(foreignKey)} IN (${ph})`;
-      const junction = (await this.exec(junctionSql, parentIds)).rows || [];
+    };
 
-      const targetIds = [...new Set(junction.map((j) => j[relatedKey]))];
-      if (!hasValues(targetIds)) {
-        parentRows.forEach((r) => (r[relation.fieldName] = []));
-        return [];
-      }
-
-      const tph = targetIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
-      const tSql = `SELECT * FROM ${dialect.quoteIdentifier(
-        targetSchema.table
-      )} WHERE ${dialect.quoteIdentifier(targetPK)} IN (${tph})`;
-      relatedRows = (await this.exec(tSql, targetIds)).rows || [];
-
-      const targetMap = new Map(relatedRows.map((r) => [r[targetPK], r]));
-      const parentMap = new Map<number, any[]>();
-      junction.forEach((j) => {
-        const arr = parentMap.get(j[foreignKey]) || [];
-        if (targetMap.has(j[relatedKey])) arr.push(targetMap.get(j[relatedKey]));
-        parentMap.set(j[foreignKey], arr);
-      });
-      parentRows.forEach(
-        (r) => (r[relation.fieldName] = parentMap.get(r[rootPK]) || [])
-      );
+    for (const root of Object.keys(grouped)) {
+      const relation = relations.find((r) => r.fieldName === root);
+      if (!relation) continue;
+      await fetchRelation(relation, rows);
     }
 
-    // Nested preloads
-    const nested = grouped[relation.fieldName];
-    if (nested.length && hasValues(relatedRows)) {
-      const qb = new QueryBuilder(
-        targetSchema.table,
-        this.dir,
-        this.exec,
-        relation.targetModel,
-        this.schema,
-        this.orm
-      );
-      qb._preloads = nested;
-      qb._exclude = this._nestedExcludes(relation.fieldName);
-      await qb.applyPreloads(relatedRows, visited); // pass visited!
-    }
-
-    return relatedRows;
-  };
-
-  for (const root of Object.keys(grouped)) {
-    const relation = relations.find((r) => r.fieldName === root);
-    if (!relation) continue;
-    await fetchRelation(relation, rows);
+    return rows.map((r) => this.applyExcludes(r));
   }
-
-  return rows.map((r) => this.applyExcludes(r));
-}
 
 
   // recursive removeExcluded that handles nested dot-path excludes (["password", "profile.email", ...])
