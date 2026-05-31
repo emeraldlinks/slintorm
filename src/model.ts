@@ -259,12 +259,18 @@ export async function createModelFactory(adapter: DBAdapter) {
           // obtain the last inserted row id from the connection.
           if (driver === "sqlite") {
             try {
-              const lr = await adapter.exec("SELECT last_insert_rowid() as id");
-              const lastId = lr.rows?.[0]?.id;
-              if (lastId) {
-                (item as any).id = lastId;
-                inserted = await this.get({ id: lastId } as any);
-              }
+                // Only try to lookup by last_insert_rowid if this model
+                // actually declares an `id` primary key. Some pivot/join
+                // tables may not have an `id` column and would make this
+                // lookup fail with "no such column: id".
+                if (modelSchema && modelSchema.fields && modelSchema.fields['id']) {
+                  const lr = await adapter.exec("SELECT last_insert_rowid() as id");
+                  const lastId = lr.rows?.[0]?.id;
+                  if (lastId) {
+                    (item as any).id = lastId;
+                    inserted = await this.get({ id: lastId } as any);
+                  }
+                }
             } catch {}
           }
           // Try common unique-ish combinations

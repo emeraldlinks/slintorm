@@ -25,8 +25,11 @@ export class DBAdapter {
     databaseUrl?: string;
     databaseName?: string;
     dir?: string;
+    logs?: boolean;
     [key: string]: any;
   } = {};
+
+  private logs = false;
 
   constructor(
     config: {
@@ -34,12 +37,14 @@ export class DBAdapter {
       databaseUrl?: string;
       databaseName?: string;
       dir?: string;
+      logs?: boolean;
       [key: string]: any;
     } = {}
   ) {
     this.config = config;
     this.driver = config.driver ?? "sqlite";
     this.dir = config.dir;
+    this.logs = !!config.logs;
 
   }
 
@@ -96,6 +101,7 @@ export class DBAdapter {
         try {
           // For SELECTs use .all, else run
           if (sql.toUpperCase().startsWith("SELECT")) {
+            if (this.logs) console.log('EXEC (sqlite select):', sql, params);
             let stmt = this.stmtCache.get(sql);
             if (!stmt) {
               stmt = await this.sqliteDb!.prepare(sql);
@@ -115,10 +121,14 @@ export class DBAdapter {
             const rows = await stmt.all(params);
             return { rows };
           } else {
-            // For DDL/DML run statements directly (no cache) to avoid
-            // locking issues with long-lived prepared statements.
-            const result = await this.sqliteDb!.run(sql, params);
-            return { rows: [], changes: result.changes, lastID: (result as any).lastID };
+            if (this.logs) console.log('EXEC (sqlite run):', sql, params);
+            try {
+              const result = await this.sqliteDb!.run(sql, params);
+              return { rows: [], changes: result.changes, lastID: (result as any).lastID };
+            } catch (err) {
+              if (this.logs) console.error('SQL ERROR:', sql, params, (err as any)?.message ?? err);
+              throw err;
+            }
           }
         } catch (err) {
           // Fallback: run direct if prepared path fails for any reason
@@ -137,6 +147,7 @@ export class DBAdapter {
       }
 
       case "mysql": {
+        if (this.logs) console.log('EXEC (mysql):', sqlOrOp, params);
         const [result] = await this.mysqlConn!.execute(sqlOrOp, params);
         if (Array.isArray(result)) {
           return { rows: result };
@@ -146,11 +157,13 @@ export class DBAdapter {
       }
 
       case "postgres": {
+        if (this.logs) console.log('EXEC (postgres):', sqlOrOp, params);
         const res = await this.pgClient!.query(sqlOrOp, params);
         return { rows: res.rows, changes: res.rowCount };
       }
 
       case "mongodb": {
+        if (this.logs) console.log('EXEC (mongodb):', sqlOrOp, params);
         if (!this.mongoDb) throw new Error("MongoDB not initialized");
         const cmd = JSON.parse(sqlOrOp);
         const col = this.mongoDb.collection(cmd.collection);

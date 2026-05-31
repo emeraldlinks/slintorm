@@ -9,13 +9,14 @@ const getPaths = (dir = "src") => {
 };
 
 export async function createORM(
-  cfg: { driver?: string; databaseUrl?: string, dir?: string } = {},
+  cfg: { driver?: string; databaseUrl?: string; dir?: string; logs?: boolean } = {},
 
 ) {
   const adapter = new DBAdapter({
     driver: cfg.driver as any,
     databaseUrl: cfg.databaseUrl,
     dir: cfg.dir || "src",
+    logs: cfg.logs,
   });
 const sqlDriver = ["sqlite", "postgres", "mysql"].includes(adapter.driver!)
   ? adapter.driver as "sqlite" | "postgres" | "mysql"
@@ -35,15 +36,16 @@ let schemaGenerated = false;
 
 type driver =  "sqlite" | "postgres" | "mysql" | "mongodb" | undefined
 export default class ORMManager {
-  cfg: { driver?: driver; databaseUrl?: string; dir?: string };
+  cfg: { driver?: driver; databaseUrl?: string; dir?: string; logs?: boolean };
   adapter: DBAdapter;
 
-  constructor(cfg: { driver?: driver; databaseUrl?: string; dir?: string }) {
+  constructor(cfg: { driver?: driver; databaseUrl?: string; dir?: string; logs?: boolean }) {
     this.cfg = cfg;
     this.adapter = new DBAdapter({
       driver: this.cfg.driver as any,
       databaseUrl: this.cfg.databaseUrl,
-      dir: this.cfg.dir || "src"
+      dir: this.cfg.dir || "src",
+      logs: this.cfg.logs,
     });
   }
 
@@ -57,13 +59,8 @@ const sqlDriver = ["sqlite", "postgres", "mysql"].includes(this.adapter.driver!)
   ? this.adapter.driver as "sqlite" | "postgres" | "mysql"
   : undefined;
   const migrator = new Migrator(this.adapter.exec.bind(this.adapter), sqlDriver);
-  for (const modelName of Object.keys(schema)) {
-    
-    const model = schema[modelName];
-    // console.log(model.table || modelName, model,  model?.relations)
-
-      await migrator.ensureTable(model.table || modelName, model?.fields,  model?.relations);
-    }
+  // Use migrateSchema which also auto-creates pivot tables for many-to-many
+  await migrator.migrateSchema(schema as any);
   }
 }
 

@@ -76,6 +76,15 @@ export const schema = {
           "onDelete": "CASCADE"
         }
       },
+      "manytomany": {
+        "type": "Team",
+        "meta": {
+          "relation manytomany": "Team",
+          "through": "team_members",
+          "foreignKey": "userId",
+          "relatedKey": "teamId"
+        }
+      },
       "meta": {
         "type": "Record<string, any> | undefined",
         "meta": {
@@ -139,6 +148,20 @@ export const schema = {
           "@relationship onetoone": "Profile",
           "foreignKey": "userId",
           "onDelete": "CASCADE"
+        }
+      },
+      {
+        "sourceModel": "User",
+        "fieldName": "teams",
+        "kind": "manytomany",
+        "targetModel": "Team",
+        "foreignKey": "userId",
+        "through": "team_members",
+        "meta": {
+          "@relation manytomany": "Team",
+          "through": "team_members",
+          "foreignKey": "userId",
+          "relatedKey": "teamId"
         }
       }
     ],
@@ -647,9 +670,33 @@ export const schema = {
         "meta": {
           "@enum": "(active,archived)"
         }
+      },
+      "manytomany": {
+        "type": "User",
+        "meta": {
+          "relation manytomany": "User",
+          "through": "team_members",
+          "foreignKey": "teamId",
+          "relatedKey": "userId"
+        }
       }
     },
-    "relations": [],
+    "relations": [
+      {
+        "sourceModel": "Team",
+        "fieldName": "members",
+        "kind": "manytomany",
+        "targetModel": "User",
+        "foreignKey": "teamId",
+        "through": "team_members",
+        "meta": {
+          "@relation manytomany": "User",
+          "through": "team_members",
+          "foreignKey": "teamId",
+          "relatedKey": "userId"
+        }
+      }
+    ],
     "table": "team"
   }
 };

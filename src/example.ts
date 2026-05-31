@@ -36,6 +36,8 @@ interface User {
   posts?: Post[];
   // @relationship onetoone:Profile;foreignKey:userId;onDelete:CASCADE
   profile?: Profile;
+  // @relation manytomany:Team;through:team_members;foreignKey:userId;relatedKey:teamId
+  teams?: Team[];
   // @json;nullable;comment:Extra user info
   meta?: Record<string, any>;
   createdAt?: string;
@@ -137,6 +139,8 @@ interface Team {
   deletedAt?: string;
   // @enum:(active,archived)
   status?: "active" | "archived";
+  // @relation manytomany:User;through:team_members;foreignKey:teamId;relatedKey:userId
+  members?: User[];
 }
 
 
@@ -149,18 +153,20 @@ async function main() {
   //     "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
   // }, );
 
-  //   const orm = new ORMManager({
-  //   driver: "postgres",
-  //   databaseUrl: "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
-  //   dir: "src",
-  // });
-  //
+    const orm = new ORMManager({
+    driver: "postgres",
+    databaseUrl: "postgres://u_e0449281:1efcf44e34b1@localhost:15435/test_db",
+     dir: "src",
+    logs: false
+  });
+  
 
-  const orm = new ORMManager({
+  /* const orm = new ORMManager({
     driver: "sqlite",
     databaseUrl: "./testx.db",
-    dir: "src"
-  });
+    dir: "src",
+    logs: false
+  }); */
 
   await orm.migrate()
   // Define models

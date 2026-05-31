@@ -37,10 +37,38 @@ export class Migrator {
   }
   // ==== MIGRATE FULL SCHEMA ====
   async migrateSchema(schema: Record<string, SchemaModel>) {
+    // Auto-create pivot/junction tables for many-to-many relations when a
+    // `through` pivot name is provided but no explicit model exists for it.
+    for (const [name, model] of Object.entries(schema)) {
+      const rels = model.relations || [];
+      for (const r of rels) {
+        if (r.kind === 'manytomany' && r.through) {
+          const pivot = String(r.through);
+          if (!schema[pivot]) {
+            const leftFk = r.foreignKey || `${name.toLowerCase()}Id`;
+            const rightFk = r.relatedKey || `${String(r.targetModel).toLowerCase()}Id`;
+            // Provide a simple integer primary key for pivot tables so
+            // runtime code that expects an `id` column (or uses
+            // last_insert_rowid()) behaves consistently.
+            schema[pivot] = {
+              fields: {
+                id: { type: 'number', meta: { index: true, auto: true, primaryKey: true } },
+                [leftFk]: { type: 'number', meta: { index: true } },
+                [rightFk]: { type: 'number', meta: { index: true } }
+              },
+              relations: [],
+              table: pivot
+            } as any;
+          }
+        }
+      }
+    }
+
     for (const [name, model] of Object.entries(schema)) {
       if (!model.table) model.table = name.toLowerCase();
       this.ensureTimestamps(model.fields);
-      await this.ensureTable(model.table, model.fields);
+      // pass relation metadata through so FK constraints can be applied
+      await this.ensureTable(model.table, model.fields, model.relations || []);
       await this.applyDefaults(model.table, model.fields);
     }
   }
@@ -56,7 +84,7 @@ export class Migrator {
         type: "Date",
         meta: { default: "CURRENT_TIMESTAMP", index: true },
       },
-      deletedAt: { type: "Date", meta: { default: null, index: true } },
+      deletedAt: { type: "Date", meta: { default: null, index: true, nullable: true } },
     };
 
     for (const [key, def] of Object.entries(timestampDefaults)) {
@@ -217,8 +245,6 @@ async ensureTable(
     }
 
     const createSQL = `CREATE TABLE IF NOT EXISTS "${table}" (\n${colsSql.concat(inlineConstraints).join(",\n")}\n);`;
-    console.log(`Creating table ${table}`);
-    console.log('CREATE SQL:\n', createSQL);
     await this.exec(createSQL);
     addToProcessed();
   } else {
@@ -281,7 +307,7 @@ async ensureTable(
     try { await this.exec(fk); } catch {}
   }
 
-  console.log(`=== Finished ensuring table: "${table}" ===`);
+  return;
 }
 
   private parseEnumValues(enumMeta: string): string[] {

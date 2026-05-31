@@ -469,9 +469,9 @@ export class QueryBuilder<T extends Record<string, any>> {
       fieldName: r.fieldName,
       kind: r.kind,
       targetModel: r.targetModel,
-      foreignKey: r.foreignKey,
-      relatedKey: r.relatedKey,
-      through: r.through,
+      foreignKey: r.foreignKey || r.meta?.foreignKey || r.meta?.foreignkey,
+      relatedKey: r.relatedKey || r.meta?.relatedKey || r.meta?.relatedkey,
+      through: r.through || r.meta?.through,
     }));
 
     if (!relations.length) return rows;
@@ -596,7 +596,9 @@ export class QueryBuilder<T extends Record<string, any>> {
         }
 
       } else if (kind === "manytomany") {
-        if (!through || !foreignKey || !relatedKey) return [];
+        if (!through || !foreignKey || !relatedKey) {
+          return [];
+        }
         const parentIds = Array.from(
           new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))
         );
