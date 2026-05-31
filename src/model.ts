@@ -3,7 +3,7 @@ import { Migrator } from "./migrator.js";
 import { QueryBuilder, mapBooleans } from "./queryBuilder.js";
 import fs from "fs";
 import path from "path";
-import type { RelationDef, EntityWithUpdate } from "./types";
+import type { RelationDef, EntityWithUpdate } from "./types.js";
 import { AdvancedQueryBuilder } from "./extra_clauses.js";
 import { fileURLToPath } from "url";
 
@@ -158,8 +158,7 @@ export async function createModelFactory(adapter: DBAdapter) {
      */
     function buildWhereClause(filter: Partial<T>) {
       const keys = Object.keys(filter);
-      if (!keys.length)
-        throw new Error("Filter must contain at least one field");
+      if (!keys.length) throw new Error("Filter must contain at least one field");
 
       const driverType = adapter.driver!;
       if (driverType === "mongodb") {
@@ -168,9 +167,7 @@ export async function createModelFactory(adapter: DBAdapter) {
 
       const clause = keys
         .map((k, i) =>
-          driverType === "postgres"
-            ? `"${k}" = $${i + 1}` // QUOTE THE FIELD
-            : `${k} = ?`
+          driverType === "postgres" ? `"${k}" = $${i + 1}` : `${k} = ?`
         )
         .join(" AND ");
 
@@ -181,69 +178,81 @@ export async function createModelFactory(adapter: DBAdapter) {
 
     return {
       /** @inheritdoc */
-async insert(item: T) {
-   
+      async insert(item: T) {
+        if (hooks?.onCreateBefore) {
+          const modified = await hooks.onCreateBefore(item);
+          if (modified === undefined) return null;
+          item = modified;
+        }
 
-  if (hooks?.onCreateBefore) {
-    const modified = await hooks.onCreateBefore(item);
-    if (modified === undefined) return null;
-    item = modified;
-  }
+        let insertedId: number | undefined;
 
-  let insertedId: number | undefined;
+        if (driver === "mongodb") {
+          await adapter.exec(
+            JSON.stringify({
+              collection: tableName,
+              action: "insert",
+              data: [item],
+            })
+          );
+        } else {
+          const cols = Object.keys(item).filter((c) => {
+            const value = item[c as keyof T] as any;
+            if (value === undefined) return false;
+            if (value === null) return true;
+            if (value instanceof Date) return true;
+            if (typeof value === "object") {
+              const fieldMeta = modelSchema.fields[c]?.meta;
+              return !!fieldMeta?.json;
+            }
+            return true;
+          });
 
-  if (driver === "mongodb") {
-    await adapter.exec(
-      JSON.stringify({
-        collection: tableName,
-        action: "insert",
-        data: [item],
-      })
-    );
-  } else {
-    // Only keep primitive values
-    const cols = Object.keys(item).filter(
-      (c) => typeof item[c as keyof T] !== "object"
-    );
+          const values = cols.map((c) => {
+            const value = item[c as keyof T] as any;
+            const fieldMeta = modelSchema.fields[c]?.meta;
+            if (value === undefined) return null;
+            if (value instanceof Date) return value.toISOString();
+            if (fieldMeta?.json && value !== null && typeof value === "object") {
+              try {
+                return JSON.stringify(value);
+              } catch {
+                return null;
+              }
+            }
+            return value;
+          });
 
-    const values = cols.map((c) => item[c as keyof T]);
+          const placeholders =
+            driver === "postgres"
+              ? cols.map((_, i) => `$${i + 1}`).join(", ")
+              : cols.map(() => "?").join(", ");
 
-    // PostgreSQL uses $1, $2... placeholders
-    const placeholders =
-      driver === "postgres"
-        ? cols.map((_, i) => `$${i + 1}`).join(", ")
-        : cols.map(() => "?").join(", ");
+          const wrap = (c: string) =>
+            driver === "mysql" ? `\`${c}\`` : `"${c}"`;
 
-    // Quote columns for MySQL/Postgres
-    const wrap = (c: string) =>
-      driver === "mysql" ? `\`${c}\`` : `"${c}"`;
+          const sqlCols = cols.map(wrap).join(",");
 
-    // Ensure columns match DB exactly: convert JS keys to match DB
-    const sqlCols = cols.map(wrap).join(",");
+          const sql = `INSERT INTO ${wrap(tableName)} (${sqlCols}) VALUES (${placeholders}) RETURNING *`;
 
-    const sql = `INSERT INTO ${wrap(tableName)} (${sqlCols}) VALUES (${placeholders}) RETURNING *`;
+          const result: any = await adapter.exec(sql, values);
 
-    const result: any = await adapter.exec(sql, values);
+          if (driver === "sqlite" && result?.lastID) insertedId = result.lastID;
+          if (driver === "mysql" && result?.insertId) insertedId = result.insertId;
+          if (driver === "postgres" && result?.rows?.[0]?.id)
+            insertedId = result.rows[0].id;
 
-    // Handle inserted ID
-    if (driver === "sqlite" && result?.lastID) insertedId = result.lastID;
-    if (driver === "mysql" && result?.insertId) insertedId = result.insertId;
-    if (driver === "postgres" && result?.rows?.[0]?.id)
-      insertedId = result.rows[0].id;
+          if (insertedId) (item as any).id = insertedId;
+        }
 
-    if (insertedId) (item as any).id = insertedId;
-  }
+        const inserted = await this.get(item);
 
-  // Retrieve inserted row to include defaults, etc.
-  const inserted = await this.get(item);
+        if (hooks?.onCreateAfter && inserted) {
+          await hooks.onCreateAfter(inserted);
+        }
 
-  if (hooks?.onCreateAfter && inserted) {
-    await hooks.onCreateAfter(inserted);
-  }
-
-  return inserted;
-}
-,
+        return inserted;
+      },
 
       /** @inheritdoc */
       async update(where: Partial<T>, data: Partial<T>) {
@@ -347,6 +356,7 @@ async insert(item: T) {
         }
         if (!record) return null;
         record = mapBooleans(record, modelSchema.fields);
+        record = mapJson(record, modelSchema.fields);
         Object.defineProperty(record, "update", {
           value: async (data: Partial<T>) => this.update(filter, data),
           enumerable: false,
@@ -363,7 +373,7 @@ async insert(item: T) {
                 JSON.stringify({ collection: tableName, action: "find" })
               )
             : await adapter.exec(`SELECT * FROM ${tableName}`);
-        return res.rows.map((r: T) => mapBooleans(r, modelSchema.fields));
+          return res.rows.map((r: T) => mapJson(mapBooleans(r, modelSchema.fields), modelSchema.fields));
       },
 
       /** @inheritdoc */
@@ -417,18 +427,38 @@ async insert(item: T) {
 
       /** @inheritdoc */
       async withOne<K extends keyof T & string>(_relation: K) {
-        throw new Error("withOne not yet implemented");
+        const row = await this.query().preload(_relation as any).first();
+        if (!row) return null;
+        return (row as any)[_relation] ?? null;
       },
 
       /** @inheritdoc */
       async withMany<K extends keyof T & string>(_relation: K) {
-        throw new Error("withMany not yet implemented");
+        const row = await this.query().preload(_relation as any).first();
+        if (!row) return [];
+        return (row as any)[_relation] || [];
       },
 
       /** @inheritdoc */
       async preload<K extends keyof T & string>(_relation: K) {
+        await this.query().preload(_relation as any).get();
         return;
       },
     } as ModelAPI<T>;
   };
+}
+
+function mapJson<T extends Record<string, any>>(row: T, schemaFields: Record<string, any>) {
+  const out = { ...row } as Record<string, any>;
+  for (const key of Object.keys(schemaFields)) {
+    const fieldMeta = schemaFields[key]?.meta;
+    if (fieldMeta?.json && typeof out[key] === "string") {
+      try {
+        out[key] = JSON.parse(out[key]);
+      } catch {
+        // leave raw string
+      }
+    }
+  }
+  return out as T;
 }

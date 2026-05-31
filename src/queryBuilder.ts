@@ -303,7 +303,10 @@ export class QueryBuilder<T extends Record<string, any>> {
         this._where
           .map((w) => {
             if (w.raw) {
-              if (w.value !== undefined) params.push(w.value);
+              if (w.value !== undefined) {
+                if (Array.isArray(w.value)) params.push(...w.value);
+                else params.push(w.value);
+              }
               return w.raw;
             }
             params.push(w.value);

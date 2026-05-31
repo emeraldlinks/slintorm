@@ -201,6 +201,8 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
         let sql = base.sql;
         const params = base.params.slice();
 
+        if (this._params.length) params.push(...this._params);
+
         let selectClause = this._selects?.length ? this._selects.map(c => `"${String(c)}"`).join(", ") : "*";
 
         if (this._aggregates.length) {

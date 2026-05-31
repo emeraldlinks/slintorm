@@ -1,4 +1,4 @@
-import ORMManager, { createORM } from "./index";
+import ORMManager, { createORM } from "./index.js";
 
 /** Post table */
 interface Post {
@@ -149,18 +149,18 @@ async function main() {
   //     "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
   // }, );
 
-    const orm = new ORMManager({
-    driver: "postgres",
-    databaseUrl: "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
-    dir: "src",
-  });
-
-
-  // const orm = new ORMManager({
-  //   driver: "sqlite",
-  //   databaseUrl: "./testx.db",
-  //   dir: "src"
+  //   const orm = new ORMManager({
+  //   driver: "postgres",
+  //   databaseUrl: "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
+  //   dir: "src",
   // });
+  //
+
+  const orm = new ORMManager({
+    driver: "sqlite",
+    databaseUrl: "./testx.db",
+    dir: "src"
+  });
 
   await orm.migrate()
   // Define models
@@ -182,7 +182,7 @@ async function main() {
     },
   });
   Tasksx.query().first()
-    // const uu =  await Users.insert({name: "McGarret", firstName: "Helpper" });
+  // const uu =  await Users.insert({name: "McGarret", firstName: "Helpper" });
   //  console.log("instered: ", uu)
 
 
@@ -210,8 +210,8 @@ async function main() {
   // console.log("newPost: ", newPost);
 
   const oo = await Users.query()
-  // .preload("posts")
-  .preload("profile").first()
+    // .preload("posts")
+    .preload("profile").first()
   // console.log("profile:x ", oo)
 
   // ==== CREATE PROFILE FOR USER (one-to-one) ====
@@ -223,13 +223,13 @@ async function main() {
     .preload("profile.user")
     // .preload("posts.user")
     .first("id = 2");
-console.log("userxs: ", userWithRelations)
+  console.log("userxs: ", userWithRelations)
   // console.dir(userWithRelations, { depth: null });
 
   // ==== FETCH POST WITH USER RELATION ====
   console.log("posts with user =====>");
   const postWithUser = await Posts.query()
-  
+
     .preload("user")
     // .preload("user.posts")
     .preload("user.profile")
@@ -237,20 +237,20 @@ console.log("userxs: ", userWithRelations)
     .exclude("user.lastname")
     .first();
   // console.dir(postWithUser, { depth: null });
-const rankedUsers = await Users.query()
-  .window("ROW_NUMBER()", "PARTITION BY lastname ORDER BY id ASC")
-  .get();
+  const rankedUsers = await Users.query()
+    .window("ROW_NUMBER()", "PARTITION BY lastname ORDER BY id ASC")
+    .get();
 
-// Subquery example
-// const subquery = Users.query().select("id").where("name", "=", "Amike");
-// const usersFromSub = await Users.query()
-//   .selectSubquery(subquery, "sub_id")
-//   .get();
+  // Subquery example
+  // const subquery = Users.query().select("id").where("name", "=", "Amike");
+  // const usersFromSub = await Users.query()
+  //   .selectSubquery(subquery, "sub_id")
+  //   .get();
 
-// EXISTS / NOT EXISTS example
-// const existsQuery  = await Posts.query()
-//   .exists(subquery)
-//   .get();
+  // EXISTS / NOT EXISTS example
+  // const existsQuery  = await Posts.query()
+  //   .exists(subquery)
+  //   .get();
   // ==== DELETE EXAMPLE ====
   try {
     await Posts.delete({ id: 3 });
@@ -270,8 +270,8 @@ const rankedUsers = await Users.query()
     const upuser = await Users.get({ id: 1 })
     // console.log("fetched updated user: ", upuser)
     const excupuser = await Users.query().exclude("profile")
-    // .preload("posts").exclude("posts.user")
-    .first()
+      // .preload("posts").exclude("posts.user")
+      .first()
 
     const updated = await upuser?.update({ name: "Amike Egwamene" });
     // console.log("Updated user:", updated);
@@ -284,10 +284,10 @@ const rankedUsers = await Users.query()
 
 
   const pp = await Profiles.query()
-  .preload("user").preload("user.profile").preload("user.profile.user")
-  .preload("user.profile.user.profile.user")
-  .exclude("user.name")
-  .first(`userId = ${2}`)
+    .preload("user").preload("user.profile").preload("user.profile.user")
+    .preload("user.profile.user.profile.user")
+    .exclude("user.name")
+    .first(`userId = ${2}`)
   console.log("profile: ", pp)
 
 

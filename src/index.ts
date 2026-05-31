@@ -4,7 +4,7 @@ import generateSchema from "./generator.js";
 import { Migrator } from "./migrator.js";
 import path from "path";
 
-const getPaths = (dir = "/src") => {
+const getPaths = (dir = "src") => {
   return path.join(process.cwd(), dir)
 };
 
@@ -15,6 +15,7 @@ export async function createORM(
   const adapter = new DBAdapter({
     driver: cfg.driver as any,
     databaseUrl: cfg.databaseUrl,
+    dir: cfg.dir || "src",
   });
 const sqlDriver = ["sqlite", "postgres", "mysql"].includes(adapter.driver!)
   ? adapter.driver as "sqlite" | "postgres" | "mysql"
