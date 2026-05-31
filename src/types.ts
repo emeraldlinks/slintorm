@@ -1,7 +1,7 @@
 // shared types
 export type DBDriver = "sqlite" | "postgres" | "mysql" | "mongodb" | undefined;
 
-export type SQLExecResult = { rows: any[],  changes?: number | null; };
+export type SQLExecResult = { rows: any[]; changes?: number | null; lastID?: number | null };
 export type ExecFn = (sqlOrOp: string, params?: any[]) => Promise<SQLExecResult>;
 
 export type OpComparison = "=" | "!=" | "<" | "<=" | ">" | ">=" | "LIKE" | "ILIKE" | "IN" | "NOT IN";

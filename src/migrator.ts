@@ -72,6 +72,15 @@ async ensureTable(
   table = table.toLowerCase();
   if (processedTables.has(table)) return;
 
+  // Ensure a sensible primary key for common case when generator left an
+  // `id` field without `auto`/`primaryKey` metadata (heuristic). This
+  // makes tables created with an integer autoincrement PK.
+  if (schema["id"] && schema["id"].meta) {
+    schema["id"].meta = schema["id"].meta || {};
+    if (!schema["id"].meta.primaryKey) schema["id"].meta.primaryKey = true;
+    if (!schema["id"].meta.auto) schema["id"].meta.auto = true;
+  }
+
   const exists = await this.tableExists(table);
   const addToProcessed = () => processedTables.add(table);
 
@@ -85,6 +94,21 @@ async ensureTable(
 
   for (const [col, info] of Object.entries(schema)) {
     if (!info || !info.type) continue;
+
+    // Skip fields that are relation placeholders (e.g., properties that
+    // exist only to express relationships in interfaces). These have
+    // meta keys like 'relation' or 'relationship' and should not map to
+    // actual DB columns. The real foreign key column (e.g., userId) is
+    // expected to be present separately in the schema.
+    const metaKeys = Object.keys(info.meta || {});
+    if (metaKeys.some(k => /relation|relationship/i.test(k))) continue;
+
+    // Skip spurious fields that the generator may have created from
+    // directive values (e.g. a comment like `@length:255` accidentally
+    // produced a field named `length` with type "255"). If the field's
+    // declared `type` is purely numeric (or numeric in parens), ignore it.
+    const typeStr = String(info.type || "").trim();
+    if (/^\(?\d+\)?$/.test(typeStr)) continue;
 
     let sqlType = "";
     if (info.meta?.enum) {
@@ -109,7 +133,17 @@ async ensureTable(
       ? `CHECK ("${col}" IN (${(info.meta!.enum as string[]).map((v) => `'${v}'`).join(", ")}))`
       : info.meta?.check ? `CHECK (${info.meta.check})` : "";
 
-    const isNullable = info.meta?.nullable || info.type.includes("undefined") ? "" : "NOT NULL";
+    // Treat enum columns without explicit default as nullable by default to
+    // avoid NOT NULL constraint failures during seeding. Respect explicit
+    // `nullable` metadata when provided.
+    let isNullable = "";
+    if (info.meta?.nullable || info.type.includes("undefined")) {
+      isNullable = "";
+    } else if (info.meta?.enum && info.meta?.default === undefined) {
+      isNullable = ""; // enums default to nullable unless explicitly set
+    } else {
+      isNullable = "NOT NULL";
+    }
 
     let defaultClause = "";
     if (info.meta?.default !== undefined) {
@@ -171,8 +205,20 @@ async ensureTable(
 
   // Create or alter table
   if (!exists) {
+    // If we didn't detect a primary key during column generation, and an
+    // `id` column exists, make it the INTEGER PRIMARY KEY AUTOINCREMENT
+    // for sqlite to ensure inserts return increasing ids.
+    if (!primaryDeclared && this.driver === "sqlite") {
+      const idIdx = colsSql.findIndex((c) => c.startsWith('"id"'));
+      if (idIdx >= 0) {
+        colsSql[idIdx] = colsSql[idIdx] + " PRIMARY KEY AUTOINCREMENT";
+        primaryDeclared = true;
+      }
+    }
+
     const createSQL = `CREATE TABLE IF NOT EXISTS "${table}" (\n${colsSql.concat(inlineConstraints).join(",\n")}\n);`;
     console.log(`Creating table ${table}`);
+    console.log('CREATE SQL:\n', createSQL);
     await this.exec(createSQL);
     addToProcessed();
   } else {

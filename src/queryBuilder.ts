@@ -498,25 +498,22 @@ export class QueryBuilder<T extends Record<string, any>> {
       const targetPK = targetSchema.primaryKey || "id";
       const { kind, foreignKey, relatedKey, through } = relation;
 
-      const parentIds = Array.from(
-        new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))
-      );
-      if (!hasValues(parentIds)) {
-        parentRows.forEach(
-          (r) => (r[relation.fieldName] = kind.includes("many") ? [] : null)
-        );
-        return [];
-      }
-
       let relatedRows: any[] = [];
 
       if (kind === "onetomany") {
+        const parentIds = Array.from(
+          new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))
+        );
+        if (!hasValues(parentIds)) {
+          parentRows.forEach((r) => (r[relation.fieldName] = []));
+          return [];
+        }
         const ph = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
         const sql = `SELECT * FROM ${dialect.quoteIdentifier(
           targetSchema.table
         )} WHERE ${dialect.quoteIdentifier(foreignKey!)} IN (${ph})`;
         relatedRows = (await this.exec(sql, parentIds)).rows || [];
-        relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema));
+        relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
 
         const map = new Map<number, any[]>();
         relatedRows.forEach((r) => {
@@ -542,13 +539,13 @@ export class QueryBuilder<T extends Record<string, any>> {
         )} WHERE ${dialect.quoteIdentifier(targetPK)} IN (${ph})`;
 
         relatedRows = (await this.exec(sql, fkValues)).rows || [];
-        relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema));
+        relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
         const map = new Map(relatedRows.map((r) => [r[targetPK], r]));
+
 
         parentRows.forEach((r) => {
           r[relation.fieldName] = map.get(r[foreignKey!]) || null;
         });
-        return relatedRows;
       } else if (kind === "onetoone") {
         const parentIdsList = Array.from(
           new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))
@@ -568,41 +565,45 @@ export class QueryBuilder<T extends Record<string, any>> {
           )} WHERE ${dialect.quoteIdentifier(foreignKey!)} IN (${ph})`;
 
           relatedRows = (await this.exec(sql, parentIdsList)).rows || [];
-          relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema));
+          relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
           const map = new Map(relatedRows.map((r) => [r[foreignKey!], r]));
 
           parentRows.forEach((r) => {
             r[relation.fieldName] = map.get(r[rootPK]) || null;
           });
+        } else {
+          // Forward lookup (parent has FK: parent.fk = child.id)
+          const fkValues = Array.from(
+            new Set(parentRows.map((r) => r[foreignKey!]).filter(Boolean))
+          );
+          if (!hasValues(fkValues)) {
+            parentRows.forEach((r) => (r[relation.fieldName] = null));
+            return [];
+          }
 
-          return relatedRows;
+          const ph = fkValues.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+          const sql = `SELECT * FROM ${dialect.quoteIdentifier(
+            targetSchema.table
+          )} WHERE ${dialect.quoteIdentifier(targetPK)} IN (${ph})`;
+
+          relatedRows = (await this.exec(sql, fkValues)).rows || [];
+          relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
+          const map = new Map(relatedRows.map((r) => [r[targetPK], r]));
+
+          parentRows.forEach((r) => {
+            r[relation.fieldName] = map.get(r[foreignKey!]) || null;
+          });
         }
 
-        // Forward lookup (parent has FK: parent.fk = child.id)
-        const fkValues = Array.from(
-          new Set(parentRows.map((r) => r[foreignKey!]).filter(Boolean))
-        );
-        if (!hasValues(fkValues)) {
-          parentRows.forEach((r) => (r[relation.fieldName] = null));
-          return [];
-        }
-
-        const ph = fkValues.map((_, i) => dialect.formatPlaceholder(i)).join(",");
-        const sql = `SELECT * FROM ${dialect.quoteIdentifier(
-          targetSchema.table
-        )} WHERE ${dialect.quoteIdentifier(targetPK)} IN (${ph})`;
-
-        relatedRows = (await this.exec(sql, fkValues)).rows || [];
-        relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema));
-        const map = new Map(relatedRows.map((r) => [r[targetPK], r]));
-
-        parentRows.forEach((r) => {
-          r[relation.fieldName] = map.get(r[foreignKey!]) || null;
-        });
-
-        return relatedRows;
       } else if (kind === "manytomany") {
         if (!through || !foreignKey || !relatedKey) return [];
+        const parentIds = Array.from(
+          new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))
+        );
+        if (!hasValues(parentIds)) {
+          parentRows.forEach((r) => (r[relation.fieldName] = []));
+          return [];
+        }
         const ph = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
         const junctionSql = `SELECT * FROM ${dialect.quoteIdentifier(
           through
@@ -621,6 +622,7 @@ export class QueryBuilder<T extends Record<string, any>> {
         )} WHERE ${dialect.quoteIdentifier(targetPK)} IN (${tph})`;
         relatedRows = (await this.exec(tSql, targetIds)).rows || [];
 
+        relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
         const targetMap = new Map(relatedRows.map((r) => [r[targetPK], r]));
         const parentMap = new Map<number, any[]>();
         junction.forEach((j) => {
@@ -635,6 +637,8 @@ export class QueryBuilder<T extends Record<string, any>> {
 
       // Nested preloads
       const nested = grouped[relation.fieldName];
+      if (nested.length) {
+      }
       if (nested.length && hasValues(relatedRows)) {
         const qb = new QueryBuilder(
           targetSchema.table,

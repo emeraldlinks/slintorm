@@ -1,8 +1,4 @@
-
-// AUTO-GENERATED SCHEMA
-// DO NOT EDIT
-
-export const schema = {
+{
   "User": {
     "primaryKey": "id",
     "fields": {
@@ -652,4 +648,4 @@ export const schema = {
     "relations": [],
     "table": "team"
   }
-};
+}

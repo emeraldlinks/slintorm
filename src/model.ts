@@ -233,7 +233,9 @@ export async function createModelFactory(adapter: DBAdapter) {
 
           const sqlCols = cols.map(wrap).join(",");
 
-          const sql = `INSERT INTO ${wrap(tableName)} (${sqlCols}) VALUES (${placeholders}) RETURNING *`;
+          const sql = driver === 'postgres'
+            ? `INSERT INTO ${wrap(tableName)} (${sqlCols}) VALUES (${placeholders}) RETURNING *`
+            : `INSERT INTO ${wrap(tableName)} (${sqlCols}) VALUES (${placeholders})`;
 
           const result: any = await adapter.exec(sql, values);
 
@@ -245,7 +247,50 @@ export async function createModelFactory(adapter: DBAdapter) {
           if (insertedId) (item as any).id = insertedId;
         }
 
-        const inserted = await this.get(item);
+        // Try to fetch the inserted row. Prefer ID-based lookup; if the
+        // adapter/driver didn't provide a lastID (some sqlite builds or
+        // prepared paths), attempt to find the row by sensible fields.
+        let inserted: any = null;
+        if ((item as any).id) {
+          inserted = await this.get({ id: (item as any).id } as any);
+        }
+        if (!inserted) {
+          // For sqlite, as a last-resort, try last_insert_rowid() to
+          // obtain the last inserted row id from the connection.
+          if (driver === "sqlite") {
+            try {
+              const lr = await adapter.exec("SELECT last_insert_rowid() as id");
+              const lastId = lr.rows?.[0]?.id;
+              if (lastId) {
+                (item as any).id = lastId;
+                inserted = await this.get({ id: lastId } as any);
+              }
+            } catch {}
+          }
+          // Try common unique-ish combinations
+          let tryFilter: any = {};
+          if ((item as any).title) tryFilter.title = (item as any).title;
+          if ((item as any).userId) tryFilter.userId = (item as any).userId;
+          if ((item as any).email) tryFilter.email = (item as any).email;
+          if (Object.keys(tryFilter).length) {
+            try {
+              inserted = await this.get(tryFilter as any);
+            } catch {}
+          }
+
+          if (!inserted) {
+            // Last resort: scan all rows and try to match by the above keys
+            try {
+              const rows = await this.getAll();
+              inserted = rows.find((r: any) => {
+                if (tryFilter.title && r.title !== tryFilter.title) return false;
+                if (tryFilter.userId && r.userId !== tryFilter.userId) return false;
+                if (tryFilter.email && r.email !== tryFilter.email) return false;
+                return true;
+              }) || null;
+            } catch {}
+          }
+        }
 
         if (hooks?.onCreateAfter && inserted) {
           await hooks.onCreateAfter(inserted);

@@ -15,6 +15,11 @@ export class DBAdapter {
   private mongoDb: MongoDb | null = null;
   private connected = false;
 
+  // Prepared statement cache (keyed by SQL text). For sqlite we keep
+  // prepared Statement objects to avoid re-preparing on repeated queries.
+  private stmtCache: Map<string, any> = new Map();
+  private stmtCacheMax = 200;
+
   private config: {
     driver?: DBDriver;
     databaseUrl?: string;
@@ -86,12 +91,48 @@ export class DBAdapter {
     switch (this.driver) {
       case "sqlite": {
         const sql = sqlOrOp.trim();
-        if (sql.toUpperCase().startsWith("SELECT")) {
-          const rows = await this.sqliteDb!.all(sql, params);
-          return { rows };
-        } else {
-          const result = await this.sqliteDb!.run(sql, params);
-          return { rows: [], changes: result.changes };
+        // Use a simple prepared-statement cache for sqlite to reduce
+        // repeated prepare overhead for frequently-used queries.
+        try {
+          // For SELECTs use .all, else run
+          if (sql.toUpperCase().startsWith("SELECT")) {
+            let stmt = this.stmtCache.get(sql);
+            if (!stmt) {
+              stmt = await this.sqliteDb!.prepare(sql);
+              this.stmtCache.set(sql, stmt);
+              if (this.stmtCache.size > this.stmtCacheMax) {
+                // evict oldest
+                const iter = this.stmtCache.keys();
+                const first = iter.next();
+                if (!first.done && first.value) {
+                  const keyToEvict = first.value as string;
+                  const s = this.stmtCache.get(keyToEvict);
+                  try { if (s && s.finalize) s.finalize(); } catch {}
+                  this.stmtCache.delete(keyToEvict);
+                }
+              }
+            }
+            const rows = await stmt.all(params);
+            return { rows };
+          } else {
+            // For DDL/DML run statements directly (no cache) to avoid
+            // locking issues with long-lived prepared statements.
+            const result = await this.sqliteDb!.run(sql, params);
+            return { rows: [], changes: result.changes, lastID: (result as any).lastID };
+          }
+        } catch (err) {
+          // Fallback: run direct if prepared path fails for any reason
+          try {
+            if (sql.toUpperCase().startsWith("SELECT")) {
+              const rows = await this.sqliteDb!.all(sql, params);
+              return { rows };
+            } else {
+              const result = await this.sqliteDb!.run(sql, params);
+              return { rows: [], changes: result.changes, lastID: (result as any).lastID };
+            }
+          } catch (inner) {
+            throw inner;
+          }
         }
       }
 
