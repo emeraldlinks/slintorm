@@ -153,20 +153,20 @@ async function main() {
   //     "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
   // }, );
 
-    const orm = new ORMManager({
+    /* const orm = new ORMManager({
     driver: "postgres",
     databaseUrl: "postgres://u_e0449281:1efcf44e34b1@localhost:15435/test_db",
      dir: "src",
     logs: false
-  });
+  }); */
   
 
-  /* const orm = new ORMManager({
+  const orm = new ORMManager({
     driver: "sqlite",
     databaseUrl: "./testx.db",
     dir: "src",
     logs: false
-  }); */
+  });
 
   await orm.migrate()
   // Define models

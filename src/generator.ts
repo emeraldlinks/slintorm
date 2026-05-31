@@ -55,12 +55,14 @@ function parseInterfacesFromSource(src: string) {
 
       for (let j = 0; j < bodyLines.length; j++) {
         const L = bodyLines[j];
+        if (L.trim().startsWith("//")) continue;
         const propMatch = L.match(/\s*([A-Za-z0-9_]+)(\?)?\s*:\s*([^;]+);?/);
         if (!propMatch) continue;
         const propName = propMatch[1];
         const isOptional = !!propMatch[2];
         let type = propMatch[3].trim();
         type = type.replace(/\s+/g, " ");
+        const originalType = type;
         if (isOptional && !/undefined/.test(type)) type = `${type} | undefined`;
 
         let comment = "";
@@ -102,7 +104,7 @@ function parseInterfacesFromSource(src: string) {
           continue;
         }
 
-        fields[propName] = { type, meta: directives };
+        fields[propName] = { type, originalType, optional: isOptional, meta: directives };
       }
 
       interfaces[name] = { fields, relations };
@@ -154,12 +156,13 @@ export default async function generateSchema(srcGlob: string) {
   }
 
   for (const [modelName, intf] of Object.entries(allInterfaces)) {
-    if (!intf.fields['id']) intf.fields['id'] = { type: 'number', meta: { primaryKey: true, auto: true } };
-    intf.fields['createdAt'] = { type: 'string', meta: { index: true, default: 'CURRENT_TIMESTAMP' } };
-    intf.fields['updatedAt'] = { type: 'string', meta: { index: true, default: 'CURRENT_TIMESTAMP' } };
+    if (!intf.fields['id']) intf.fields['id'] = { type: 'number', originalType: 'number', optional: true, meta: { primaryKey: true, auto: true } };
+    intf.fields['createdAt'] = { type: 'string', originalType: 'string', optional: true, meta: { index: true, default: 'CURRENT_TIMESTAMP' } };
+    intf.fields['updatedAt'] = { type: 'string', originalType: 'string', optional: true, meta: { index: true, default: 'CURRENT_TIMESTAMP' } };
   }
 
   const output: Record<string, any> = {};
+  const modelInterfaces: string[] = [];
   const defineRe = /defineModel\s*<\s*(\w+)\s*>\s*\(\s*['"]([^'"]+)['"]/g;
   for (const f of files) {
     const src = fs.readFileSync(f, 'utf8');
@@ -174,10 +177,28 @@ export default async function generateSchema(srcGlob: string) {
     }
   }
 
+  for (const [modelName] of Object.entries(output)) {
+    const intf = allInterfaces[modelName];
+    const props: string[] = [];
+    for (const [propName, propDef] of Object.entries(intf.fields) as [string, { optional?: boolean; originalType: string } ][]) {
+      const optional = propDef.optional ? "?" : "";
+      props.push(`  ${propName}${optional}: ${propDef.originalType};`);
+    }
+    for (const rel of intf.relations || []) {
+      const relType = rel.kind === "onetomany" || rel.kind === "manytomany"
+        ? `${rel.targetModel}[]`
+        : rel.targetModel;
+      props.push(`  ${rel.fieldName}?: ${relType};`);
+    }
+    modelInterfaces.push(`export interface ${modelName} {\n${props.join("\n")}\n}`);
+  }
+
+  const modelMapEntries = Object.keys(output).map((name) => `  ${name}: ${name};`);
+
   const outDir = path.join(srcGlob, 'schema');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
   const outFile = path.join(outDir, 'generated.ts');
-  const jsContent = `\n// AUTO-GENERATED SCHEMA\n// DO NOT EDIT\n\nexport const schema = ${JSON.stringify(output, null, 2)};\n`;
+  const jsContent = `\n// AUTO-GENERATED SCHEMA\n// DO NOT EDIT\n\n${modelInterfaces.join("\n\n")}\n\nexport type ModelMap = {\n${modelMapEntries.join("\n")}\n};\n\nexport const schema = ${JSON.stringify(output, null, 2)} as const;\n\nexport type Schema = typeof schema;\nexport type ModelName = keyof ModelMap;\n`;
   fs.writeFileSync(outFile, jsContent, 'utf8');
   // Also write a plain JSON file for fast, reliable caching and for
   // tools/tests to consume without parsing the generated TS file.

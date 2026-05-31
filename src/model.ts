@@ -4,6 +4,7 @@ import { QueryBuilder, mapBooleans } from "./queryBuilder.js";
 import fs from "fs";
 import path from "path";
 import type { RelationDef, EntityWithUpdate } from "./types.js";
+import type { ModelMap } from "./schema/generated.js";
 import { AdvancedQueryBuilder } from "./extra_clauses.js";
 import { fileURLToPath } from "url";
 
@@ -19,7 +20,9 @@ function placeholder(driver: string, index: number) {
   return driver === "postgres" ? `$${index}` : "?";
 }
 
-type ModelAPI<T extends Record<string, any>> = {
+type KnownModelName = keyof ModelMap;
+
+type ModelAPI<T extends object> = {
   /** Inserts a new record into the table */
   insert(item: T): Promise<EntityWithUpdate<T> | null>;
 
@@ -51,10 +54,10 @@ type ModelAPI<T extends Record<string, any>> = {
   truncate(): Promise<void>;
 
   /** Loads a single related record */
-  withOne<K extends keyof T & string>(relation: K): Promise<any | null>;
+  withOne<K extends keyof T & string>(relation: K): Promise<T[K] | null>;
 
   /** Loads multiple related records */
-  withMany<K extends keyof T & string>(relation: K): Promise<any[]>;
+  withMany<K extends keyof T & string>(relation: K): Promise<T[K][]>;
 
   /** Preloads a relation for future queries */
   preload<K extends keyof T & string>(relation: K): Promise<void>;
@@ -102,7 +105,25 @@ export async function createModelFactory(adapter: DBAdapter) {
    * @param hooks - Optional lifecycle hooks for CRUD operations
    * @returns The model API for interacting with the table
    */
-  return function defineModel<T extends Record<string, any>>(
+  function defineModel<M extends KnownModelName>(
+    table: string,
+    modelName: M,
+    hooks?: {
+      onCreateBefore?: (item: ModelMap[M]) => ModelMap[M] | void | Promise<ModelMap[M] | void>;
+      onCreateAfter?: (item: ModelMap[M]) => void | Promise<void>;
+      onUpdateBefore?: (
+        oldData: ModelMap[M] | null,
+        newData: Partial<ModelMap[M]>
+      ) => Partial<ModelMap[M]> | void | Promise<Partial<ModelMap[M]> | void>;
+      onUpdateAfter?: (
+        oldData: ModelMap[M] | null,
+        newData: Partial<ModelMap[M]>
+      ) => void | Promise<void>;
+      onDeleteBefore?: (deleted: Partial<ModelMap[M]>) => void | Promise<void>;
+      onDeleteAfter?: (deleted: Partial<ModelMap[M]>) => void | Promise<void>;
+    }
+  ): ModelAPI<ModelMap[M]>;
+  function defineModel<T extends object = Record<string, any>>(
     table: string,
     modelName?: string,
     hooks?: {
@@ -119,7 +140,12 @@ export async function createModelFactory(adapter: DBAdapter) {
       onDeleteBefore?: (deleted: Partial<T>) => void | Promise<void>;
       onDeleteAfter?: (deleted: Partial<T>) => void | Promise<void>;
     }
-  ): ModelAPI<T> {
+  ): ModelAPI<T>;
+  function defineModel<T extends object = Record<string, any>>(
+    table: string,
+    modelName?: string,
+    hooks?: any
+  ) {
     const tableName = table;
     const name =
       modelName ||
@@ -496,7 +522,9 @@ export async function createModelFactory(adapter: DBAdapter) {
         return;
       },
     } as ModelAPI<T>;
-  };
+  }
+
+  return defineModel;
 }
 
 function mapJson<T extends Record<string, any>>(row: T, schemaFields: Record<string, any>) {
