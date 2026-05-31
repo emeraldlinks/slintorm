@@ -352,7 +352,7 @@ export class QueryBuilder<T extends Record<string, any>> {
     }
 
     const schemaFields = this.schema![this.modelName].fields;
-    rows = rows.map((r) => mapBooleans(r, schemaFields));
+    rows = rows.map((r) => this.mapJson(mapBooleans(r, schemaFields), schemaFields)) as T[];
 
     if (this._exclude.length) {
       rows = rows.map((r) => {
@@ -424,6 +424,7 @@ export class QueryBuilder<T extends Record<string, any>> {
   private cleanRow(row: any, targetSchema: any, root?: string) {
     // convert booleans
     let clean = mapBooleans(row, targetSchema.fields || {});
+    clean = this.mapJson(clean, targetSchema.fields || {});
     // apply nested excludes for this relation (e.g., "user.profile.email")
     if (root) {
       const nestedExcludes = this._nestedExcludes(root);
@@ -431,6 +432,21 @@ export class QueryBuilder<T extends Record<string, any>> {
         clean = this.removeExcluded(clean, nestedExcludes);
     }
     return clean;
+  }
+
+  private mapJson(row: any, schemaFields: Record<string, any>) {
+    const out = { ...row } as Record<string, any>;
+    for (const key of Object.keys(schemaFields)) {
+      const fieldMeta = schemaFields[key]?.meta;
+      if (fieldMeta?.json && typeof out[key] === "string") {
+        try {
+          out[key] = JSON.parse(out[key]);
+        } catch {
+          // leave raw string if parsing fails
+        }
+      }
+    }
+    return out;
   }
 
   // ---------------------------
@@ -500,6 +516,7 @@ export class QueryBuilder<T extends Record<string, any>> {
           targetSchema.table
         )} WHERE ${dialect.quoteIdentifier(foreignKey!)} IN (${ph})`;
         relatedRows = (await this.exec(sql, parentIds)).rows || [];
+        relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema));
 
         const map = new Map<number, any[]>();
         relatedRows.forEach((r) => {
@@ -510,6 +527,28 @@ export class QueryBuilder<T extends Record<string, any>> {
         parentRows.forEach(
           (r) => (r[relation.fieldName] = map.get(r[rootPK]) || [])
         );
+      } else if (kind === "manytoone") {
+        const fkValues = Array.from(
+          new Set(parentRows.map((r) => r[foreignKey!]).filter(Boolean))
+        );
+        if (!hasValues(fkValues)) {
+          parentRows.forEach((r) => (r[relation.fieldName] = null));
+          return [];
+        }
+
+        const ph = fkValues.map((_, i) => dialect.formatPlaceholder(i)).join(",");
+        const sql = `SELECT * FROM ${dialect.quoteIdentifier(
+          targetSchema.table
+        )} WHERE ${dialect.quoteIdentifier(targetPK)} IN (${ph})`;
+
+        relatedRows = (await this.exec(sql, fkValues)).rows || [];
+        relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema));
+        const map = new Map(relatedRows.map((r) => [r[targetPK], r]));
+
+        parentRows.forEach((r) => {
+          r[relation.fieldName] = map.get(r[foreignKey!]) || null;
+        });
+        return relatedRows;
       } else if (kind === "onetoone") {
         const parentIdsList = Array.from(
           new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))
@@ -529,6 +568,7 @@ export class QueryBuilder<T extends Record<string, any>> {
           )} WHERE ${dialect.quoteIdentifier(foreignKey!)} IN (${ph})`;
 
           relatedRows = (await this.exec(sql, parentIdsList)).rows || [];
+          relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema));
           const map = new Map(relatedRows.map((r) => [r[foreignKey!], r]));
 
           parentRows.forEach((r) => {
@@ -553,6 +593,7 @@ export class QueryBuilder<T extends Record<string, any>> {
         )} WHERE ${dialect.quoteIdentifier(targetPK)} IN (${ph})`;
 
         relatedRows = (await this.exec(sql, fkValues)).rows || [];
+        relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema));
         const map = new Map(relatedRows.map((r) => [r[targetPK], r]));
 
         parentRows.forEach((r) => {
