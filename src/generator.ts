@@ -1,5 +1,5 @@
 /**
- * ORM Schema Generator using ts-morph
+ * ORM Schema Generator
  *
  * Usage:
  *   import generateSchema from './generator';
@@ -8,7 +8,6 @@
 import fs from "fs";
 import path from "path";
 
-// Type definitions for better autocomplete and compile-time checks
 interface FieldMetadata extends Record<string, any> {}
 
 interface FieldDefinition {
@@ -40,8 +39,7 @@ interface ModelDefinition {
   table: string;
 }
 
-// Lightweight tokenizer
-type TokenType = 
+type TokenType =
   | 'identifier' | 'brace-open' | 'brace-close' | 'bracket-open' | 'bracket-close'
   | 'angle-open' | 'angle-close' | 'string' | 'template-literal' | 'comment-line' | 'comment-block'
   | 'colon' | 'question' | 'semicolon' | 'comma' | 'equals' | 'pipe' | 'at' | 'dot'
@@ -64,7 +62,6 @@ function tokenize(src: string): Token[] {
     const ch = src[i];
     const nextCh = src[i + 1];
 
-    // Whitespace (non-newline)
     if (ch === ' ' || ch === '\t') {
       let value = '';
       while (i < src.length && (src[i] === ' ' || src[i] === '\t')) {
@@ -76,7 +73,6 @@ function tokenize(src: string): Token[] {
       continue;
     }
 
-    // Newline
     if (ch === '\n' || (ch === '\r' && nextCh === '\n')) {
       const value = ch === '\r' ? '\r\n' : '\n';
       tokens.push({ type: 'newline', value, line, column });
@@ -86,7 +82,6 @@ function tokenize(src: string): Token[] {
       continue;
     }
 
-    // Line comment
     if (ch === '/' && nextCh === '/') {
       const startCol = column;
       let value = '';
@@ -99,11 +94,10 @@ function tokenize(src: string): Token[] {
       continue;
     }
 
-    // Block comment
     if (ch === '/' && nextCh === '*') {
       const startCol = column;
       let value = '';
-      let commentLine = line;
+      const commentLine = line;
       while (i < src.length - 1) {
         value += src[i];
         if (src[i] === '\n') {
@@ -124,7 +118,6 @@ function tokenize(src: string): Token[] {
       continue;
     }
 
-    // Template literal with interpolation
     if (ch === '`') {
       const startCol = column;
       let value = '';
@@ -154,7 +147,6 @@ function tokenize(src: string): Token[] {
       continue;
     }
 
-    // String literals (double or single quote)
     if (ch === '"' || ch === "'") {
       const quote = ch;
       const startCol = column;
@@ -185,11 +177,9 @@ function tokenize(src: string): Token[] {
       continue;
     }
 
-    // Numbers (including floats, hex, scientific notation)
     if (/\d/.test(ch) || (ch === '.' && /\d/.test(nextCh))) {
       const startCol = column;
       let value = '';
-      // Handle hex, binary, octal
       if (ch === '0' && (nextCh === 'x' || nextCh === 'X' || nextCh === 'b' || nextCh === 'B' || nextCh === 'o' || nextCh === 'O')) {
         value += src[i] + src[i + 1];
         i += 2;
@@ -200,13 +190,11 @@ function tokenize(src: string): Token[] {
           column++;
         }
       } else {
-        // Regular decimal or float
         while (i < src.length && /[\d_.]/.test(src[i])) {
           value += src[i];
           i++;
           column++;
         }
-        // Scientific notation
         if (i < src.length && (src[i] === 'e' || src[i] === 'E')) {
           value += src[i];
           i++;
@@ -227,7 +215,6 @@ function tokenize(src: string): Token[] {
       continue;
     }
 
-    // Identifiers and keywords
     if (/[a-zA-Z_$]/.test(ch)) {
       const startCol = column;
       let value = '';
@@ -243,27 +230,17 @@ function tokenize(src: string): Token[] {
       else if (value === 'extends') type = 'extends';
       else if (value === 'as') type = 'as';
       else if (value === 'in') type = 'in';
-      
       tokens.push({ type, value, line, column: startCol });
       continue;
     }
 
-    // Single character tokens
     const singleCharMap: Record<string, TokenType> = {
-      '{': 'brace-open',
-      '}': 'brace-close',
-      '[': 'bracket-open',
-      ']': 'bracket-close',
-      '<': 'angle-open',
-      '>': 'angle-close',
-      ':': 'colon',
-      '?': 'question',
-      ';': 'semicolon',
-      ',': 'comma',
-      '=': 'equals',
-      '|': 'pipe',
-      '@': 'at',
-      '.': 'dot',
+      '{': 'brace-open', '}': 'brace-close',
+      '[': 'bracket-open', ']': 'bracket-close',
+      '<': 'angle-open', '>': 'angle-close',
+      ':': 'colon', '?': 'question', ';': 'semicolon',
+      ',': 'comma', '=': 'equals', '|': 'pipe',
+      '@': 'at', '.': 'dot',
     };
 
     if (singleCharMap[ch]) {
@@ -273,7 +250,6 @@ function tokenize(src: string): Token[] {
       continue;
     }
 
-    // Skip unknown characters
     i++;
     column++;
   }
@@ -294,33 +270,26 @@ function readFiles(dir: string): string[] {
     }
   }
   return out;
-}
+      }
 
-/**
- * Encapsulated token parser with proper state management.
- * Eliminates global state mutation and provides standard parser interface.
- */
+
 class InterfaceTokenParser {
   private tokens: Token[];
   private i = 0;
   private seenInterfaces = new Set<string>();
-  private lastComment = ""; // Local to each field, cleared after consumption
   private readonly interfaces: Record<string, InterfaceDefinition> = {};
 
   constructor(tokens: Token[]) {
     this.tokens = tokens;
   }
 
-  /**
-   * Parse all interfaces from token stream.
-   */
   parse(): Record<string, InterfaceDefinition> {
     while (this.i < this.tokens.length) {
-      this.skipWhitespaceAndComments();
+      this.skipWhitespaceOnly();
+      this.skipTopLevelComments();
       if (this.i >= this.tokens.length) break;
-
       if (this.parseInterfaceDeclaration()) {
-        // Successfully parsed interface, continue
+        // continue
       } else {
         this.i++;
       }
@@ -328,56 +297,25 @@ class InterfaceTokenParser {
     return this.interfaces;
   }
 
-  /**
-   * Peek at current token without consuming.
-   */
   private peek(): Token | null {
     return this.i < this.tokens.length ? this.tokens[this.i] : null;
   }
 
-  /**
-   * Peek ahead N tokens.
-   */
-  private peekAhead(n: number): Token | null {
-    return this.i + n < this.tokens.length ? this.tokens[this.i + n] : null;
-  }
-
-  /**
-   * Consume and return current token.
-   */
   private next(): Token | null {
     const token = this.peek();
     if (token) this.i++;
     return token;
   }
 
-  /**
-   * Consume token if it matches type, else return null.
-   */
   private consume(type: TokenType): Token | null {
-    if (this.peek()?.type === type) {
-      return this.next();
-    }
+    if (this.peek()?.type === type) return this.next();
     return null;
   }
 
-  /**
-   * Skip whitespace and newlines. Accumulate comments into lastComment.
-   */
-  private skipWhitespaceAndComments(): void {
+  private skipWhitespaceOnly(): void {
     while (this.i < this.tokens.length) {
-      const token = this.peek();
-      if (!token) break;
-
-      if (token.type === 'whitespace' || token.type === 'newline') {
-        this.next();
-      } else if (token.type === 'comment-line') {
-        const text = token.value.replace(/^\/\/\s?/, "");
-        this.lastComment = text;
-        this.next();
-      } else if (token.type === 'comment-block') {
-        const text = token.value.replace(/^\/\*/, "").replace(/\*\/$/, "").trim();
-        this.lastComment = text;
+      const t = this.peek();
+      if (t?.type === 'whitespace' || t?.type === 'newline') {
         this.next();
       } else {
         break;
@@ -385,27 +323,59 @@ class InterfaceTokenParser {
     }
   }
 
-  /**
-   * Parse interface or type declaration.
-   */
+  private skipTopLevelComments(): void {
+    while (this.i < this.tokens.length) {
+      const t = this.peek();
+      if (t?.type === 'comment-line' || t?.type === 'comment-block') {
+        this.next();
+        this.skipWhitespaceOnly();
+      } else {
+        break;
+      }
+    }
+  }
+
+  private readPrecedingComment(): string {
+    let j = this.i;
+    while (j < this.tokens.length && (this.tokens[j].type === 'whitespace' || this.tokens[j].type === 'newline')) {
+      j++;
+    }
+    if (j >= this.tokens.length || this.tokens[j].type !== 'comment-line') {
+      return "";
+    }
+    const commentToken = this.tokens[j];
+    j++;
+    while (j < this.tokens.length && (this.tokens[j].type === 'whitespace' || this.tokens[j].type === 'newline')) {
+      j++;
+    }
+    if (j >= this.tokens.length) return "";
+    const next = this.tokens[j];
+    if (next.type !== 'identifier' && next.type !== 'brace-close') return "";
+    while (this.i <= this.tokens.length) {
+      const t = this.tokens[this.i];
+      if (t === commentToken) {
+        this.next();
+        break;
+      }
+      this.next();
+    }
+    return commentToken.value.replace(/^\/\/\s?/, "").trim();
+  }
+
   private parseInterfaceDeclaration(): boolean {
     const startLine = this.peek()?.line ?? 0;
 
-    // Skip export keyword if present
     if (this.peek()?.type === 'export') {
       this.next();
-      this.skipWhitespaceAndComments();
+      this.skipWhitespaceOnly();
+      this.skipTopLevelComments();
     }
 
-    // Match interface or type
     const declType = this.peek()?.type;
-    if (declType !== 'interface' && declType !== 'type') {
-      return false;
-    }
+    if (declType !== 'interface' && declType !== 'type') return false;
     this.next();
-    this.skipWhitespaceAndComments();
+    this.skipWhitespaceOnly();
 
-    // Get interface name
     const nameToken = this.peek();
     if (nameToken?.type !== 'identifier') {
       this.reportError(startLine, "Expected interface name");
@@ -414,22 +384,17 @@ class InterfaceTokenParser {
     const name = nameToken.value;
     this.next();
 
-    // Check for duplicates
     if (this.seenInterfaces.has(name)) {
       console.warn(`Warning: Interface/type "${name}" defined multiple times (line ${startLine})`);
     }
     this.seenInterfaces.add(name);
 
-    this.skipWhitespaceAndComments();
+    this.skipWhitespaceOnly();
 
-    // For 'type', skip '=' and possible object literal
     if (declType === 'type') {
-      if (this.consume('equals')) {
-        this.skipWhitespaceAndComments();
-      }
+      if (this.consume('equals')) this.skipWhitespaceOnly();
     }
 
-    // Expect opening brace
     if (!this.consume('brace-open')) {
       this.reportError(startLine, "Expected '{' after interface name");
       return false;
@@ -438,23 +403,22 @@ class InterfaceTokenParser {
     const fields: Record<string, FieldDefinition> = {};
     const relations: RelationDefinition[] = [];
 
-    // Parse fields until closing brace
     while (this.i < this.tokens.length && this.peek()?.type !== 'brace-close') {
-      this.skipWhitespaceAndComments();
+      this.skipWhitespaceOnly();
+      if (this.peek()?.type === 'brace-close') break;
 
+      const fieldComment = this.readPrecedingComment();
+
+      this.skipWhitespaceOnly();
       if (this.peek()?.type === 'brace-close') break;
 
       const fieldLine = this.peek()?.line ?? 0;
-      if (!this.parseField(name, fields, relations, fieldLine)) {
-        // Skip invalid field
+      if (!this.parseField(name, fields, relations, fieldLine, fieldComment)) {
         if (this.peek()?.type === 'identifier') {
           this.reportError(fieldLine, `Invalid field: ${this.peek()?.value}`);
         }
         this.next();
       }
-
-      // Clear comment after field consumed
-      this.lastComment = "";
     }
 
     if (!this.consume('brace-close')) {
@@ -466,58 +430,43 @@ class InterfaceTokenParser {
     return true;
   }
 
-  /**
-   * Parse a single field definition.
-   * Returns true if field was successfully parsed.
-   */
   private parseField(
     interfaceName: string,
     fields: Record<string, FieldDefinition>,
     relations: RelationDefinition[],
-    lineNum: number
+    lineNum: number,
+    comment: string
   ): boolean {
-    // Expect property name
-    if (this.peek()?.type !== 'identifier') {
-      return false;
-    }
+    if (this.peek()?.type !== 'identifier') return false;
     const propName = this.next()!.value;
 
-    this.skipWhitespaceAndComments();
+    this.skipWhitespaceOnly();
 
-    // Optional '?'
     let isOptional = false;
     if (this.consume('question')) {
       isOptional = true;
-      this.skipWhitespaceAndComments();
+      this.skipWhitespaceOnly();
     }
 
-    // Required ':'
     if (!this.consume('colon')) {
       this.reportError(lineNum, `Expected ':' after property '${propName}'`);
       return false;
     }
 
-    this.skipWhitespaceAndComments();
+    this.skipWhitespaceOnly();
 
-    // Extract type tokens until semicolon at depth 0
     const typeTokens = this.extractTypeTokens();
 
     if (!this.consume('semicolon')) {
       this.reportError(lineNum, `Expected ';' after type for '${propName}'`);
     }
 
-    this.skipWhitespaceAndComments();
-
-    // Reconstruct type with proper formatting
     const type = this.reconstructType(typeTokens, isOptional);
     const originalType = this.reconstructType(typeTokens, false);
+    const meta = this.parseMetadata(comment);
 
-    // Parse comment-based metadata
-    const meta = this.parseMetadata(this.lastComment);
-
-    // Check for relation directive
-    if (/@(?:relation|relationship)/i.test(this.lastComment)) {
-      const relationData = this.parseRelationDirective(this.lastComment, propName, interfaceName);
+    if (/@(?:relation|relationship)/i.test(comment)) {
+      const relationData = this.parseRelationDirective(comment, propName, interfaceName);
       if (relationData) {
         relations.push({
           sourceModel: interfaceName,
@@ -528,6 +477,7 @@ class InterfaceTokenParser {
           through: relationData.through,
           meta,
         });
+        fields[propName] = { type, originalType, optional: isOptional, meta };
         return true;
       }
     }
@@ -536,95 +486,53 @@ class InterfaceTokenParser {
     return true;
   }
 
-  /**
-   * Extract type tokens until semicolon at depth 0.
-   * Uses ONLY token structure for nesting (no manual depth tracking).
-   */
   private extractTypeTokens(): Token[] {
     const typeTokens: Token[] = [];
     let depth = 0;
-
     while (this.i < this.tokens.length) {
       const token = this.peek();
       if (!token) break;
-
-      // Track nesting via token types
-      if (token.type === 'bracket-open' || token.type === 'brace-open' || token.type === 'angle-open') {
-        depth++;
-      } else if (token.type === 'bracket-close' || token.type === 'brace-close' || token.type === 'angle-close') {
-        depth--;
-      }
-
-      // Stop at semicolon at depth 0
-      if (token.type === 'semicolon' && depth === 0) {
-        break;
-      }
-
+      if (token.type === 'bracket-open' || token.type === 'brace-open' || token.type === 'angle-open') depth++;
+      else if (token.type === 'bracket-close' || token.type === 'brace-close' || token.type === 'angle-close') depth--;
+      if (token.type === 'semicolon' && depth === 0) break;
       typeTokens.push(token);
       this.next();
     }
-
     return typeTokens;
   }
 
-  /**
-   * Reconstruct type string from tokens with improved formatting.
-   * Preserves semantic structure (generics, nested types).
-   */
   private reconstructType(tokens: Token[], addOptional: boolean): string {
     if (tokens.length === 0) return "unknown";
-
-    // Filter out whitespace/newlines/comments
     const significant = tokens.filter(
-      t => t.type !== 'whitespace' && t.type !== 'newline' && 
+      t => t.type !== 'whitespace' && t.type !== 'newline' &&
            t.type !== 'comment-line' && t.type !== 'comment-block'
     );
-
     if (significant.length === 0) return "unknown";
-
-    // Build type with smart spacing
     let result = "";
     for (let i = 0; i < significant.length; i++) {
       const token = significant[i];
       const prev = i > 0 ? significant[i - 1] : null;
       const next = i < significant.length - 1 ? significant[i + 1] : null;
-
-      // No space after opening brackets
       if (prev && (prev.type === 'bracket-open' || prev.type === 'brace-open' || prev.type === 'angle-open')) {
         result += token.value;
-      }
-      // No space before closing brackets
-      else if (next && (next.type === 'bracket-close' || next.type === 'brace-close' || next.type === 'angle-close')) {
+      } else if (next && (next.type === 'bracket-close' || next.type === 'brace-close' || next.type === 'angle-close')) {
         result += token.value;
-      }
-      // Space around pipes (union types)
-      else if (token.type === 'pipe') {
+      } else if (token.type === 'pipe') {
         result += " | ";
-      }
-      // Default: single space between tokens
-      else {
+      } else {
         result += (result && result[result.length - 1] !== ' ' ? ' ' : '') + token.value;
       }
     }
-
     result = result.replace(/\s+/g, ' ').trim();
-
-    // Add optional type if needed
     if (addOptional && !/undefined/.test(result)) {
       result = `${result} | undefined`;
     }
-
     return result;
   }
 
-  /**
-   * Parse metadata directives from comment text.
-   * Example: "primary:true; index:btree" → { primary: true, index: "btree" }
-   */
   private parseMetadata(comment: string): Record<string, any> {
     const meta: Record<string, any> = {};
     if (!comment) return meta;
-
     const parts = comment.split(";").map(p => p.trim()).filter(Boolean);
     for (const part of parts) {
       if (part.includes(":")) {
@@ -635,14 +543,9 @@ class InterfaceTokenParser {
         meta[part] = true;
       }
     }
-
     return meta;
   }
 
-  /**
-   * Parse @relation directive from comment.
-   * Example: "@relation manyToOne:User foreignKey:userId"
-   */
   private parseRelationDirective(
     comment: string,
     fieldName: string,
@@ -651,37 +554,18 @@ class InterfaceTokenParser {
     const relMatch = comment.match(/@(?:relation|relationship)\s+(\w+):(\w+)/i);
     const fkMatch = comment.match(/foreignKey[:\s]*([A-Za-z0-9_]+)/i);
     const throughMatch = comment.match(/through[:\s]*([A-Za-z0-9_]+)/i);
-
     if (!relMatch) return null;
-
     const kind = relMatch[1].toLowerCase();
     const target = relMatch[2];
     let fk = fkMatch ? fkMatch[1] : "";
-
-    // Auto-generate foreign key if not specified
     if (!fk) {
-      if (kind === 'manytoone' || kind === 'many-to-one') {
-        fk = `${target.toLowerCase()}Id`;
-      } else if (kind === 'onetomany' || kind === 'one-to-many') {
-        fk = `${interfaceName.toLowerCase()}Id`;
-      } else if (kind === 'manytomany' || kind === 'many-to-many') {
-        fk = 'id';
-      } else {
-        fk = 'id';
-      }
+      if (kind === 'manytoone' || kind === 'many-to-one') fk = `${target.toLowerCase()}Id`;
+      else if (kind === 'onetomany' || kind === 'one-to-many') fk = `${interfaceName.toLowerCase()}Id`;
+      else fk = 'id';
     }
-
-    return {
-      kind,
-      target,
-      fk,
-      through: throughMatch ? throughMatch[1] : undefined,
-    };
+    return { kind, target, fk, through: throughMatch ? throughMatch[1] : undefined };
   }
 
-  /**
-   * Report parsing error with line number for debugging.
-   */
   private reportError(line: number, message: string): void {
     const context = this.peek();
     const lineInfo = context ? ` (line ${context.line}, col ${context.column})` : ` (line ${line})`;
@@ -692,15 +576,14 @@ class InterfaceTokenParser {
 function parseInterfacesFromTokens(tokens: Token[]): Record<string, InterfaceDefinition> {
   const parser = new InterfaceTokenParser(tokens);
   return parser.parse();
-}
+        }
+
 
 export default async function generateSchema(srcGlob: string) {
   const abs = path.resolve(process.cwd(), srcGlob);
   const files = readFiles(abs);
   console.log(`Scanning ${files.length} source files...`);
 
-  // Fast path: if generated file exists and is newer than all source files,
-  // skip regeneration and return the existing schema.
   try {
     const jsonOut = path.join(abs, "schema", "generated.json");
     if (fs.existsSync(jsonOut)) {
@@ -715,13 +598,13 @@ export default async function generateSchema(srcGlob: string) {
         return parsed;
       }
     }
-  } catch (err) {
-    // ignore caching errors and continue to generate
+  } catch {
+    // ignore cache errors, regenerate
   }
 
   const allInterfaces: Record<string, InterfaceDefinition> = {};
-  const interfaceSourceMap: Record<string, string> = {}; // Track where each interface comes from
-  
+  const interfaceSourceMap: Record<string, string> = {};
+
   for (const f of files) {
     const src = fs.readFileSync(f, 'utf8');
     const tokens = tokenize(src);
@@ -735,16 +618,23 @@ export default async function generateSchema(srcGlob: string) {
     }
   }
 
-  for (const [modelName, intf] of Object.entries(allInterfaces)) {
-    if (!intf.fields['id']) intf.fields['id'] = { type: 'number', originalType: 'number', optional: true, meta: { primaryKey: true, auto: true } };
-    if (!intf.fields['createdAt']) intf.fields['createdAt'] = { type: 'string', originalType: 'string', optional: true, meta: { index: true, default: 'CURRENT_TIMESTAMP' } };
-    if (!intf.fields['updatedAt']) intf.fields['updatedAt'] = { type: 'string', originalType: 'string', optional: true, meta: { index: true, default: 'CURRENT_TIMESTAMP' } };
+  for (const intf of Object.values(allInterfaces)) {
+    if (!intf.fields['id']) {
+      intf.fields['id'] = { type: 'number', originalType: 'number', optional: true, meta: { primaryKey: true, auto: true } };
+    }
+    if (!intf.fields['createdAt']) {
+      intf.fields['createdAt'] = { type: 'string', originalType: 'string', optional: true, meta: { index: true, default: 'CURRENT_TIMESTAMP' } };
+    }
+    if (!intf.fields['updatedAt']) {
+      intf.fields['updatedAt'] = { type: 'string', originalType: 'string', optional: true, meta: { index: true, default: 'CURRENT_TIMESTAMP' } };
+    }
   }
 
   const output: Record<string, ModelDefinition> = {};
   const modelInterfaces: string[] = [];
-  // More flexible regex: match defineModel even with nested property access (e.g., orm.models.defineModel)
+
   const defineRe = /(?:[\w$.]+\.)?defineModel\s*<\s*(\w+)\s*>\s*\(\s*['"]([^'"]+)['"]/g;
+
   for (const f of files) {
     const src = fs.readFileSync(f, 'utf8');
     let m: RegExpExecArray | null;
@@ -753,31 +643,27 @@ export default async function generateSchema(srcGlob: string) {
       const tableName = m[2];
       const intf = allInterfaces[intfName];
       if (!intf) continue;
-      
-      // Warn about duplicate model registrations
+
       if (output[intfName]) {
         console.warn(`Model "${intfName}" registered multiple times (overwriting previous definition)`);
       }
-      
-      const primary = Object.entries(intf.fields).find(([, v]: any) => v.meta?.primaryKey) || ['id'];
-      const modelDef: ModelDefinition = { 
-        primaryKey: primary[0], 
-        fields: intf.fields, 
-        relations: intf.relations, 
-        table: tableName 
+
+      const primaryEntry = Object.entries(intf.fields).find(([, v]) => v.meta?.primaryKey);
+      const primaryKey = primaryEntry ? primaryEntry[0] : 'id';
+
+      output[intfName] = {
+        primaryKey,
+        fields: intf.fields,
+        relations: intf.relations,
+        table: tableName,
       };
-      output[intfName] = modelDef;
     }
   }
 
-  // Validate relation targets exist and foreign keys are valid
   for (const [modelName, modelDef] of Object.entries(output)) {
     for (const rel of modelDef.relations) {
-      const targetInterface = allInterfaces[rel.targetModel];
-      if (!targetInterface) {
+      if (!allInterfaces[rel.targetModel]) {
         console.warn(`Unknown relation target "${rel.targetModel}" in ${modelName}.${rel.fieldName}`);
-      } else if (rel.foreignKey && !targetInterface.fields[rel.foreignKey]) {
-        console.warn(`Foreign key field "${rel.foreignKey}" not found in ${rel.targetModel} (referenced in ${modelName}.${rel.fieldName})`);
       }
     }
   }
@@ -785,15 +671,9 @@ export default async function generateSchema(srcGlob: string) {
   for (const [modelName] of Object.entries(output)) {
     const intf = allInterfaces[modelName];
     const props: string[] = [];
-    for (const [propName, propDef] of Object.entries(intf.fields) as [string, { optional?: boolean; originalType: string } ][]) {
+    for (const [propName, propDef] of Object.entries(intf.fields) as [string, FieldDefinition][]) {
       const optional = propDef.optional ? "?" : "";
       props.push(`  ${propName}${optional}: ${propDef.originalType};`);
-    }
-    for (const rel of intf.relations || []) {
-      const relType = rel.kind === "onetomany" || rel.kind === "manytomany"
-        ? `${rel.targetModel}[]`
-        : rel.targetModel;
-      props.push(`  ${rel.fieldName}?: ${relType};`);
     }
     modelInterfaces.push(`export interface ${modelName} {\n${props.join("\n")}\n}`);
   }
@@ -802,14 +682,17 @@ export default async function generateSchema(srcGlob: string) {
 
   const outDir = path.join(abs, 'schema');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+
   const outFile = path.join(outDir, 'generated.ts');
-  const jsContent = `\n// AUTO-GENERATED SCHEMA\n// DO NOT EDIT\n\n${modelInterfaces.join("\n\n")}\n\nexport type ModelMap = {\n${modelMapEntries.join("\n")}\n};\n\nexport const schema = ${JSON.stringify(output, null, 2)} as const;\n\nexport type Schema = typeof schema;\nexport type ModelName = keyof ModelMap;\n`;
-  fs.writeFileSync(outFile, jsContent, 'utf8');
-  // Also write a plain JSON file for fast, reliable caching and for
-  // tools/tests to consume without parsing the generated TS file.
+  const tsContent = `\n// AUTO-GENERATED SCHEMA\n// DO NOT EDIT\n\n${modelInterfaces.join("\n\n")}\n\nexport type ModelMap = {\n${modelMapEntries.join("\n")}\n};\n\nexport const schema = ${JSON.stringify(output, null, 2)} as const;\n\nexport type Schema = typeof schema;\nexport type ModelName = keyof ModelMap;\n`;
+
+  fs.writeFileSync(outFile, tsContent, 'utf8');
+
   const jsonOut = path.join(outDir, 'generated.json');
   fs.writeFileSync(jsonOut, JSON.stringify(output, null, 2), 'utf8');
+
   console.log('schema/generated.ts and schema/generated.json written successfully');
   return output;
 }
+
 
