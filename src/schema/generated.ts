@@ -1,0 +1,698 @@
+
+// AUTO-GENERATED SCHEMA
+// DO NOT EDIT
+
+export interface User {
+  id?: number;
+  firstName?: string;
+  name: string;
+  lastname?: string;
+  teams?: Team[];
+  meta?: Record <string ,any >;
+  createdAt?: string;
+  updatedAt?: string;
+  deletedAt?: string;
+  status?: "active" | "inactive" | "banned";
+  email?: Post[];
+  posts?: Profile;
+  profile?: Team[];
+}
+
+export interface Post {
+  id?: number;
+  title: string;
+  user?: User;
+  meta?: Record <string ,any >;
+  createdAt?: string;
+  updatedAt?: string;
+  deletedAt?: string;
+  status?: "draft" | "published" | "archived";
+  userId?: User;
+}
+
+export interface Todo {
+  id?: number;
+  title: string;
+  detail: string;
+  createdAt?: string;
+  updatedAt?: string;
+  deletedAt?: string;
+  meta?: Record <string ,any >;
+  priority?: "low" | "medium" | "high";
+}
+
+export interface Profile {
+  user?: User;
+  userId: number;
+  meta?: Record <string ,any >;
+  createdAt?: string;
+  updatedAt?: string;
+  deletedAt?: string;
+  gender?: "male" | "female" | "other";
+  id?: number;
+  id?: User;
+}
+
+export interface Task {
+  id?: number;
+  title: string;
+  detail: string;
+  createdAt?: string;
+  updatedAt?: string;
+  deletedAt?: string;
+  meta?: Record <string ,any >;
+  status?: "todo" | "inprogress" | "done";
+}
+
+export interface Tasksx {
+  id?: number;
+  title: string;
+  detail: string;
+  createdAt?: string;
+  updatedAt?: string;
+  deletedAt?: string;
+  meta?: Record <string ,any >;
+  status?: "todo" | "inprogress" | "done";
+}
+
+export interface Team {
+  id?: number;
+  title: string;
+  detail: string;
+  open?: boolean;
+  tested?: boolean;
+  meta?: Record <string ,any >;
+  createdAt?: string;
+  updatedAt?: string;
+  deletedAt?: string;
+  members?: User[];
+  status?: User[];
+}
+
+export type ModelMap = {
+  User: User;
+  Post: Post;
+  Todo: Todo;
+  Profile: Profile;
+  Task: Task;
+  Tasksx: Tasksx;
+  Team: Team;
+};
+
+export const schema = {
+  "User": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {
+          "@nullable": true,
+          "length": "100",
+          "comment": "First name"
+        }
+      },
+      "firstName": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@length": "100",
+          "not null": true,
+          "comment": "Last name"
+        }
+      },
+      "name": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {
+          "@nullable": true,
+          "length": "100",
+          "comment": "Last name"
+        }
+      },
+      "lastname": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@unique": true,
+          "comment": "Email"
+        }
+      },
+      "teams": {
+        "type": "Team[] | undefined",
+        "originalType": "Team[]",
+        "optional": true,
+        "meta": {
+          "@json": true,
+          "nullable": true,
+          "comment": "Extra user info"
+        }
+      },
+      "meta": {
+        "type": "Record <string ,any > | undefined",
+        "originalType": "Record <string ,any >",
+        "optional": true,
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@softDelete": true
+        }
+      },
+      "deletedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@enum": "(active,inactive,banned)"
+        }
+      },
+      "status": {
+        "type": "\"active\" | \"inactive\" | \"banned\" | undefined",
+        "originalType": "\"active\" | \"inactive\" | \"banned\"",
+        "optional": true,
+        "meta": {}
+      }
+    },
+    "relations": [
+      {
+        "sourceModel": "User",
+        "fieldName": "email",
+        "kind": "onetomany",
+        "targetModel": "Post",
+        "foreignKey": "userId",
+        "meta": {
+          "@relationship onetomany": "Post",
+          "foreignKey": "userId"
+        }
+      },
+      {
+        "sourceModel": "User",
+        "fieldName": "posts",
+        "kind": "onetoone",
+        "targetModel": "Profile",
+        "foreignKey": "userId",
+        "meta": {
+          "@relationship onetoone": "Profile",
+          "foreignKey": "userId",
+          "onDelete": "CASCADE"
+        }
+      },
+      {
+        "sourceModel": "User",
+        "fieldName": "profile",
+        "kind": "manytomany",
+        "targetModel": "Team",
+        "foreignKey": "userId",
+        "through": "team_members",
+        "meta": {
+          "@relation manytomany": "Team",
+          "through": "team_members",
+          "foreignKey": "userId",
+          "relatedKey": "teamId"
+        }
+      }
+    ],
+    "table": "users"
+  },
+  "Post": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {
+          "@length": "255",
+          "not null": true,
+          "comment": "Post title"
+        }
+      },
+      "title": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {
+          "@nullable": true,
+          "comment": "Author user ID"
+        }
+      },
+      "user": {
+        "type": "User | undefined",
+        "originalType": "User",
+        "optional": true,
+        "meta": {
+          "@json": true,
+          "nullable": true,
+          "comment": "Extra post data"
+        }
+      },
+      "meta": {
+        "type": "Record <string ,any > | undefined",
+        "originalType": "Record <string ,any >",
+        "optional": true,
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@softDelete": true
+        }
+      },
+      "deletedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@enum": "(draft,published,archived)"
+        }
+      },
+      "status": {
+        "type": "\"draft\" | \"published\" | \"archived\" | undefined",
+        "originalType": "\"draft\" | \"published\" | \"archived\"",
+        "optional": true,
+        "meta": {}
+      }
+    },
+    "relations": [
+      {
+        "sourceModel": "Post",
+        "fieldName": "userId",
+        "kind": "manytoone",
+        "targetModel": "User",
+        "foreignKey": "userId",
+        "meta": {
+          "@relation manytoone": "User",
+          "foreignKey": "userId",
+          "onDelete": "SET NULL"
+        }
+      }
+    ],
+    "table": "post"
+  },
+  "Todo": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {
+          "@length": "255",
+          "not null": true
+        }
+      },
+      "title": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {
+          "@nullable": true,
+          "length": "1000"
+        }
+      },
+      "detail": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@softDelete": true
+        }
+      },
+      "deletedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@json": true,
+          "nullable": true
+        }
+      },
+      "meta": {
+        "type": "Record <string ,any > | undefined",
+        "originalType": "Record <string ,any >",
+        "optional": true,
+        "meta": {
+          "@enum": "(low,medium,high)"
+        }
+      },
+      "priority": {
+        "type": "\"low\" | \"medium\" | \"high\" | undefined",
+        "originalType": "\"low\" | \"medium\" | \"high\"",
+        "optional": true,
+        "meta": {}
+      }
+    },
+    "relations": [],
+    "table": "todo"
+  },
+  "Profile": {
+    "primaryKey": "id",
+    "fields": {
+      "user": {
+        "type": "User | undefined",
+        "originalType": "User",
+        "optional": true,
+        "meta": {}
+      },
+      "userId": {
+        "type": "number",
+        "originalType": "number",
+        "optional": false,
+        "meta": {
+          "@json": true,
+          "nullable": true,
+          "comment": "Extra profile data"
+        }
+      },
+      "meta": {
+        "type": "Record <string ,any > | undefined",
+        "originalType": "Record <string ,any >",
+        "optional": true,
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@softDelete": true
+        }
+      },
+      "deletedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@enum": "(male,female, other)"
+        }
+      },
+      "gender": {
+        "type": "\"male\" | \"female\" | \"other\" | undefined",
+        "originalType": "\"male\" | \"female\" | \"other\"",
+        "optional": true,
+        "meta": {}
+      },
+      "id": {
+        "type": "number",
+        "originalType": "number",
+        "optional": true,
+        "meta": {
+          "primaryKey": true,
+          "auto": true
+        }
+      }
+    },
+    "relations": [
+      {
+        "sourceModel": "Profile",
+        "fieldName": "id",
+        "kind": "onetoone",
+        "targetModel": "User",
+        "foreignKey": "userId",
+        "meta": {
+          "@relation onetoone": "User",
+          "foreignKey": "userId"
+        }
+      }
+    ],
+    "table": "profile"
+  },
+  "Task": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {
+          "@length": "255",
+          "not null": true
+        }
+      },
+      "title": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {
+          "@nullable": true,
+          "length": "1000"
+        }
+      },
+      "detail": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@softDelete": true
+        }
+      },
+      "deletedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@json": true,
+          "nullable": true
+        }
+      },
+      "meta": {
+        "type": "Record <string ,any > | undefined",
+        "originalType": "Record <string ,any >",
+        "optional": true,
+        "meta": {
+          "@enum": "(todo,inprogress,done)"
+        }
+      },
+      "status": {
+        "type": "\"todo\" | \"inprogress\" | \"done\" | undefined",
+        "originalType": "\"todo\" | \"inprogress\" | \"done\"",
+        "optional": true,
+        "meta": {}
+      }
+    },
+    "relations": [],
+    "table": "tasks"
+  },
+  "Tasksx": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {
+          "@length": "255",
+          "not null": true
+        }
+      },
+      "title": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {
+          "@nullable": true,
+          "length": "1000"
+        }
+      },
+      "detail": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@softDelete": true
+        }
+      },
+      "deletedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@json": true,
+          "nullable": true
+        }
+      },
+      "meta": {
+        "type": "Record <string ,any > | undefined",
+        "originalType": "Record <string ,any >",
+        "optional": true,
+        "meta": {
+          "@enum": "(todo, inprogress, done)"
+        }
+      },
+      "status": {
+        "type": "\"todo\" | \"inprogress\" | \"done\" | undefined",
+        "originalType": "\"todo\" | \"inprogress\" | \"done\"",
+        "optional": true,
+        "meta": {}
+      }
+    },
+    "relations": [],
+    "table": "tasksx"
+  },
+  "Team": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {
+          "@length": "255",
+          "not null": true
+        }
+      },
+      "title": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {
+          "@nullable": true,
+          "length": "1000"
+        }
+      },
+      "detail": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {
+          "@nullable": true
+        }
+      },
+      "open": {
+        "type": "boolean | undefined",
+        "originalType": "boolean",
+        "optional": true,
+        "meta": {
+          "@nullable": true
+        }
+      },
+      "tested": {
+        "type": "boolean | undefined",
+        "originalType": "boolean",
+        "optional": true,
+        "meta": {
+          "@json": true,
+          "nullable": true
+        }
+      },
+      "meta": {
+        "type": "Record <string ,any > | undefined",
+        "originalType": "Record <string ,any >",
+        "optional": true,
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@softDelete": true
+        }
+      },
+      "deletedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@enum": "(active,archived)"
+        }
+      },
+      "members": {
+        "type": "User[] | undefined",
+        "originalType": "User[]",
+        "optional": true,
+        "meta": {}
+      }
+    },
+    "relations": [
+      {
+        "sourceModel": "Team",
+        "fieldName": "status",
+        "kind": "manytomany",
+        "targetModel": "User",
+        "foreignKey": "teamId",
+        "through": "team_members",
+        "meta": {
+          "@relation manytomany": "User",
+          "through": "team_members",
+          "foreignKey": "teamId",
+          "relatedKey": "userId"
+        }
+      }
+    ],
+    "table": "team"
+  }
+} as const;
+
+export type Schema = typeof schema;
+export type ModelName = keyof ModelMap;

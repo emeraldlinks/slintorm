@@ -28,7 +28,8 @@
   },
   "scripts": {
     "build": "tsc && tsc-alias",
-    "test": "node --loader ts-node/esm --experimental-specifier-resolution=node src/example.ts"
+    "test": "tsx src/example.ts"
+    
   },
   "dependencies": {
     "mongodb": "^6.20.0",
