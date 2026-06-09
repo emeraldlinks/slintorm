@@ -1,23 +1,24 @@
 # Simple TypeScript ORM
 
-A lightweight TypeScript ORM for SQLite, PostgreSQL, and MySQL.  
-Inspired by Go's GORM, this ORM focuses on **simplicity, type safety, and full-featured query building** while keeping the API intuitive for TypeScript developers.
+A lightweight TypeScript ORM for SQLite, PostgreSQL, MySQL, and MongoDB.
 
-It is designed for:
+This library focuses on:
 
-- Rapid development with auto table creation and migrations
-- Fully type-safe model definitions
-- Easy handling of relationships: one-to-one, one-to-many, and many-to-many
-- Advanced query building with joins, aggregates, subqueries, window functions, and preloads
-- Minimal configuration with sensible defaults
+- simplicity and easy setup
+- type-safe model definitions
+- automatic migrations and table generation
+- relationship support for one-to-one, one-to-many, and many-to-many
+- query building with preloads, filters, and joins
+- minimal runtime footprint by loading only the selected database driver
 
 ---
 ## Installation
 
 ```bash
 npm install slintorm
-
 ```
+
+> Note: runtime database drivers are loaded lazily. If you only use `sqlite`, then `pg`, `mysql2`, and `mongodb` are not required at runtime.
 
 ---
 
@@ -174,179 +175,116 @@ interface Team {
 
 ```ts
 import ORMManager from "slintorm";
+// import {schema} from "./schema/generated.js";
 
-// Initialize ORM
-const orm = new ORMManager({
-  driver: "sqlite",
-  databaseUrl: "./test.db",
-});
 
-// Run migrations automatically
+  const orm = new ORMManager({
+    driver: "sqlite",
+    databaseUrl: "./testx.db",
+    dir: "src",
+    logs: false,
+    
+    // schema: schema
+  });
+
+// Generate schema from source files and apply migrations
 await orm.migrate();
-```
----
-
-## Define Models
-
-```ts
 
 const Users = await orm.defineModel<User>("users", "User");
 const Posts = await orm.defineModel<Post>("posts", "Post");
 const Todos = await orm.defineModel<Todo>("todos", "Todo");
-const Profiles = await orm.defineModel<Profile>("profiles", "Profile");
-const Tasks = await orm.defineModel<Task>("tasks", "Task");
-  const Teams = await orm.defineModel<Team>("team", "Team", {
-    onCreateBefore(item) {
-      console.log("before create Team: ", item)
-    },
-    onCreateAfter(item) {
-      console.log("after create: ", item)
-    },
-    onUpdateAfter(oldData, newData) {
-
-    },
-  });
 ```
----
----
 
-## Basic CRUD Examples
+This example uses SQLite, but you can switch to PostgreSQL, MySQL, or MongoDB by changing `driver` and `databaseUrl`.
+
+If you already have a generated schema object, pass it in as `schema` to avoid reading schema files from disk.
+
+---
+## Define models
 
 ```ts
+const Users = await orm.defineModel<User>("users", "User");
+const Posts = await orm.defineModel<Post>("posts", "Post");
+const Todos = await orm.defineModel<Todo>("todos", "Todo");
+```
 
-// Insert
+### Hooks
+
+```ts
+const Teams = await orm.defineModel<Team>("team", "Team", {
+  onCreateBefore(item) {
+    console.log("before create Team:", item);
+  },
+  onCreateAfter(item) {
+    console.log("after create:", item);
+  },
+  onUpdateAfter(oldData, newData) {
+    console.log("updated", oldData, "->", newData);
+  },
+});
+```
+
+---
+## Basic CRUD examples
+
+```ts
 await Todos.insert({
   title: "To watch plates",
   detail: "Wash all plates",
   createdAt: new Date().toISOString(),
 });
 
-// Fetch all
 const allTodos = await Todos.getAll();
-
-// Fetch one
 const user = await Users.get({ id: 1 });
-
-// Update
 await Users.update({ id: 1 }, { name: "Amike Catherine" });
-
-// Update instance
 const fetchedUser = await Users.get({ id: 1 });
 await fetchedUser?.update({ name: "Amike Egwamene" });
-
-// Delete
 await Posts.delete({ id: 3 });
-
 ```
 
 ---
+## Query builder examples
 
-## Query Builder Examples
 ```ts
-// Preload relationships and filter
-  const postWithUser = await Posts.query()
-    .exclude("title")
-    .preload("user")
-    .preload("user.posts")
-    .preload("user.profile")
-    .preload("user.posts.user")
-    .exclude("user.lastname")
-    .first();
-
+const postWithUser = await Posts.query()
+  .exclude("title")
+  .preload("user")
+  .preload("user.posts")
+  .preload("user.profile")
+  .preload("user.posts.user")
+  .exclude("user.lastname")
+  .first();
 
 const userWithRelations = await Users.query()
   .preload("posts")
   .preload("profile")
   .first("id = 2");
-  // .first({id: 2}); both are valid
-
-// Nested preloads
-const postWithUser = await Posts.query()
-  .preload("user")
-  .preload("user.posts")
-  .preload("user.profile")
-  .get();
-
-// Filtering, ordering, and limiting
-const todos = await Todos.query()
-  .where("title", "LIKE", "%plates%")
-  .orderBy("createdAt", "desc")
-  .limit(5)
-  .get();
-
-// Distinct and aggregates
-const counts = await Users.query()
-  .count("id")
-  .groupBy("lastname")
-  .ILike("name", "jane")
-  .get();
-
-// Window function example
-const rankedUsers = await Users.query()
-  .window("ROW_NUMBER()", "PARTITION BY lastname ORDER BY id ASC")
-  .get();
-
-// Subquery example
-const subquery = Users.query().select("id").where("name", "=", "Amike");
-const usersFromSub = await Users.query()
-  .selectSubquery(subquery, "sub_id")
-  .get();
-
-// EXISTS / NOT EXISTS example
-const existsQuery = await Posts.query()
-  .exists(subquery)
-  .get();
-
-
-   try {
-    await Posts.delete({ id: 3 });
-  } catch (err) {
-    console.log("Delete error:", err);
-  }
-
-
-  const user = await Users.get({ id: 1 })
-  // console.log("user: ", user)
-
-
-  try {
-    const uup = await Users.update({ id: 1 }, { name: "Amike Catherine" })
-    //  console.log("immediate update: ", uup)
-
-    const upuser = await Users.get({ id: 1 })
-    // console.log("fetched updated user: ", upuser)
-    const excupuser = await Users.query().exclude("profile")
-    // .preload("posts").exclude("posts.user")
-    .first()
-
-    const updated = await upuser?.update({ name: "Amike Egwamene" });
-    console.log("Updated user:", updated);
-    console.log("excluded user fields:", excupuser);
-
-  } catch (err) {
-    console.log("error updated user: ", err)
-
-  }
-
-
-  const pp = await Profiles.query()
-  .preload("user").preload("user.profile").preload("user.profile.user")
-  .exclude("user.name")
-  .first(`userId = ${2}`)
-  console.log("profile: ", pp)
-
-
-  const nnew = await Teams.insert({
-    title: "To watch dishes",
-    detail: "Wash all dishes",
-    open: true,
-    tested: false
-  });
-  console.log("Teams:", nnew);
-
-
-
 ```
+
+---
+## Schema generation and migrations
+
+`orm.migrate()` generates schema from source files and updates tables automatically.
+
+If you pass `schema` directly to `ORMManager`, the ORM uses that schema instead of generating from disk.
+
+---
+## Notes
+
+- `fs` and `path` are only loaded when schema files are loaded from disk.
+- Only the selected database driver is required at runtime.
+- Use `autoInstallDrivers: false` if you prefer to install the driver manually.
+
+---
+## Build & test
+
+```bash
+npm run build
+npm test
+```
+
+
+
 ---
 
 ## Relationships

@@ -270,8 +270,7 @@ function readFiles(dir: string): string[] {
     }
   }
   return out;
-      }
-
+}
 
 class InterfaceTokenParser {
   private tokens: Token[];
@@ -286,8 +285,14 @@ class InterfaceTokenParser {
   parse(): Record<string, InterfaceDefinition> {
     while (this.i < this.tokens.length) {
       this.skipWhitespaceOnly();
+
+      // Collect any pending annotation comment at top-level (interface doc comments)
+      // These are block comments like /** ... */ above the interface keyword.
+      // We don't need them for schema, just skip.
       this.skipTopLevelComments();
+
       if (this.i >= this.tokens.length) break;
+
       if (this.parseInterfaceDeclaration()) {
         // continue
       } else {
@@ -312,6 +317,11 @@ class InterfaceTokenParser {
     return null;
   }
 
+  /**
+   * Skip only whitespace and newlines — does NOT consume comments.
+   * This preserves comments so they can be read by the field parser
+   * immediately before the field they annotate.
+   */
   private skipWhitespaceOnly(): void {
     while (this.i < this.tokens.length) {
       const t = this.peek();
@@ -323,6 +333,9 @@ class InterfaceTokenParser {
     }
   }
 
+  /**
+   * Skip top-level comments (used outside of interface bodies).
+   */
   private skipTopLevelComments(): void {
     while (this.i < this.tokens.length) {
       const t = this.peek();
@@ -335,30 +348,53 @@ class InterfaceTokenParser {
     }
   }
 
+  /**
+   * Read the annotation comment that immediately precedes a field.
+   * Only collects the LAST comment-line that directly precedes the identifier,
+   * with only whitespace/newlines between them. Returns "" if none.
+   *
+   * This is the core fix: we read comments inline as part of field parsing,
+   * not as part of a global "skip whitespace" sweep.
+   */
   private readPrecedingComment(): string {
+    // Scan ahead: skip whitespace/newlines, if we hit a comment-line followed
+    // by whitespace/newlines followed by an identifier, consume it and return it.
+    // If we hit anything else (including another comment), return "".
     let j = this.i;
+
+    // Skip leading whitespace/newlines
     while (j < this.tokens.length && (this.tokens[j].type === 'whitespace' || this.tokens[j].type === 'newline')) {
       j++;
     }
+
+    // Expect a comment-line token
     if (j >= this.tokens.length || this.tokens[j].type !== 'comment-line') {
       return "";
     }
+
     const commentToken = this.tokens[j];
     j++;
+
+    // Skip whitespace/newlines after comment
     while (j < this.tokens.length && (this.tokens[j].type === 'whitespace' || this.tokens[j].type === 'newline')) {
       j++;
     }
+
+    // Next must be an identifier (the field name) or closing brace
     if (j >= this.tokens.length) return "";
     const next = this.tokens[j];
     if (next.type !== 'identifier' && next.type !== 'brace-close') return "";
+
+    // Consume up to and including the comment
     while (this.i <= this.tokens.length) {
       const t = this.tokens[this.i];
       if (t === commentToken) {
-        this.next();
+        this.next(); // consume the comment itself
         break;
       }
       this.next();
     }
+
     return commentToken.value.replace(/^\/\/\s?/, "").trim();
   }
 
@@ -404,11 +440,15 @@ class InterfaceTokenParser {
     const relations: RelationDefinition[] = [];
 
     while (this.i < this.tokens.length && this.peek()?.type !== 'brace-close') {
+      // Skip blank lines between fields
       this.skipWhitespaceOnly();
       if (this.peek()?.type === 'brace-close') break;
 
+      // FIX: read the annotation comment directly before this field,
+      // consuming it only if it immediately precedes an identifier.
       const fieldComment = this.readPrecedingComment();
 
+      // Skip any remaining whitespace after comment
       this.skipWhitespaceOnly();
       if (this.peek()?.type === 'brace-close') break;
 
@@ -435,7 +475,7 @@ class InterfaceTokenParser {
     fields: Record<string, FieldDefinition>,
     relations: RelationDefinition[],
     lineNum: number,
-    comment: string
+    comment: string  // FIX: passed in directly, not read from shared state
   ): boolean {
     if (this.peek()?.type !== 'identifier') return false;
     const propName = this.next()!.value;
@@ -461,10 +501,17 @@ class InterfaceTokenParser {
       this.reportError(lineNum, `Expected ';' after type for '${propName}'`);
     }
 
+    // FIX: do NOT call skipWhitespaceAndComments here — that would consume
+    // the next field's annotation comment before we get a chance to read it.
+
     const type = this.reconstructType(typeTokens, isOptional);
     const originalType = this.reconstructType(typeTokens, false);
+
     const meta = this.parseMetadata(comment);
 
+    // FIX: relation fields are added to BOTH fields[] (preserving the original TS type)
+    // AND relations[]. Previously relation fields were only added to relations[] and
+    // then re-emitted from the relation list with the wrong type.
     if (/@(?:relation|relationship)/i.test(comment)) {
       const relationData = this.parseRelationDirective(comment, propName, interfaceName);
       if (relationData) {
@@ -477,6 +524,8 @@ class InterfaceTokenParser {
           through: relationData.through,
           meta,
         });
+        // Still record the field with its original TS type — don't skip it.
+        // The generated interface will use this type verbatim.
         fields[propName] = { type, originalType, optional: isOptional, meta };
         return true;
       }
@@ -489,30 +538,42 @@ class InterfaceTokenParser {
   private extractTypeTokens(): Token[] {
     const typeTokens: Token[] = [];
     let depth = 0;
+
     while (this.i < this.tokens.length) {
       const token = this.peek();
       if (!token) break;
-      if (token.type === 'bracket-open' || token.type === 'brace-open' || token.type === 'angle-open') depth++;
-      else if (token.type === 'bracket-close' || token.type === 'brace-close' || token.type === 'angle-close') depth--;
+
+      if (token.type === 'bracket-open' || token.type === 'brace-open' || token.type === 'angle-open') {
+        depth++;
+      } else if (token.type === 'bracket-close' || token.type === 'brace-close' || token.type === 'angle-close') {
+        depth--;
+      }
+
       if (token.type === 'semicolon' && depth === 0) break;
+
       typeTokens.push(token);
       this.next();
     }
+
     return typeTokens;
   }
 
   private reconstructType(tokens: Token[], addOptional: boolean): string {
     if (tokens.length === 0) return "unknown";
+
     const significant = tokens.filter(
       t => t.type !== 'whitespace' && t.type !== 'newline' &&
            t.type !== 'comment-line' && t.type !== 'comment-block'
     );
+
     if (significant.length === 0) return "unknown";
+
     let result = "";
     for (let i = 0; i < significant.length; i++) {
       const token = significant[i];
       const prev = i > 0 ? significant[i - 1] : null;
       const next = i < significant.length - 1 ? significant[i + 1] : null;
+
       if (prev && (prev.type === 'bracket-open' || prev.type === 'brace-open' || prev.type === 'angle-open')) {
         result += token.value;
       } else if (next && (next.type === 'bracket-close' || next.type === 'brace-close' || next.type === 'angle-close')) {
@@ -523,16 +584,20 @@ class InterfaceTokenParser {
         result += (result && result[result.length - 1] !== ' ' ? ' ' : '') + token.value;
       }
     }
+
     result = result.replace(/\s+/g, ' ').trim();
+
     if (addOptional && !/undefined/.test(result)) {
       result = `${result} | undefined`;
     }
+
     return result;
   }
 
   private parseMetadata(comment: string): Record<string, any> {
     const meta: Record<string, any> = {};
     if (!comment) return meta;
+
     const parts = comment.split(";").map(p => p.trim()).filter(Boolean);
     for (const part of parts) {
       if (part.includes(":")) {
@@ -543,6 +608,7 @@ class InterfaceTokenParser {
         meta[part] = true;
       }
     }
+
     return meta;
   }
 
@@ -554,16 +620,31 @@ class InterfaceTokenParser {
     const relMatch = comment.match(/@(?:relation|relationship)\s+(\w+):(\w+)/i);
     const fkMatch = comment.match(/foreignKey[:\s]*([A-Za-z0-9_]+)/i);
     const throughMatch = comment.match(/through[:\s]*([A-Za-z0-9_]+)/i);
+
     if (!relMatch) return null;
+
     const kind = relMatch[1].toLowerCase();
     const target = relMatch[2];
     let fk = fkMatch ? fkMatch[1] : "";
+
     if (!fk) {
-      if (kind === 'manytoone' || kind === 'many-to-one') fk = `${target.toLowerCase()}Id`;
-      else if (kind === 'onetomany' || kind === 'one-to-many') fk = `${interfaceName.toLowerCase()}Id`;
-      else fk = 'id';
+      if (kind === 'manytoone' || kind === 'many-to-one') {
+        fk = `${target.toLowerCase()}Id`;
+      } else if (kind === 'onetomany' || kind === 'one-to-many') {
+        fk = `${interfaceName.toLowerCase()}Id`;
+      } else if (kind === 'manytomany' || kind === 'many-to-many') {
+        fk = 'id';
+      } else {
+        fk = 'id';
+      }
     }
-    return { kind, target, fk, through: throughMatch ? throughMatch[1] : undefined };
+
+    return {
+      kind,
+      target,
+      fk,
+      through: throughMatch ? throughMatch[1] : undefined,
+    };
   }
 
   private reportError(line: number, message: string): void {
@@ -576,14 +657,14 @@ class InterfaceTokenParser {
 function parseInterfacesFromTokens(tokens: Token[]): Record<string, InterfaceDefinition> {
   const parser = new InterfaceTokenParser(tokens);
   return parser.parse();
-        }
-
+}
 
 export default async function generateSchema(srcGlob: string) {
   const abs = path.resolve(process.cwd(), srcGlob);
   const files = readFiles(abs);
   console.log(`Scanning ${files.length} source files...`);
 
+  // Fast path: use cached generated.json if it is newer than all source files.
   try {
     const jsonOut = path.join(abs, "schema", "generated.json");
     if (fs.existsSync(jsonOut)) {
@@ -618,6 +699,7 @@ export default async function generateSchema(srcGlob: string) {
     }
   }
 
+  // Inject missing standard fields
   for (const intf of Object.values(allInterfaces)) {
     if (!intf.fields['id']) {
       intf.fields['id'] = { type: 'number', originalType: 'number', optional: true, meta: { primaryKey: true, auto: true } };
@@ -660,6 +742,7 @@ export default async function generateSchema(srcGlob: string) {
     }
   }
 
+  // Validate relation targets
   for (const [modelName, modelDef] of Object.entries(output)) {
     for (const rel of modelDef.relations) {
       if (!allInterfaces[rel.targetModel]) {
@@ -668,13 +751,18 @@ export default async function generateSchema(srcGlob: string) {
     }
   }
 
+  // Generate interface declarations.
+  // FIX: fields already contain relation fields with correct original TS types,
+  // so we just emit fields directly. No separate re-emission of relations needed.
   for (const [modelName] of Object.entries(output)) {
     const intf = allInterfaces[modelName];
     const props: string[] = [];
+
     for (const [propName, propDef] of Object.entries(intf.fields) as [string, FieldDefinition][]) {
       const optional = propDef.optional ? "?" : "";
       props.push(`  ${propName}${optional}: ${propDef.originalType};`);
     }
+
     modelInterfaces.push(`export interface ${modelName} {\n${props.join("\n")}\n}`);
   }
 
@@ -693,6 +781,4 @@ export default async function generateSchema(srcGlob: string) {
 
   console.log('schema/generated.ts and schema/generated.json written successfully');
   return output;
-}
-
-
+} 

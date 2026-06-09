@@ -9,7 +9,7 @@ const getPaths = (dir = "src") => {
 };
 
 export async function createORM(
-  cfg: { driver?: string; databaseUrl?: string; dir?: string; logs?: boolean } = {},
+  cfg: { driver?: string; databaseUrl?: string; dir?: string; logs?: boolean; schema?: Record<string, any> } = {},
 
 ) {
   const adapter = new DBAdapter({
@@ -17,18 +17,19 @@ export async function createORM(
     databaseUrl: cfg.databaseUrl,
     dir: cfg.dir || "src",
     logs: cfg.logs,
+    schema: cfg.schema,
   });
-const sqlDriver = ["sqlite", "postgres", "mysql"].includes(adapter.driver!)
-  ? adapter.driver as "sqlite" | "postgres" | "mysql"
-  : undefined;
-  // Always generate schema before model factory
-  const schema = await generateSchema(getPaths(cfg.dir));
-    const migrator = new Migrator(adapter.exec.bind(adapter), sqlDriver);
-for (const modelName of Object.keys(schema)) {
-      const model = schema[modelName];
-      await migrator.ensureTable(model.table || modelName.toLowerCase(), model.fields);
-    }
-  const defineModel = await createModelFactory(adapter);
+  const sqlDriver = ["sqlite", "postgres", "mysql"].includes(adapter.driver!)
+    ? adapter.driver as "sqlite" | "postgres" | "mysql"
+    : undefined;
+
+  const schema = cfg.schema ?? (await generateSchema(getPaths(cfg.dir)));
+  const migrator = new Migrator(adapter.exec.bind(adapter), sqlDriver);
+  for (const modelName of Object.keys(schema)) {
+    const model = schema[modelName];
+    await migrator.ensureTable(model.table || modelName.toLowerCase(), model.fields);
+  }
+  const defineModel = await createModelFactory(adapter, cfg.schema);
   return { adapter, defineModel };
 }
 
@@ -36,33 +37,36 @@ let schemaGenerated = false;
 
 type driver =  "sqlite" | "postgres" | "mysql" | "mongodb" | undefined
 export default class ORMManager {
-  cfg: { driver?: driver; databaseUrl?: string; dir?: string; logs?: boolean };
+  cfg: { driver?: driver; databaseUrl?: string; dir?: string; logs?: boolean; schema?: Record<string, any> };
   adapter: DBAdapter;
 
-  constructor(cfg: { driver?: driver; databaseUrl?: string; dir?: string; logs?: boolean }) {
+  constructor(cfg: { driver?: driver; databaseUrl?: string; dir?: string; logs?: boolean; schema?: Record<string, any> }) {
     this.cfg = cfg;
     this.adapter = new DBAdapter({
       driver: this.cfg.driver as any,
       databaseUrl: this.cfg.databaseUrl,
       dir: this.cfg.dir || "src",
       logs: this.cfg.logs,
+      schema: this.cfg.schema,
     });
   }
 
   async migrate() {
-  if (!schemaGenerated) {
-    schemaGenerated = true;
-    const schemaPath = getPaths(this.cfg.dir);
-    const schema = await generateSchema(schemaPath);
-    console.log("✅ Schema generated:", schemaPath);
-const sqlDriver = ["sqlite", "postgres", "mysql"].includes(this.adapter.driver!)
-  ? this.adapter.driver as "sqlite" | "postgres" | "mysql"
-  : undefined;
-  const migrator = new Migrator(this.adapter.exec.bind(this.adapter), sqlDriver);
-  // Use migrateSchema which also auto-creates pivot tables for many-to-many
-  await migrator.migrateSchema(schema as any);
+    if (!schemaGenerated) {
+      schemaGenerated = true;
+      const schemaPath = getPaths(this.cfg.dir);
+      const schema = this.cfg.schema ?? (await generateSchema(schemaPath));
+      if (!this.cfg.schema) {
+        console.log("✅ Schema generated:", schemaPath);
+      }
+      const sqlDriver = ["sqlite", "postgres", "mysql"].includes(this.adapter.driver!)
+        ? this.adapter.driver as "sqlite" | "postgres" | "mysql"
+        : undefined;
+      const migrator = new Migrator(this.adapter.exec.bind(this.adapter), sqlDriver);
+      // Use migrateSchema which also auto-creates pivot tables for many-to-many
+      await migrator.migrateSchema(schema as any);
+    }
   }
-}
 
 
   async defineModel<T extends Record<string, any>>(
@@ -85,8 +89,8 @@ const sqlDriver = ["sqlite", "postgres", "mysql"].includes(this.adapter.driver!)
       onDeleteAfter?: (deleted: Partial<T>) => (void | Promise<void>);
     }) {
 
-    const defineModel = await createModelFactory(this.adapter);
-    
+    const defineModel = await createModelFactory(this.adapter, this.cfg.schema);
+
     // Pass hooks directly to the model factory
     return defineModel<T>(table, modelName, hooks);
   }

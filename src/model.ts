@@ -1,12 +1,10 @@
 import { DBAdapter } from "./dbAdapter.js";
 import { Migrator } from "./migrator.js";
 import { QueryBuilder, mapBooleans } from "./queryBuilder.js";
-import fs from "fs";
-import path from "path";
 import type { RelationDef, EntityWithUpdate } from "./types.js";
 import type { ModelMap } from "./schema/generated.js";
 import { AdvancedQueryBuilder } from "./extra_clauses.js";
-import { fileURLToPath } from "url";
+import { pathToFileURL } from "url";
 
 
 
@@ -66,21 +64,30 @@ type ModelAPI<T extends object> = {
 
 
 async function loadSchema(adapterDir: string) {
-      // Use process.cwd() to get the project root
-    const jsPath = path.join(process.cwd(), adapterDir, "schema", "generated.js");
-    const tsPath = path.join(process.cwd(), adapterDir, "schema", "generated.ts");
-  try {
-    if (fs.existsSync(jsPath)) {
-      const { schema } = await import(`file://${jsPath}`);
-      return schema;
-    } else if (fs.existsSync(tsPath)) {
-      const { schema } = await import(`file://${tsPath}`);
-      return schema;
-    } else {
-      console.error("tried: ", jsPath, tsPath)
+  const fs = await import("fs");
+  const path = await import("path");
+  const jsonPath = path.join(process.cwd(), adapterDir, "schema", "generated.json");
+  const jsPath = path.join(process.cwd(), adapterDir, "schema", "generated.js");
+  const tsPath = path.join(process.cwd(), adapterDir, "schema", "generated.ts");
 
-      throw new Error("No schema file found (js or ts).");
+  try {
+    if (fs.existsSync(jsonPath)) {
+      const json = fs.readFileSync(jsonPath, "utf8");
+      return JSON.parse(json);
     }
+
+    if (fs.existsSync(jsPath)) {
+      const { schema } = await import(/* webpackIgnore: true */ pathToFileURL(jsPath).href);
+      return schema;
+    }
+
+    if (fs.existsSync(tsPath)) {
+      const { schema } = await import(/* webpackIgnore: true */ pathToFileURL(tsPath).href);
+      return schema;
+    }
+
+    console.error("tried: ", jsonPath, jsPath, tsPath);
+    throw new Error("No schema file found (json, js, or ts).");
   } catch (err) {
     console.error("Failed to import schema:", err);
     throw err;
@@ -93,8 +100,11 @@ let cachedSchema: Record<string, any> | null = null;
  * @param adapter - Database adapter instance
  * @returns A function to define a model with optional hooks
  */
-export async function createModelFactory(adapter: DBAdapter) {
-  const schemas = await loadSchema(adapter.dir!);
+export async function createModelFactory(adapter: DBAdapter, schema?: Record<string, any>) {
+  const schemas =
+    schema ??
+    adapter.schema ??
+    (await loadSchema(adapter.dir!));
   // console.log("schemas: ", schemas)
 
   /**

@@ -1,6 +1,6 @@
 {
   "name": "slintorm",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "Minimal fully typed orm for typescript",
   "license": "MIT",
   "author": "Joseph Christopher",
@@ -31,17 +31,15 @@
     "test": "tsx src/example.ts"
     
   },
-  "dependencies": {
-    "mongodb": "^6.20.0",
-    "mysql2": "^3.15.3",
-    "path": "^0.12.7",
-    "pg": "^8.16.3",
-    "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^24.9.1",
     "@types/pg": "^8.15.5",
+    "mongodb": "^6.20.0",
+    "mysql2": "^3.15.3",
+    "pg": "^8.16.3",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7",
     "ts-node": "^10.9.2",
     "tsc-alias": "^1.8.16",
     "tsx": "^4.22.4",

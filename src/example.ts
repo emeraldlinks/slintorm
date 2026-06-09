@@ -1,4 +1,5 @@
 import ORMManager, { createORM } from "./index.js";
+// import {schema} from "./schema/generated.js";
 
 /** Post table */
 interface Post {
@@ -165,7 +166,9 @@ async function main() {
     driver: "sqlite",
     databaseUrl: "./testx.db",
     dir: "src",
-    logs: false
+    logs: false,
+    
+    // schema: schema
   });
 
   await orm.migrate()

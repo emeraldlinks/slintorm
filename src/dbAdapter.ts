@@ -1,18 +1,15 @@
 import type { SQLExecResult, DBDriver } from "./types.ts";
-import sqlite3 from "sqlite3";
-import { open, Database as SQLiteDatabase } from "sqlite";
-import mysql from "mysql2/promise";
-import { Client as PgClient } from "pg";
-import { MongoClient, Db as MongoDb } from "mongodb";
+import { spawnSync } from "child_process";
 
 export class DBAdapter {
   driver?: DBDriver;
   dir?: string;
-  private sqliteDb: SQLiteDatabase | null = null;
-  private mysqlConn: mysql.Connection | null = null;
-  private pgClient: PgClient | null = null;
-  private mongoClient: MongoClient | null = null;
-  private mongoDb: MongoDb | null = null;
+  schema?: Record<string, any>;
+  private sqliteDb: any = null;
+  private mysqlConn: any = null;
+  private pgClient: any = null;
+  private mongoClient: any = null;
+  private mongoDb: any = null;
   private connected = false;
 
   // Prepared statement cache (keyed by SQL text). For sqlite we keep
@@ -30,6 +27,7 @@ export class DBAdapter {
   } = {};
 
   private logs = false;
+  private autoInstallDrivers = true;
 
   constructor(
     config: {
@@ -38,17 +36,72 @@ export class DBAdapter {
       databaseName?: string;
       dir?: string;
       logs?: boolean;
+      autoInstallDrivers?: boolean;
       [key: string]: any;
     } = {}
   ) {
     this.config = config;
     this.driver = config.driver ?? "sqlite";
     this.dir = config.dir;
+    this.schema = config.schema;
     this.logs = !!config.logs;
-
+    this.autoInstallDrivers = config.autoInstallDrivers !== false;
   }
 
   onConnect?: () => Promise<void>;
+
+  private async defaultExport<T = any>(mod: any): Promise<T> {
+    return mod?.default ?? mod;
+  }
+
+  private async isMissingModuleError(err: unknown) {
+    return (
+      !!err &&
+      typeof err === "object" &&
+      (("code" in err && (err as any).code === "ERR_MODULE_NOT_FOUND") ||
+        /Cannot find module/.test(String(err)))
+    );
+  }
+
+  private detectPackageManager() {
+    const ua = process.env.npm_config_user_agent || "";
+    if (ua.startsWith("pnpm")) return "pnpm";
+    if (ua.startsWith("yarn")) return "yarn";
+    return "npm";
+  }
+
+  private installPackage(pkg: string) {
+    const pm = this.detectPackageManager();
+    const installArgs = pm === "pnpm"
+      ? ["add", pkg, "--no-save"]
+      : pm === "yarn"
+      ? ["add", pkg, "--no-lockfile"]
+      : ["install", pkg, "--no-save"];
+
+    const result = spawnSync(pm, installArgs, {
+      stdio: "inherit",
+      cwd: process.cwd(),
+      shell: false,
+    });
+
+    if (result.error || result.status !== 0) {
+      throw new Error(`Unable to install package ${pkg}. Command: ${pm} ${installArgs.join(" ")}`);
+    }
+  }
+
+  private async importDriver<T = any>(pkg: string): Promise<T> {
+    try {
+      const mod = await import(pkg);
+      return await this.defaultExport<T>(mod);
+    } catch (err) {
+      if (this.autoInstallDrivers && (await this.isMissingModuleError(err))) {
+        this.installPackage(pkg);
+        const mod = await import(pkg);
+        return await this.defaultExport<T>(mod);
+      }
+      throw err;
+    }
+  }
 
   async connect() {
     if (this.connected) return;
@@ -56,11 +109,14 @@ export class DBAdapter {
     switch (this.driver) {
       case "sqlite": {
         const filename = this.config.databaseUrl || ":memory:";
-        this.sqliteDb = await open({ filename, driver: sqlite3.Database });
+        const sqlite3 = await this.importDriver("sqlite3");
+        const sqlite = await import("sqlite");
+        this.sqliteDb = await sqlite.open({ filename, driver: sqlite3.Database });
         break;
       }
 
       case "mysql": {
+        const mysql = await this.importDriver("mysql2/promise");
         this.mysqlConn = await mysql.createConnection({
           uri: this.config.databaseUrl,
         });
@@ -68,6 +124,8 @@ export class DBAdapter {
       }
 
       case "postgres": {
+        const PgClientFactory = await this.importDriver("pg");
+        const PgClient = PgClientFactory.Client ?? PgClientFactory;
         this.pgClient = new PgClient({
           connectionString: this.config.databaseUrl,
         });
@@ -76,7 +134,9 @@ export class DBAdapter {
       }
 
       case "mongodb": {
-        this.mongoClient = new MongoClient(this.config.databaseUrl!);
+        const mongodb = await this.importDriver("mongodb");
+        const MongoClientClass = mongodb.MongoClient ?? mongodb.default ?? mongodb;
+        this.mongoClient = new MongoClientClass(this.config.databaseUrl!);
         await this.mongoClient.connect();
         this.mongoDb = this.mongoClient.db(this.config.databaseName);
         break;
@@ -214,13 +274,15 @@ export class DBAdapter {
         return await this.sqliteDb!.all(`PRAGMA table_info(${table})`);
       case "mysql":
         return await this.mysqlConn!.query(`DESCRIBE ${table}`);
-      case "postgres":
-        return await this.pgClient!.query(
+      case "postgres": {
+        const res = await this.pgClient!.query(
           `SELECT column_name, data_type, is_nullable
            FROM information_schema.columns
            WHERE table_name = $1`,
           [table]
-        ).then((r) => r.rows);
+        );
+        return res.rows;
+      }
       case "mongodb":
         if (!this.mongoDb) return [];
         const sample = await this.mongoDb.collection(table).findOne({});
