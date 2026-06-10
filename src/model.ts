@@ -20,7 +20,7 @@ function placeholder(driver: string, index: number) {
 
 type KnownModelName = keyof ModelMap;
 
-type ModelAPI<T extends object> = {
+export type ModelAPI<T extends object> = {
   /** Inserts a new record into the table */
   insert(item: T): Promise<EntityWithUpdate<T> | null>;
 
@@ -217,8 +217,9 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       async insert(item: T) {
         if (hooks?.onCreateBefore) {
           const modified = await hooks.onCreateBefore(item);
-          if (modified === undefined) return null;
-          item = modified;
+          if (modified !== undefined) {
+            item = modified;
+          }
         }
 
         let insertedId: number | undefined;

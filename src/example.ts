@@ -8,6 +8,7 @@ interface Post {
   // @length:255;not null;comment:Post title
   title: string;
   // @nullable;comment:Author user ID
+  body?: string;
   userId?: number;
   // @relation manytoone:User;foreignKey:userId;onDelete:SET NULL
   user?: User;
@@ -171,6 +172,9 @@ async function main() {
     // schema: schema
   });
 
+  const db = orm.DB
+  
+  
   await orm.migrate()
   // Define models
   const Users = await orm.defineModel<User>("users", "User");
@@ -181,15 +185,28 @@ async function main() {
   const Tasksx = await orm.defineModel<Tasksx>("tasksx", "Tasksx");
   const Teams = await orm.defineModel<Team>("team", "Team", {
     onCreateBefore(item) {
-      console.log("before create Team: ", item)
+      console.log("before create Team:", item);
     },
     onCreateAfter(item) {
-      console.log("after create: ", item)
+      console.log("after create:", item);
     },
     onUpdateAfter(oldData, newData) {
-
+      console.log("after update Team:", { oldData, newData });
     },
   });
+
+  const newTeam = await Teams.insert({
+    title: "Hook Team",
+    detail: "Hook test",
+    open: true,
+    tested: false,
+    createdAt: new Date().toISOString(),
+  });
+  console.log("newTeam:", newTeam);
+  if (newTeam?.id) {
+    await Teams.update({ id: newTeam.id }, { tested: true });
+  }
+
   Tasksx.query().first()
   // const uu =  await Users.insert({name: "McGarret", firstName: "Helpper" });
   //  console.log("instered: ", uu)
@@ -206,7 +223,7 @@ async function main() {
   // console.log("todos:", await Todos.getAll());
 
   // ==== CREATE USERS AND POSTS ====
-  const newUser = await Users.insert({
+  const newUser = await db.User.insert({
     name: "Catherine",
     lastname: "Christopher",
     firstName: "Chris",
@@ -215,10 +232,10 @@ async function main() {
   console.log("newUser: ", newUser);
   // const profile = await Profiles.insert({userId: 2})
 
-  const newPost = await Posts.insert({ title: "Hello Boys", userId: 2 });
+  const newPost = await db.Post.insert({ title: "Hello Boys", userId: 2 });
   // console.log("newPost: ", newPost);
 
-  const oo = await Users.query()
+  const oo = await db.User.query()
     // .preload("posts")
     .preload("profile").first()
   // console.log("profile:x ", oo)
@@ -226,7 +243,7 @@ async function main() {
   // ==== CREATE PROFILE FOR USER (one-to-one) ====
 
   // ==== FETCH USER WITH POSTS AND PROFILE ====
-  const userWithRelations = await Users.query()
+  const userWithRelations = await db.User.query()
     // .preload("posts")
     .preload("profile")
     .preload("profile.user")
@@ -237,7 +254,7 @@ async function main() {
 
   // ==== FETCH POST WITH USER RELATION ====
   console.log("posts with user =====>");
-  const postWithUser = await Posts.query()
+  const postWithUser = await db.Post.query()
 
     .preload("user")
     // .preload("user.posts")
@@ -246,7 +263,7 @@ async function main() {
     .exclude("user.lastname")
     .first();
   // console.dir(postWithUser, { depth: null });
-  const rankedUsers = await Users.query()
+  const rankedUsers = await db.User.query()
     .window("ROW_NUMBER()", "PARTITION BY lastname ORDER BY id ASC")
     .get();
 

@@ -1,5 +1,6 @@
 import { DBAdapter } from "./dbAdapter.js";
-import { createModelFactory } from "./model.js";
+import { createModelFactory, type ModelAPI } from "./model.js";
+import type { ModelMap } from "./schema/generated.js";
 import generateSchema from "./generator.js";
 import { Migrator } from "./migrator.js";
 import path from "path";
@@ -36,9 +37,19 @@ export async function createORM(
 let schemaGenerated = false;
 
 type driver =  "sqlite" | "postgres" | "mysql" | "mongodb" | undefined
+
+type KnownModelName = keyof ModelMap;
+
+type DBStore = {
+  [M in KnownModelName]: ModelAPI<ModelMap[M]>;
+};
+
+type ReadonlyDBStore = Readonly<DBStore>;
+
 export default class ORMManager {
   cfg: { driver?: driver; databaseUrl?: string; dir?: string; logs?: boolean; schema?: Record<string, any> };
   adapter: DBAdapter;
+  readonly DB: ReadonlyDBStore = {} as ReadonlyDBStore;
 
   constructor(cfg: { driver?: driver; databaseUrl?: string; dir?: string; logs?: boolean; schema?: Record<string, any> }) {
     this.cfg = cfg;
@@ -69,30 +80,63 @@ export default class ORMManager {
   }
 
 
+  async defineModel<M extends KnownModelName>(
+    table: string,
+    modelName: M,
+    hooks?: {
+      onCreateBefore?: (item: ModelMap[M]) => ModelMap[M] | void | Promise<ModelMap[M] | void>;
+      onCreateAfter?: (item: ModelMap[M]) => void | Promise<void>;
+
+      onUpdateBefore?: (
+        oldData: ModelMap[M] | null,
+        newData: Partial<ModelMap[M]>
+      ) => Partial<ModelMap[M]> | void | Promise<Partial<ModelMap[M]> | void>;
+      onUpdateAfter?: (
+        oldData: ModelMap[M] | null,
+        newData: Partial<ModelMap[M]>
+      ) => void | Promise<void>;
+
+      onDeleteBefore?: (deleted: Partial<ModelMap[M]>) => void | Promise<void>;
+      onDeleteAfter?: (deleted: Partial<ModelMap[M]>) => void | Promise<void>;
+    }
+  ): Promise<ModelAPI<ModelMap[M]>>;
   async defineModel<T extends Record<string, any>>(
     table: string,
-    modelName: string,
+    modelName?: string,
     hooks?: {
-      onCreateBefore?: (item: T) => (T | void | Promise<T | void>);
-      onCreateAfter?: (item: T) => (void | Promise<void>);
+      onCreateBefore?: (item: T) => T | void | Promise<T | void>;
+      onCreateAfter?: (item: T) => void | Promise<void>;
 
       onUpdateBefore?: (
         oldData: T | null,
         newData: Partial<T>
-      ) => (Partial<T> | void | Promise<Partial<T> | void>);
+      ) => Partial<T> | void | Promise<Partial<T> | void>;
       onUpdateAfter?: (
         oldData: T | null,
         newData: Partial<T>
-      ) => (void | Promise<void>);
+      ) => void | Promise<void>;
 
-      onDeleteBefore?: (deleted: Partial<T>) => (void | Promise<void>);
-      onDeleteAfter?: (deleted: Partial<T>) => (void | Promise<void>);
-    }) {
+      onDeleteBefore?: (deleted: Partial<T>) => void | Promise<void>;
+      onDeleteAfter?: (deleted: Partial<T>) => void | Promise<void>;
+    }
+  ): Promise<ModelAPI<T>>;
+  async defineModel<T extends Record<string, any>>(
+    table: string,
+    modelName?: string,
+    hooks?: any
+  ): Promise<ModelAPI<T>> {
 
     const defineModel = await createModelFactory(this.adapter, this.cfg.schema);
 
     // Pass hooks directly to the model factory
-    return defineModel<T>(table, modelName, hooks);
+    const model = defineModel<T>(table, modelName as any, hooks);
+
+    if (typeof modelName === 'string') {
+      const writableDB = this.DB as unknown as Record<string, ModelAPI<any>>;
+      writableDB[modelName] = model as ModelAPI<any>;
+    }
+
+    return model;
   }
 }
 

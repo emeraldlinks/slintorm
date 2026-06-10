@@ -11,7 +11,7 @@
     "outDir": "dist",
     "declaration": true,
     "declarationDir": "dist",   
-    "types": ["node"],
+    "types": ["node"]
   },
   "include": [
     "src"

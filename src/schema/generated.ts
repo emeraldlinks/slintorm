@@ -1,6 +1,6 @@
 
-// AUTO-GENERATED SCHEMA
-// DO NOT EDIT
+// AUTO-GENERATED SCHEMA - DO NOT EDIT
+// Schema Hash: 5f6e0053819fc48b
 
 export interface User {
   id?: number;
@@ -21,6 +21,7 @@ export interface User {
 export interface Post {
   id?: number;
   title: string;
+  body?: string;
   userId?: number;
   user?: User;
   meta?: Record <string ,any >;
@@ -282,14 +283,20 @@ export const schema = {
           "comment": "Post title"
         }
       },
-      "userId": {
-        "type": "number | undefined",
-        "originalType": "number",
+      "body": {
+        "type": "string | undefined",
+        "originalType": "string",
         "optional": true,
         "meta": {
           "@nullable": true,
           "comment": "Author user ID"
         }
+      },
+      "userId": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
       },
       "user": {
         "type": "User | undefined",

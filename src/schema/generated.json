@@ -182,14 +182,20 @@
           "comment": "Post title"
         }
       },
-      "userId": {
-        "type": "number | undefined",
-        "originalType": "number",
+      "body": {
+        "type": "string | undefined",
+        "originalType": "string",
         "optional": true,
         "meta": {
           "@nullable": true,
           "comment": "Author user ID"
         }
+      },
+      "userId": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
       },
       "user": {
         "type": "User | undefined",

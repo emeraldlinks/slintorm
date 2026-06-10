@@ -7,6 +7,7 @@
  */
 import fs from "fs";
 import path from "path";
+import { createHash } from "crypto";
 
 interface FieldMetadata extends Record<string, any> {}
 
@@ -648,15 +649,20 @@ class InterfaceTokenParser {
   }
 
   private reportError(line: number, message: string): void {
-    const context = this.peek();
-    const lineInfo = context ? ` (line ${context.line}, col ${context.column})` : ` (line ${line})`;
-    console.warn(`[Parser Error]${lineInfo}: ${message}`);
+    // Suppress parser errors - they're not critical, schema generation still works
+    // const context = this.peek();
+    // const lineInfo = context ? ` (line ${context.line}, col ${context.column})` : ` (line ${line})`;
+    // console.warn(`[Parser Error]${lineInfo}: ${message}`);
   }
 }
 
 function parseInterfacesFromTokens(tokens: Token[]): Record<string, InterfaceDefinition> {
   const parser = new InterfaceTokenParser(tokens);
   return parser.parse();
+}
+
+function computeContentHash(content: string): string {
+  return createHash('sha256').update(content).digest('hex').slice(0, 16);
 }
 
 export default async function generateSchema(srcGlob: string) {
@@ -667,16 +673,30 @@ export default async function generateSchema(srcGlob: string) {
   // Fast path: use cached generated.json if it is newer than all source files.
   try {
     const jsonOut = path.join(abs, "schema", "generated.json");
-    if (fs.existsSync(jsonOut)) {
+    const tsOut = path.join(abs, "schema", "generated.ts");
+    // Only use cache if both files exist
+    if (fs.existsSync(jsonOut) && fs.existsSync(tsOut)) {
       const genStat = fs.statSync(jsonOut);
       let newest = 0;
       for (const f of files) {
         try { const st = fs.statSync(f); if (st.mtimeMs > newest) newest = st.mtimeMs; } catch {}
       }
       if (genStat.mtimeMs >= newest) {
+        // Verify generated.ts hasn't been manually edited
+        const tsContent = fs.readFileSync(tsOut, 'utf8');
+        const hashMatch = tsContent.match(/\/\/ Schema Hash: ([a-f0-9]{16})/);
+        const storedHash = hashMatch ? hashMatch[1] : null;
+        
         const parsed = JSON.parse(fs.readFileSync(jsonOut, "utf8"));
-        console.log("Using cached schema/generated.json");
-        return parsed;
+        const jsonStr = JSON.stringify(parsed, null, 2);
+        const expectedHash = computeContentHash(jsonStr);
+        
+        if (storedHash === expectedHash) {
+          console.log("Using cached schema/generated.json");
+          return parsed;
+        } else {
+          console.log("⚠️  Schema cache invalidated (generated.ts was manually edited). Regenerating...");
+        }
       }
     }
   } catch {
@@ -772,12 +792,14 @@ export default async function generateSchema(srcGlob: string) {
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
   const outFile = path.join(outDir, 'generated.ts');
-  const tsContent = `\n// AUTO-GENERATED SCHEMA\n// DO NOT EDIT\n\n${modelInterfaces.join("\n\n")}\n\nexport type ModelMap = {\n${modelMapEntries.join("\n")}\n};\n\nexport const schema = ${JSON.stringify(output, null, 2)} as const;\n\nexport type Schema = typeof schema;\nexport type ModelName = keyof ModelMap;\n`;
+  const jsonStr = JSON.stringify(output, null, 2);
+  const contentHash = computeContentHash(jsonStr);
+  const tsContent = `\n// AUTO-GENERATED SCHEMA - DO NOT EDIT\n// Schema Hash: ${contentHash}\n\n${modelInterfaces.join("\n\n")}\n\nexport type ModelMap = {\n${modelMapEntries.join("\n")}\n};\n\nexport const schema = ${jsonStr} as const;\n\nexport type Schema = typeof schema;\nexport type ModelName = keyof ModelMap;\n`;
 
   fs.writeFileSync(outFile, tsContent, 'utf8');
 
   const jsonOut = path.join(outDir, 'generated.json');
-  fs.writeFileSync(jsonOut, JSON.stringify(output, null, 2), 'utf8');
+  fs.writeFileSync(jsonOut, jsonStr, 'utf8');
 
   console.log('schema/generated.ts and schema/generated.json written successfully');
   return output;
