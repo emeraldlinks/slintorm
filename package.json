@@ -1,6 +1,6 @@
 {
   "name": "slintorm",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Minimal fully typed orm for typescript",
   "license": "MIT",
   "author": "Joseph Christopher",
