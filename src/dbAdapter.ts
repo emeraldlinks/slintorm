@@ -1,5 +1,5 @@
 import type { SQLExecResult, DBDriver } from "./types.ts";
-import { spawnSync } from "child_process";
+import { spawnSync } from "node:child_process";
 
 export class DBAdapter {
   driver?: DBDriver;

@@ -3,7 +3,7 @@ import { Migrator } from "./migrator.js";
 import { QueryBuilder, mapBooleans } from "./queryBuilder.js";
 import type { RelationDef, EntityWithUpdate } from "./types.js";
 import { AdvancedQueryBuilder } from "./extra_clauses.js";
-import { pathToFileURL } from "url";
+import { pathToFileURL } from "node:url";
 
 
 
@@ -61,8 +61,8 @@ export type ModelAPI<T extends object> = {
 
 
 async function loadSchema(adapterDir: string) {
-  const fs = await import("fs");
-  const path = await import("path");
+  const fs = await import("node:fs");
+  const path = await import("node:path");
   const jsonPath = path.join(process.cwd(), adapterDir, "schema", "generated.json");
   const jsPath = path.join(process.cwd(), adapterDir, "schema", "generated.js");
   const tsPath = path.join(process.cwd(), adapterDir, "schema", "generated.ts");

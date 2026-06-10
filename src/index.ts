@@ -1,25 +1,53 @@
 import { DBAdapter } from "./dbAdapter.js";
 import { createModelFactory, type ModelAPI } from "./model.js";
 import generateSchema from "./generator.js";
-import { Migrator } from "./migrator.js";
-import path from "path";
+import { Migrator, type SchemaModel } from "./migrator.js";
+import path from "node:path";
+import type { DBDriver } from "./types.js";
 
 const getPaths = (dir = "src") => {
   return path.join(process.cwd(), dir)
 };
 
-export async function createORM(
-  cfg: { driver?: string; databaseUrl?: string; dir?: string; logs?: boolean; schema?: Record<string, any> } = {},
+export type AnyModelMap = Record<string, object>;
+
+export type ORMManagerConfig<TModelMap extends AnyModelMap = AnyModelMap> = {
+  driver?: DBDriver;
+  databaseUrl?: string;
+  dir?: string;
+  logs?: boolean;
+  schema?: Record<string, SchemaModel>;
+  modelMap?: TModelMap;
+};
+
+export type ModelHooks<T extends object> = {
+  onCreateBefore?: (item: T) => T | void | Promise<T | void>;
+  onCreateAfter?: (item: T) => void | Promise<void>;
+  onUpdateBefore?: (
+    oldData: T | null,
+    newData: Partial<T>
+  ) => Partial<T> | void | Promise<Partial<T> | void>;
+  onUpdateAfter?: (
+    oldData: T | null,
+    newData: Partial<T>
+  ) => void | Promise<void>;
+  onDeleteBefore?: (deleted: Partial<T>) => void | Promise<void>;
+  onDeleteAfter?: (deleted: Partial<T>) => void | Promise<void>;
+};
+
+export async function createORM<TModelMap extends AnyModelMap = AnyModelMap>(
+  cfg: ORMManagerConfig<TModelMap> = {},
 
 ) {
   const adapter = new DBAdapter({
-    driver: cfg.driver as any,
+    driver: cfg.driver,
     databaseUrl: cfg.databaseUrl,
     dir: cfg.dir || "src",
     logs: cfg.logs,
     schema: cfg.schema,
+    modelMap: cfg.modelMap,
   });
-  const sqlDriver = ["sqlite", "postgres", "mysql"].includes(adapter.driver!)
+  const sqlDriver: "sqlite" | "postgres" | "mysql" | undefined = ["sqlite", "postgres", "mysql"].includes(adapter.driver!)
     ? adapter.driver as "sqlite" | "postgres" | "mysql"
     : undefined;
 
@@ -35,25 +63,28 @@ export async function createORM(
 
 let schemaGenerated = false;
 
-type driver =  "sqlite" | "postgres" | "mysql" | "mongodb" | undefined
+type KnownModelName<TModelMap extends AnyModelMap> = Extract<keyof TModelMap, string>;
 
-type DBStore = Record<string, ModelAPI<any>>;
+type DBStore<TModelMap extends AnyModelMap> = {
+  [M in KnownModelName<TModelMap>]: ModelAPI<TModelMap[M]>;
+};
 
-export type ReadonlyDBStore = Readonly<DBStore>;
+export type ReadonlyDBStore<TModelMap extends AnyModelMap = AnyModelMap> = Readonly<DBStore<TModelMap>>;
 
-export default class ORMManager {
-  cfg: { driver?: driver; databaseUrl?: string; dir?: string; logs?: boolean; schema?: Record<string, any> };
+export default class ORMManager<TModelMap extends AnyModelMap = AnyModelMap> {
+  cfg: ORMManagerConfig<TModelMap>;
   adapter: DBAdapter;
-  readonly DB: ReadonlyDBStore = {} as ReadonlyDBStore;
+  readonly DB: ReadonlyDBStore<TModelMap> = {} as ReadonlyDBStore<TModelMap>;
 
-  constructor(cfg: { driver?: driver; databaseUrl?: string; dir?: string; logs?: boolean; schema?: Record<string, any> }) {
+  constructor(cfg: ORMManagerConfig<TModelMap> = {}) {
     this.cfg = cfg;
     this.adapter = new DBAdapter({
-      driver: this.cfg.driver as any,
+      driver: this.cfg.driver,
       databaseUrl: this.cfg.databaseUrl,
       dir: this.cfg.dir || "src",
       logs: this.cfg.logs,
       schema: this.cfg.schema,
+      modelMap: this.cfg.modelMap,
     });
   }
 
@@ -65,54 +96,39 @@ export default class ORMManager {
       if (!this.cfg.schema) {
         console.log("✅ Schema generated:", schemaPath);
       }
-      const sqlDriver = ["sqlite", "postgres", "mysql"].includes(this.adapter.driver!)
+      const sqlDriver: "sqlite" | "postgres" | "mysql" | undefined = ["sqlite", "postgres", "mysql"].includes(this.adapter.driver!)
         ? this.adapter.driver as "sqlite" | "postgres" | "mysql"
         : undefined;
       const migrator = new Migrator(this.adapter.exec.bind(this.adapter), sqlDriver);
       // Use migrateSchema which also auto-creates pivot tables for many-to-many
-      await migrator.migrateSchema(schema as any);
+      await migrator.migrateSchema(schema as Record<string, SchemaModel>);
     }
   }
 
 
-  async defineModel<T extends Record<string, any>>(
+  async defineModel<M extends KnownModelName<TModelMap>>(
+    table: string,
+    modelName: M,
+    hooks?: ModelHooks<TModelMap[M]>
+  ): Promise<ModelAPI<TModelMap[M]>>;
+  async defineModel<T extends object>(
     table: string,
     modelName?: string,
-    hooks?: {
-      onCreateBefore?: (item: T) => T | void | Promise<T | void>;
-      onCreateAfter?: (item: T) => void | Promise<void>;
-
-      onUpdateBefore?: (
-        oldData: T | null,
-        newData: Partial<T>
-      ) => Partial<T> | void | Promise<Partial<T> | void>;
-      onUpdateAfter?: (
-        oldData: T | null,
-        newData: Partial<T>
-      ) => void | Promise<void>;
-
-      onDeleteBefore?: (deleted: Partial<T>) => void | Promise<void>;
-      onDeleteAfter?: (deleted: Partial<T>) => void | Promise<void>;
-    }
+    hooks?: ModelHooks<T>
   ): Promise<ModelAPI<T>>;
-  async defineModel<T extends Record<string, any>>(
+  async defineModel<T extends object>(
     table: string,
     modelName?: string,
-    hooks?: any
+    hooks?: ModelHooks<T>
   ): Promise<ModelAPI<T>> {
 
     const defineModel = await createModelFactory(this.adapter, this.cfg.schema);
 
-    // Pass hooks directly to the model factory
-    const model = defineModel<T>(table, modelName as any, hooks);
+    const model = defineModel<T>(table, modelName, hooks);
 
     if (typeof modelName === 'string') {
-      const writableDB = this.DB as unknown as Record<string, ModelAPI<any>>;
-      writableDB[modelName] = model as ModelAPI<any>;
-      const normalizedName = modelName.charAt(0).toUpperCase() + modelName.slice(1);
-      if (normalizedName !== modelName) {
-        writableDB[normalizedName] = model as ModelAPI<any>;
-      }
+      const writableDB = this.DB as unknown as Record<string, unknown>;
+      writableDB[modelName] = model as unknown;
     }
 
     return model;

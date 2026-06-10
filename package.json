@@ -1,6 +1,6 @@
 {
   "name": "slintorm",
-  "version": "1.0.7",
+  "version": "1.0.10",
   "description": "Minimal fully typed orm for typescript",
   "license": "MIT",
   "author": "Joseph Christopher",
@@ -18,9 +18,12 @@
   "exports": {
     ".": {
       "types": "./dist/src/index.d.ts",
+      "browser": "./dist/src/browser.js",
       "import": "./dist/src/index.js",
-      "require": "./dist/src/index.js"
-    }
+      "require": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
+    },
+    "./package.json": "./package.json"
   },
   "repository": {
     "type": "git",
@@ -32,7 +35,13 @@
     "test": "tsx src/example.ts"
     
   },
-  "dependencies": {},
+  "dependencies": {
+    "mongodb": "^6.20.0",
+    "mysql2": "^3.15.3",
+    "pg": "^8.16.3",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7"
+  },
   "devDependencies": {
     "@types/node": "^24.9.1",
     "@types/pg": "^8.15.5",

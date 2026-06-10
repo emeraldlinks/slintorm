@@ -1,6 +1,6 @@
 // queryBuilder.ts
 import type { ExecFn, OpComparison } from "./types.ts";
-import path from "path";
+import path from "node:path";
 import fs from "fs";
 
 type RelationMeta = {

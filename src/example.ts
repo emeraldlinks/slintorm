@@ -1,6 +1,6 @@
 import { Game } from "./_tmp_runtime_model.js";
-import ORMManager, { createORM } from "./index.js";
-// import {schema} from "./schema/generated.js";
+import ORMManager from "./index.js";
+import {ModelMap} from "./schema/generated.js";
 
 /** Post table */
 interface Post {
@@ -165,16 +165,21 @@ async function main() {
   }); */
   
 
-  const orm = new ORMManager({
+  const orm = new ORMManager<ModelMap>({
     driver: "sqlite",
     databaseUrl: "./testx.db",
     dir: "src",
     logs: false,
+    modelMap: {} as ModelMap,
     
     // schema: schema
   });
 
   const db = orm.DB
+  
+  
+  
+  
   
   
   await orm.migrate()

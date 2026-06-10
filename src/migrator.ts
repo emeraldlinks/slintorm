@@ -17,7 +17,7 @@ interface Relation {
   meta: Record<string, string | number | boolean | null>;
 }
 
-interface SchemaModel {
+export interface SchemaModel {
   fields: Record<string, FieldInfo>;
   relations: any[];
   table?: string;
