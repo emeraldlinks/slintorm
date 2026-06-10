@@ -558,6 +558,43 @@
     "relations": [],
     "table": "tasksx"
   },
+  "Game": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
+      "name": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "updatedAt": {
+        "type": "string",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      }
+    },
+    "relations": [],
+    "table": "game"
+  },
   "Team": {
     "primaryKey": "id",
     "fields": {

@@ -1,3 +1,4 @@
+import { Game } from "./_tmp_runtime_model.js";
 import ORMManager, { createORM } from "./index.js";
 // import {schema} from "./schema/generated.js";
 
@@ -146,6 +147,7 @@ interface Team {
 }
 
 
+
 // ==== MAIN FUNCTION ====
 async function main() {
   // Initialize ORM
@@ -183,6 +185,7 @@ async function main() {
   const Profiles = await orm.defineModel<Profile>("profile", "Profile");
   const Tasks = await orm.defineModel<Task>("tasks", "Task");
   const Tasksx = await orm.defineModel<Tasksx>("tasksx", "Tasksx");
+  const Game = await orm.defineModel<Game>("game", "Game");
   const Teams = await orm.defineModel<Team>("team", "Team", {
     onCreateBefore(item) {
       console.log("before create Team:", item);
@@ -194,6 +197,9 @@ async function main() {
       console.log("after update Team:", { oldData, newData });
     },
   });
+  const Games = await orm.defineModel<Game>("game", "Game");
+  const createdGame = await db.Game.insert({ name: "Demo Game" });
+  console.log("createdGame:", createdGame);
 
   const newTeam = await db.Team.insert({
     title: "Hook Team",

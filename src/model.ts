@@ -2,7 +2,6 @@ import { DBAdapter } from "./dbAdapter.js";
 import { Migrator } from "./migrator.js";
 import { QueryBuilder, mapBooleans } from "./queryBuilder.js";
 import type { RelationDef, EntityWithUpdate } from "./types.js";
-import type { ModelMap } from "./schema/generated.js";
 import { AdvancedQueryBuilder } from "./extra_clauses.js";
 import { pathToFileURL } from "url";
 
@@ -17,8 +16,6 @@ function q(driver: string, col: string) {
 function placeholder(driver: string, index: number) {
   return driver === "postgres" ? `$${index}` : "?";
 }
-
-type KnownModelName = keyof ModelMap;
 
 export type ModelAPI<T extends object> = {
   /** Inserts a new record into the table */
@@ -115,24 +112,6 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
    * @param hooks - Optional lifecycle hooks for CRUD operations
    * @returns The model API for interacting with the table
    */
-  function defineModel<M extends KnownModelName>(
-    table: string,
-    modelName: M,
-    hooks?: {
-      onCreateBefore?: (item: ModelMap[M]) => ModelMap[M] | void | Promise<ModelMap[M] | void>;
-      onCreateAfter?: (item: ModelMap[M]) => void | Promise<void>;
-      onUpdateBefore?: (
-        oldData: ModelMap[M] | null,
-        newData: Partial<ModelMap[M]>
-      ) => Partial<ModelMap[M]> | void | Promise<Partial<ModelMap[M]> | void>;
-      onUpdateAfter?: (
-        oldData: ModelMap[M] | null,
-        newData: Partial<ModelMap[M]>
-      ) => void | Promise<void>;
-      onDeleteBefore?: (deleted: Partial<ModelMap[M]>) => void | Promise<void>;
-      onDeleteAfter?: (deleted: Partial<ModelMap[M]>) => void | Promise<void>;
-    }
-  ): ModelAPI<ModelMap[M]>;
   function defineModel<T extends object = Record<string, any>>(
     table: string,
     modelName?: string,
@@ -172,6 +151,45 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       fields: {},
       relations: [] as RelationDef[],
     };
+
+    function inferFieldType(value: unknown) {
+      if (value === null || value === undefined) return "string";
+      if (typeof value === "number") return Number.isInteger(value) ? "number" : "number";
+      if (typeof value === "boolean") return "boolean";
+      if (value instanceof Date) return "Date";
+      if (Array.isArray(value)) return "any[]";
+      if (typeof value === "object") return "object";
+      return typeof value;
+    }
+
+    function buildSchemaForItem(item?: Partial<T>) {
+      if (!item || typeof item !== "object") {
+        return modelSchema;
+      }
+
+      const inferredFields = Object.entries(item).reduce<Record<string, any>>((acc, [key, value]) => {
+        if (value === undefined) return acc;
+        acc[key] = {
+          type: inferFieldType(value),
+          originalType: inferFieldType(value),
+          optional: true,
+          meta: {},
+        };
+        return acc;
+      }, {});
+
+      if (!Object.keys(inferredFields).length) {
+        return modelSchema;
+      }
+
+      return {
+        ...modelSchema,
+        fields: {
+          ...(modelSchema.fields || {}),
+          ...inferredFields,
+        },
+      };
+    }
     const driver = adapter.driver as
       | "sqlite"
       | "postgres"
@@ -181,8 +199,9 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
     const migrator = new Migrator(adapter.exec.bind(adapter), sqlDriver);
 
     /** Ensures the table exists and is up-to-date */
-    async function ensure() {
-      await migrator.ensureTable(tableName, modelSchema || {}, modelSchema?.relations);
+    async function ensure(item?: Partial<T>) {
+      const schemaForTable = buildSchemaForItem(item);
+      await migrator.ensureTable(tableName, schemaForTable || {}, schemaForTable?.relations);
     }
   
 
@@ -212,9 +231,15 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       return { clause, params };
     }
 
+    async function ensureModelTable(item?: Partial<T>) {
+      await ensure(item);
+    }
+
     return {
       /** @inheritdoc */
       async insert(item: T) {
+        await ensureModelTable(item);
+
         if (hooks?.onCreateBefore) {
           const modified = await hooks.onCreateBefore(item);
           if (modified !== undefined) {

@@ -1,6 +1,5 @@
 import { DBAdapter } from "./dbAdapter.js";
 import { createModelFactory, type ModelAPI } from "./model.js";
-import type { ModelMap } from "./schema/generated.js";
 import generateSchema from "./generator.js";
 import { Migrator } from "./migrator.js";
 import path from "path";
@@ -38,11 +37,7 @@ let schemaGenerated = false;
 
 type driver =  "sqlite" | "postgres" | "mysql" | "mongodb" | undefined
 
-type KnownModelName = keyof ModelMap;
-
-type DBStore = {
-  [M in KnownModelName]: ModelAPI<ModelMap[M]>;
-};
+type DBStore = Record<string, ModelAPI<any>>;
 
 export type ReadonlyDBStore = Readonly<DBStore>;
 
@@ -80,26 +75,6 @@ export default class ORMManager {
   }
 
 
-  async defineModel<M extends KnownModelName>(
-    table: string,
-    modelName: M,
-    hooks?: {
-      onCreateBefore?: (item: ModelMap[M]) => ModelMap[M] | void | Promise<ModelMap[M] | void>;
-      onCreateAfter?: (item: ModelMap[M]) => void | Promise<void>;
-
-      onUpdateBefore?: (
-        oldData: ModelMap[M] | null,
-        newData: Partial<ModelMap[M]>
-      ) => Partial<ModelMap[M]> | void | Promise<Partial<ModelMap[M]> | void>;
-      onUpdateAfter?: (
-        oldData: ModelMap[M] | null,
-        newData: Partial<ModelMap[M]>
-      ) => void | Promise<void>;
-
-      onDeleteBefore?: (deleted: Partial<ModelMap[M]>) => void | Promise<void>;
-      onDeleteAfter?: (deleted: Partial<ModelMap[M]>) => void | Promise<void>;
-    }
-  ): Promise<ModelAPI<ModelMap[M]>>;
   async defineModel<T extends Record<string, any>>(
     table: string,
     modelName?: string,
@@ -134,6 +109,10 @@ export default class ORMManager {
     if (typeof modelName === 'string') {
       const writableDB = this.DB as unknown as Record<string, ModelAPI<any>>;
       writableDB[modelName] = model as ModelAPI<any>;
+      const normalizedName = modelName.charAt(0).toUpperCase() + modelName.slice(1);
+      if (normalizedName !== modelName) {
+        writableDB[normalizedName] = model as ModelAPI<any>;
+      }
     }
 
     return model;

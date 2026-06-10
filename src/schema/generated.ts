@@ -1,6 +1,6 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: 5f6e0053819fc48b
+// Schema Hash: 9fdb0fd2e72c1aac
 
 export interface User {
   id?: number;
@@ -75,6 +75,13 @@ export interface Tasksx {
   status?: "todo" | "inprogress" | "done";
 }
 
+export interface Game {
+  id?: number;
+  name: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface Team {
   id?: number;
   title: string;
@@ -96,6 +103,7 @@ export type ModelMap = {
   Profile: Profile;
   Task: Task;
   Tasksx: Tasksx;
+  Game: Game;
   Team: Team;
 };
 
@@ -658,6 +666,43 @@ export const schema = {
     },
     "relations": [],
     "table": "tasksx"
+  },
+  "Game": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
+      "name": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "updatedAt": {
+        "type": "string",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      }
+    },
+    "relations": [],
+    "table": "game"
   },
   "Team": {
     "primaryKey": "id",
