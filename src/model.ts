@@ -355,8 +355,9 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
         if (hooks?.onUpdateBefore) {
           const modified = await hooks.onUpdateBefore(before, data);
-          if (modified === undefined) return before;
-          data = modified;
+          if (modified !== undefined) {
+            data = modified;
+          }
         }
 
         if (driver === "mongodb") {
@@ -409,8 +410,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           throw new Error("Delete filter cannot be empty");
         const toDelete = await this.get(filter);
         if (hooks?.onDeleteBefore) {
-          const res = await hooks.onDeleteBefore(toDelete || filter);
-          if (res === undefined) return filter;
+          await hooks.onDeleteBefore(toDelete || filter);
         }
         if (driver === "mongodb") {
           await adapter.exec(

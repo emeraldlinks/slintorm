@@ -195,7 +195,7 @@ async function main() {
     },
   });
 
-  const newTeam = await Teams.insert({
+  const newTeam = await db.Team.insert({
     title: "Hook Team",
     detail: "Hook test",
     open: true,
@@ -204,7 +204,7 @@ async function main() {
   });
   console.log("newTeam:", newTeam);
   if (newTeam?.id) {
-    await Teams.update({ id: newTeam.id }, { tested: true });
+    await db.Team.update({ id: newTeam.id }, { tested: true });
   }
 
   Tasksx.query().first()

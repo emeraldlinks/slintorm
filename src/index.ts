@@ -44,7 +44,7 @@ type DBStore = {
   [M in KnownModelName]: ModelAPI<ModelMap[M]>;
 };
 
-type ReadonlyDBStore = Readonly<DBStore>;
+export type ReadonlyDBStore = Readonly<DBStore>;
 
 export default class ORMManager {
   cfg: { driver?: driver; databaseUrl?: string; dir?: string; logs?: boolean; schema?: Record<string, any> };

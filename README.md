@@ -193,6 +193,11 @@ await orm.migrate();
 const Users = await orm.defineModel<User>("users", "User");
 const Posts = await orm.defineModel<Post>("posts", "Post");
 const Todos = await orm.defineModel<Todo>("todos", "Todo");
+
+
+// You can access all your models via the db
+  const db = orm.DB
+
 ```
 
 This example uses SQLite, but you can switch to PostgreSQL, MySQL, or MongoDB by changing `driver` and `databaseUrl`.
@@ -222,6 +227,19 @@ const Teams = await orm.defineModel<Team>("team", "Team", {
     console.log("updated", oldData, "->", newData);
   },
 });
+
+// db DBStore
+ const newTeam = await db.Team.insert({
+    title: "Hook Team",
+    detail: "Hook test",
+    open: true,
+    tested: false,
+    createdAt: new Date().toISOString(),
+  });
+  console.log("newTeam:", newTeam);
+  if (newTeam?.id) {
+    await db.Team.update({ id: newTeam.id }, { tested: true });
+  }
 ```
 
 ---
