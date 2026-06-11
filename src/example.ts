@@ -6,6 +6,7 @@ import {ModelMap} from "./schema/generated.js";
 interface Post {
   // @index;
   id?: number;
+  subID?: number
   // @length:255;not null;comment:Post title
   title: string;
   // @nullable;comment:Author user ID

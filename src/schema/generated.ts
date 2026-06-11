@@ -1,6 +1,7 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: 9fdb0fd2e72c1aac
+// Schema Hash: 1c46391cdaa277a4
+// Source Hash: c93218922bfb6240
 
 export interface User {
   id?: number;
@@ -20,6 +21,7 @@ export interface User {
 
 export interface Post {
   id?: number;
+  subID?: number;
   title: string;
   body?: string;
   userId?: number;
@@ -280,6 +282,12 @@ export const schema = {
         "meta": {
           "@index": true
         }
+      },
+      "subID": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
       },
       "title": {
         "type": "string",

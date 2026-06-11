@@ -172,6 +172,12 @@
           "@index": true
         }
       },
+      "subID": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
       "title": {
         "type": "string",
         "originalType": "string",

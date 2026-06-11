@@ -286,14 +286,11 @@ class InterfaceTokenParser {
   parse(): Record<string, InterfaceDefinition> {
     while (this.i < this.tokens.length) {
       this.skipWhitespaceOnly();
-
-      // Collect any pending annotation comment at top-level (interface doc comments)
+       // Collect any pending annotation comment at top-level (interface doc comments)
       // These are block comments like /** ... */ above the interface keyword.
       // We don't need them for schema, just skip.
       this.skipTopLevelComments();
-
       if (this.i >= this.tokens.length) break;
-
       if (this.parseInterfaceDeclaration()) {
         // continue
       } else {
@@ -318,7 +315,7 @@ class InterfaceTokenParser {
     return null;
   }
 
-  /**
+    /**
    * Skip only whitespace and newlines — does NOT consume comments.
    * This preserves comments so they can be read by the field parser
    * immediately before the field they annotate.
@@ -334,9 +331,6 @@ class InterfaceTokenParser {
     }
   }
 
-  /**
-   * Skip top-level comments (used outside of interface bodies).
-   */
   private skipTopLevelComments(): void {
     while (this.i < this.tokens.length) {
       const t = this.peek();
@@ -363,12 +357,12 @@ class InterfaceTokenParser {
     // If we hit anything else (including another comment), return "".
     let j = this.i;
 
+
     // Skip leading whitespace/newlines
     while (j < this.tokens.length && (this.tokens[j].type === 'whitespace' || this.tokens[j].type === 'newline')) {
       j++;
     }
 
-    // Expect a comment-line token
     if (j >= this.tokens.length || this.tokens[j].type !== 'comment-line') {
       return "";
     }
@@ -376,21 +370,18 @@ class InterfaceTokenParser {
     const commentToken = this.tokens[j];
     j++;
 
-    // Skip whitespace/newlines after comment
     while (j < this.tokens.length && (this.tokens[j].type === 'whitespace' || this.tokens[j].type === 'newline')) {
       j++;
     }
 
-    // Next must be an identifier (the field name) or closing brace
     if (j >= this.tokens.length) return "";
     const next = this.tokens[j];
     if (next.type !== 'identifier' && next.type !== 'brace-close') return "";
 
-    // Consume up to and including the comment
     while (this.i <= this.tokens.length) {
       const t = this.tokens[this.i];
       if (t === commentToken) {
-        this.next(); // consume the comment itself
+        this.next();
         break;
       }
       this.next();
@@ -441,15 +432,11 @@ class InterfaceTokenParser {
     const relations: RelationDefinition[] = [];
 
     while (this.i < this.tokens.length && this.peek()?.type !== 'brace-close') {
-      // Skip blank lines between fields
       this.skipWhitespaceOnly();
       if (this.peek()?.type === 'brace-close') break;
 
-      // FIX: read the annotation comment directly before this field,
-      // consuming it only if it immediately precedes an identifier.
       const fieldComment = this.readPrecedingComment();
 
-      // Skip any remaining whitespace after comment
       this.skipWhitespaceOnly();
       if (this.peek()?.type === 'brace-close') break;
 
@@ -476,7 +463,7 @@ class InterfaceTokenParser {
     fields: Record<string, FieldDefinition>,
     relations: RelationDefinition[],
     lineNum: number,
-    comment: string  // FIX: passed in directly, not read from shared state
+    comment: string
   ): boolean {
     if (this.peek()?.type !== 'identifier') return false;
     const propName = this.next()!.value;
@@ -498,21 +485,14 @@ class InterfaceTokenParser {
 
     const typeTokens = this.extractTypeTokens();
 
-    if (!this.consume('semicolon')) {
-      this.reportError(lineNum, `Expected ';' after type for '${propName}'`);
-    }
-
-    // FIX: do NOT call skipWhitespaceAndComments here — that would consume
-    // the next field's annotation comment before we get a chance to read it.
+    // consume semicolon if present, it's optional
+    this.consume('semicolon');
 
     const type = this.reconstructType(typeTokens, isOptional);
     const originalType = this.reconstructType(typeTokens, false);
 
     const meta = this.parseMetadata(comment);
 
-    // FIX: relation fields are added to BOTH fields[] (preserving the original TS type)
-    // AND relations[]. Previously relation fields were only added to relations[] and
-    // then re-emitted from the relation list with the wrong type.
     if (/@(?:relation|relationship)/i.test(comment)) {
       const relationData = this.parseRelationDirective(comment, propName, interfaceName);
       if (relationData) {
@@ -525,8 +505,6 @@ class InterfaceTokenParser {
           through: relationData.through,
           meta,
         });
-        // Still record the field with its original TS type — don't skip it.
-        // The generated interface will use this type verbatim.
         fields[propName] = { type, originalType, optional: isOptional, meta };
         return true;
       }
@@ -547,10 +525,12 @@ class InterfaceTokenParser {
       if (token.type === 'bracket-open' || token.type === 'brace-open' || token.type === 'angle-open') {
         depth++;
       } else if (token.type === 'bracket-close' || token.type === 'brace-close' || token.type === 'angle-close') {
+        if (depth === 0) break;
         depth--;
       }
 
       if (token.type === 'semicolon' && depth === 0) break;
+      if (token.type === 'newline' && depth === 0) break;
 
       typeTokens.push(token);
       this.next();
@@ -649,10 +629,7 @@ class InterfaceTokenParser {
   }
 
   private reportError(line: number, message: string): void {
-    // Suppress parser errors - they're not critical, schema generation still works
-    // const context = this.peek();
-    // const lineInfo = context ? ` (line ${context.line}, col ${context.column})` : ` (line ${line})`;
-    // console.warn(`[Parser Error]${lineInfo}: ${message}`);
+    // Suppressed — not critical
   }
 }
 
@@ -665,33 +642,36 @@ function computeContentHash(content: string): string {
   return createHash('sha256').update(content).digest('hex').slice(0, 16);
 }
 
+function computeSourceHash(files: string[]): string {
+  return computeContentHash(
+    files.map(f => {
+      try { const st = fs.statSync(f); return `${f}:${st.mtimeMs}:${st.size}`; } catch { return f; }
+    }).join('|')
+  );
+}
+
 export default async function generateSchema(srcGlob: string) {
   const abs = path.resolve(process.cwd(), srcGlob);
   const files = readFiles(abs);
   console.log(`Scanning ${files.length} source files...`);
 
-  // Fast path: use cached generated.json if it is newer than all source files.
   try {
     const jsonOut = path.join(abs, "schema", "generated.json");
     const tsOut = path.join(abs, "schema", "generated.ts");
-    // Only use cache if both files exist
     if (fs.existsSync(jsonOut) && fs.existsSync(tsOut)) {
-      const genStat = fs.statSync(jsonOut);
-      let newest = 0;
-      for (const f of files) {
-        try { const st = fs.statSync(f); if (st.mtimeMs > newest) newest = st.mtimeMs; } catch {}
-      }
-      if (genStat.mtimeMs >= newest) {
-        // Verify generated.ts hasn't been manually edited
-        const tsContent = fs.readFileSync(tsOut, 'utf8');
-        const hashMatch = tsContent.match(/\/\/ Schema Hash: ([a-f0-9]{16})/);
-        const storedHash = hashMatch ? hashMatch[1] : null;
-        
+      const tsContent = fs.readFileSync(tsOut, 'utf8');
+      const schemaHashMatch = tsContent.match(/\/\/ Schema Hash: ([a-f0-9]{16})/);
+      const sourceHashMatch = tsContent.match(/\/\/ Source Hash: ([a-f0-9]{16})/);
+      const storedSchemaHash = schemaHashMatch ? schemaHashMatch[1] : null;
+      const storedSourceHash = sourceHashMatch ? sourceHashMatch[1] : null;
+
+      const currentSourceHash = computeSourceHash(files);
+
+      if (storedSourceHash && storedSourceHash === currentSourceHash) {
         const parsed = JSON.parse(fs.readFileSync(jsonOut, "utf8"));
         const jsonStr = JSON.stringify(parsed, null, 2);
-        const expectedHash = computeContentHash(jsonStr);
-        
-        if (storedHash === expectedHash) {
+        const expectedSchemaHash = computeContentHash(jsonStr);
+        if (storedSchemaHash === expectedSchemaHash) {
           console.log("Using cached schema/generated.json");
           return parsed;
         } else {
@@ -719,7 +699,6 @@ export default async function generateSchema(srcGlob: string) {
     }
   }
 
-  // Inject missing standard fields
   for (const intf of Object.values(allInterfaces)) {
     if (!intf.fields['id']) {
       intf.fields['id'] = { type: 'number', originalType: 'number', optional: true, meta: { primaryKey: true, auto: true } };
@@ -762,7 +741,6 @@ export default async function generateSchema(srcGlob: string) {
     }
   }
 
-  // Validate relation targets
   for (const [modelName, modelDef] of Object.entries(output)) {
     for (const rel of modelDef.relations) {
       if (!allInterfaces[rel.targetModel]) {
@@ -771,9 +749,6 @@ export default async function generateSchema(srcGlob: string) {
     }
   }
 
-  // Generate interface declarations.
-  // FIX: fields already contain relation fields with correct original TS types,
-  // so we just emit fields directly. No separate re-emission of relations needed.
   for (const [modelName] of Object.entries(output)) {
     const intf = allInterfaces[modelName];
     const props: string[] = [];
@@ -791,16 +766,14 @@ export default async function generateSchema(srcGlob: string) {
   const outDir = path.join(abs, 'schema');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-  const outFile = path.join(outDir, 'generated.ts');
   const jsonStr = JSON.stringify(output, null, 2);
   const contentHash = computeContentHash(jsonStr);
-  const tsContent = `\n// AUTO-GENERATED SCHEMA - DO NOT EDIT\n// Schema Hash: ${contentHash}\n\n${modelInterfaces.join("\n\n")}\n\nexport type ModelMap = {\n${modelMapEntries.join("\n")}\n};\n\nexport const schema = ${jsonStr} as const;\n\nexport type Schema = typeof schema;\nexport type ModelName = keyof ModelMap;\n`;
+  const sourceHash = computeSourceHash(files);
+  const tsContent = `\n// AUTO-GENERATED SCHEMA - DO NOT EDIT\n// Schema Hash: ${contentHash}\n// Source Hash: ${sourceHash}\n\n${modelInterfaces.join("\n\n")}\n\nexport type ModelMap = {\n${modelMapEntries.join("\n")}\n};\n\nexport const schema = ${jsonStr} as const;\n\nexport type Schema = typeof schema;\nexport type ModelName = keyof ModelMap;\n`;
 
-  fs.writeFileSync(outFile, tsContent, 'utf8');
-
-  const jsonOut = path.join(outDir, 'generated.json');
-  fs.writeFileSync(jsonOut, jsonStr, 'utf8');
+  fs.writeFileSync(path.join(outDir, 'generated.ts'), tsContent, 'utf8');
+  fs.writeFileSync(path.join(outDir, 'generated.json'), jsonStr, 'utf8');
 
   console.log('schema/generated.ts and schema/generated.json written successfully');
   return output;
-} 
+}

@@ -65,7 +65,7 @@ let schemaGenerated = false;
 
 type KnownModelName<TModelMap extends AnyModelMap> = Extract<keyof TModelMap, string>;
 
-type DBStore<TModelMap extends AnyModelMap> = {
+export type DBStore<TModelMap extends AnyModelMap> = {
   [M in KnownModelName<TModelMap>]: ModelAPI<TModelMap[M]>;
 };
 
