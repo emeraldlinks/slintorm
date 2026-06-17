@@ -8,7 +8,10 @@ export type OpComparison = "=" | "!=" | "<" | "<=" | ">" | ">=" | "LIKE" | "ILIK
 
 export type RelationKind = "onetomany" | "manytoone" | "onetoone" | "manytomany";
 export type EntityWithUpdate<T> = T & {
-  update(data: Partial<T>): Promise<T | null>;
+  update(data: Partial<T>): Promise<EntityWithUpdate<T> | null>;
+  delete(): Promise<Partial<T>>;
+  refresh(): Promise<EntityWithUpdate<T> | null>;
+  toJSON(): T;
 };
 
 export interface RelationDef {

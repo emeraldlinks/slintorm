@@ -6,7 +6,7 @@ import { QueryBuilder, Dialects as Dialect } from "./queryBuilder.js";
  * JOINs, aggregates, window functions, and subqueries.
  *
  * @template T - The record type representing table columns
- */
+ */ 
 export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBuilder<T> {
     protected _params: any[] = [];
     protected _distinct = false;

@@ -239,6 +239,10 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       /** @inheritdoc */
       async insert(item: T) {
         await ensureModelTable(item);
+  const now = new Date().toISOString();
+  if ((item as any).createdAt === undefined) (item as any).createdAt = now;
+  if ((item as any).updatedAt === undefined) (item as any).updatedAt = now;
+
 
         if (hooks?.onCreateBefore) {
           const modified = await hooks.onCreateBefore(item);
@@ -369,7 +373,9 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
       /** @inheritdoc */
       async update(where: Partial<T>, data: Partial<T>) {
-         
+           // Inject updatedAt automatically
+  if ((data as any).updatedAt === undefined) (data as any).updatedAt = new Date().toISOString();
+
         const before = await this.get(where);
 
         if (!where || !Object.keys(where).length)
@@ -452,30 +458,51 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
       /** @inheritdoc */
       async get(filter: Partial<T>) {
-         
-        if (!Object.keys(filter).length)
-          throw new Error("Get filter cannot be empty");
-        let record: T | null = null;
-        if (driver === "mongodb") {
-          const res = await adapter.exec(
-            JSON.stringify({ collection: tableName, action: "find", filter })
-          );
-          record = res.rows[0] || null;
-        } else {
-          const { clause, params } = buildWhereClause(filter);
-          const sql = `SELECT * FROM ${tableName} WHERE ${clause} LIMIT 1`;
-          const res = await adapter.exec(sql, params);
-          record = res.rows[0] || null;
-        }
-        if (!record) return null;
-        record = mapBooleans(record, modelSchema.fields);
-        record = mapJson(record, modelSchema.fields);
-        Object.defineProperty(record, "update", {
-          value: async (data: Partial<T>) => this.update(filter, data),
-          enumerable: false,
-        });
-        return record as EntityWithUpdate<T>;
-      },
+  if (!Object.keys(filter).length)
+    throw new Error("Get filter cannot be empty");
+  let record: T | null = null;
+  if (driver === "mongodb") {
+    const res = await adapter.exec(
+      JSON.stringify({ collection: tableName, action: "find", filter })
+    );
+    record = res.rows[0] || null;
+  } else {
+    const { clause, params } = buildWhereClause(filter);
+    const sql = `SELECT * FROM ${tableName} WHERE ${clause} LIMIT 1`;
+    const res = await adapter.exec(sql, params);
+    record = res.rows[0] || null;
+  }
+  if (!record) return null;
+  record = mapBooleans(record, modelSchema.fields);
+  record = mapJson(record, modelSchema.fields);
+
+  const self = this;
+
+  Object.defineProperties(record, {
+    update: {
+      value: async (data: Partial<T>) => self.update(filter, data),
+      enumerable: false,
+      writable: true,
+    },
+    delete: {
+      value: async () => self.delete(filter),
+      enumerable: false,
+      writable: true,
+    },
+    refresh: {
+      value: async () => self.get(filter),
+      enumerable: false,
+      writable: true,
+    },
+    toJSON: {
+      value: () => ({ ...record } as T),
+      enumerable: false,
+      writable: true,
+    },
+  });
+
+  return record as EntityWithUpdate<T>;
+},
 
       /** @inheritdoc */
       async getAll() {

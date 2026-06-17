@@ -53,6 +53,69 @@ interface Token {
   column: number;
 }
 
+/**
+ * TypeScript keywords that the tokenizer promotes out of 'identifier' but are
+ * perfectly legal as property / field names inside an interface body.
+ * e.g.  type: string;  export: boolean;  in: number;
+ */
+const KEYWORD_AS_IDENTIFIER = new Set<TokenType>([
+  'type',
+  'export',
+  'interface',
+  'extends',
+  'as',
+  'in',
+]);
+
+/**
+ * Token types that CANNOT be used as property names without breaking the
+ * generator's parser.  If one of these appears where a field name is expected
+ * the generator will log a clear warning and skip the field rather than
+ * silently producing corrupt output.
+ *
+ * What you can do if you hit one of these:
+ *   • Rename the property to a plain identifier  (recommended)
+ *   • Wrap it in quotes: `"default": string`  — note that quoted keys are NOT
+ *     currently supported by this generator, so you must rename the field.
+ *
+ * Affected token types and example property names that would trigger this:
+ *   'colon'        →  would produce  :: string  (unparseable)
+ *   'semicolon'    →  would produce  ;: string  (unparseable)
+ *   'comma'        →  would produce  ,: string  (unparseable)
+ *   'equals'       →  would produce  =: string  (unparseable)
+ *   'pipe'         →  would produce  |: string  (unparseable)
+ *   'at'           →  would produce  @: string  (conflicts with decorator syntax)
+ *   'dot'          →  would produce  .: string  (unparseable)
+ *   'brace-open'   →  { as a field name (unparseable)
+ *   'brace-close'  →  } as a field name (signals end of interface)
+ *   'bracket-open' →  [ as a field name (index-signature syntax, not supported)
+ *   'bracket-close'→  ] as a field name (unparseable)
+ *   'angle-open'   →  < as a field name (unparseable)
+ *   'angle-close'  →  > as a field name (unparseable)
+ *   'question'     →  ? as a field name (conflicts with optional marker)
+ *   'string'       →  "foo": string  (quoted key — not supported, rename field)
+ *   'number'       →  123: string   (numeric key — not supported, rename field)
+ *   'newline'      →  (whitespace — not a real field name)
+ *   'whitespace'   →  (whitespace — not a real field name)
+ *   'comment-line' →  (comment — not a real field name)
+ *   'comment-block'→  (comment — not a real field name)
+ *   'template-literal' → `foo`: string  (computed key — not supported)
+ */
+const BREAKING_KEYWORDS = new Set<TokenType>([
+  'colon', 'semicolon', 'comma', 'equals', 'pipe', 'at', 'dot',
+  'brace-open', 'brace-close', 'bracket-open', 'bracket-close',
+  'angle-open', 'angle-close', 'question',
+  'string', 'number',
+  'newline', 'whitespace',
+  'comment-line', 'comment-block',
+  'template-literal',
+]);
+
+function isFieldNameToken(t: Token | null): boolean {
+  if (!t) return false;
+  return t.type === 'identifier' || KEYWORD_AS_IDENTIFIER.has(t.type);
+}
+
 function tokenize(src: string): Token[] {
   const tokens: Token[] = [];
   let line = 1;
@@ -286,9 +349,6 @@ class InterfaceTokenParser {
   parse(): Record<string, InterfaceDefinition> {
     while (this.i < this.tokens.length) {
       this.skipWhitespaceOnly();
-       // Collect any pending annotation comment at top-level (interface doc comments)
-      // These are block comments like /** ... */ above the interface keyword.
-      // We don't need them for schema, just skip.
       this.skipTopLevelComments();
       if (this.i >= this.tokens.length) break;
       if (this.parseInterfaceDeclaration()) {
@@ -315,11 +375,6 @@ class InterfaceTokenParser {
     return null;
   }
 
-    /**
-   * Skip only whitespace and newlines — does NOT consume comments.
-   * This preserves comments so they can be read by the field parser
-   * immediately before the field they annotate.
-   */
   private skipWhitespaceOnly(): void {
     while (this.i < this.tokens.length) {
       const t = this.peek();
@@ -343,22 +398,9 @@ class InterfaceTokenParser {
     }
   }
 
-  /**
-   * Read the annotation comment that immediately precedes a field.
-   * Only collects the LAST comment-line that directly precedes the identifier,
-   * with only whitespace/newlines between them. Returns "" if none.
-   *
-   * This is the core fix: we read comments inline as part of field parsing,
-   * not as part of a global "skip whitespace" sweep.
-   */
   private readPrecedingComment(): string {
-    // Scan ahead: skip whitespace/newlines, if we hit a comment-line followed
-    // by whitespace/newlines followed by an identifier, consume it and return it.
-    // If we hit anything else (including another comment), return "".
     let j = this.i;
 
-
-    // Skip leading whitespace/newlines
     while (j < this.tokens.length && (this.tokens[j].type === 'whitespace' || this.tokens[j].type === 'newline')) {
       j++;
     }
@@ -376,7 +418,7 @@ class InterfaceTokenParser {
 
     if (j >= this.tokens.length) return "";
     const next = this.tokens[j];
-    if (next.type !== 'identifier' && next.type !== 'brace-close') return "";
+    if (!isFieldNameToken(next) && next.type !== 'brace-close') return "";
 
     while (this.i <= this.tokens.length) {
       const t = this.tokens[this.i];
@@ -441,8 +483,39 @@ class InterfaceTokenParser {
       if (this.peek()?.type === 'brace-close') break;
 
       const fieldLine = this.peek()?.line ?? 0;
+
+      // Detect tokens that are impossible to handle as field names and warn loudly.
+      const peeked = this.peek();
+      if (peeked && BREAKING_KEYWORDS.has(peeked.type)) {
+        console.error(
+          `\n[schema-generator] ⚠️  UNSUPPORTED FIELD NAME at line ${peeked.line}:${peeked.column}\n` +
+          `  Token type : "${peeked.type}"  (value: ${JSON.stringify(peeked.value)})\n` +
+          `  This token cannot be used as a field name by the schema generator.\n` +
+          `  The field has been skipped and will NOT appear in the generated schema.\n\n` +
+          `  What you can do:\n` +
+          `    • Rename the field to a plain camelCase identifier.\n` +
+          `      e.g.  default: string   →   defaultValue: string\n` +
+          `            "quoted-key": number  →   quotedKey: number\n` +
+          `            123: boolean          →   field123: boolean\n` +
+          `    • Index-signature fields ( [key: string]: any ) are not supported;\n` +
+          `      remove them or move them to a separate non-model interface.\n`
+        );
+        // Skip tokens until we reach the end of what looks like this field line
+        // (i.e. until we hit a newline or semicolon at depth 0, or brace-close).
+        let depth = 0;
+        while (this.i < this.tokens.length) {
+          const t = this.peek()!;
+          if (t.type === 'brace-open' || t.type === 'bracket-open' || t.type === 'angle-open') depth++;
+          if (t.type === 'brace-close' && depth === 0) break;
+          if (t.type === 'brace-close' || t.type === 'bracket-close' || t.type === 'angle-close') depth = Math.max(0, depth - 1);
+          if ((t.type === 'semicolon' || t.type === 'newline') && depth === 0) { this.next(); break; }
+          this.next();
+        }
+        continue;
+      }
+
       if (!this.parseField(name, fields, relations, fieldLine, fieldComment)) {
-        if (this.peek()?.type === 'identifier') {
+        if (this.peek()?.type === 'identifier' || isFieldNameToken(this.peek())) {
           this.reportError(fieldLine, `Invalid field: ${this.peek()?.value}`);
         }
         this.next();
@@ -465,7 +538,9 @@ class InterfaceTokenParser {
     lineNum: number,
     comment: string
   ): boolean {
-    if (this.peek()?.type !== 'identifier') return false;
+    // Accept plain identifiers AND any keyword the tokenizer promotes that is
+    // still legal as a TypeScript property name (type, export, extends, as, in…)
+    if (!isFieldNameToken(this.peek())) return false;
     const propName = this.next()!.value;
 
     this.skipWhitespaceOnly();
@@ -485,7 +560,6 @@ class InterfaceTokenParser {
 
     const typeTokens = this.extractTypeTokens();
 
-    // consume semicolon if present, it's optional
     this.consume('semicolon');
 
     const type = this.reconstructType(typeTokens, isOptional);
@@ -654,34 +728,6 @@ export default async function generateSchema(srcGlob: string) {
   const abs = path.resolve(process.cwd(), srcGlob);
   const files = readFiles(abs);
   console.log(`Scanning ${files.length} source files...`);
-
-  try {
-    const jsonOut = path.join(abs, "schema", "generated.json");
-    const tsOut = path.join(abs, "schema", "generated.ts");
-    if (fs.existsSync(jsonOut) && fs.existsSync(tsOut)) {
-      const tsContent = fs.readFileSync(tsOut, 'utf8');
-      const schemaHashMatch = tsContent.match(/\/\/ Schema Hash: ([a-f0-9]{16})/);
-      const sourceHashMatch = tsContent.match(/\/\/ Source Hash: ([a-f0-9]{16})/);
-      const storedSchemaHash = schemaHashMatch ? schemaHashMatch[1] : null;
-      const storedSourceHash = sourceHashMatch ? sourceHashMatch[1] : null;
-
-      const currentSourceHash = computeSourceHash(files);
-
-      if (storedSourceHash && storedSourceHash === currentSourceHash) {
-        const parsed = JSON.parse(fs.readFileSync(jsonOut, "utf8"));
-        const jsonStr = JSON.stringify(parsed, null, 2);
-        const expectedSchemaHash = computeContentHash(jsonStr);
-        if (storedSchemaHash === expectedSchemaHash) {
-          console.log("Using cached schema/generated.json");
-          return parsed;
-        } else {
-          console.log("⚠️  Schema cache invalidated (generated.ts was manually edited). Regenerating...");
-        }
-      }
-    }
-  } catch {
-    // ignore cache errors, regenerate
-  }
 
   const allInterfaces: Record<string, InterfaceDefinition> = {};
   const interfaceSourceMap: Record<string, string> = {};

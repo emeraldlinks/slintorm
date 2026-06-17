@@ -118,6 +118,15 @@
         "meta": {
           "@enum": "(active,inactive,banned)"
         }
+      },
+      "type": {
+        "type": "\"admin\" | \"user\" | \"guest\" | undefined",
+        "originalType": "\"admin\" | \"user\" | \"guest\"",
+        "optional": true,
+        "meta": {
+          "@enum": "(admin,user,guest)",
+          "default": "user"
+        }
       }
     },
     "relations": [

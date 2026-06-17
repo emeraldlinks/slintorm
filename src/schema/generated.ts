@@ -1,7 +1,7 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: 1c46391cdaa277a4
-// Source Hash: c93218922bfb6240
+// Schema Hash: f66f5ff6fa440ea1
+// Source Hash: 46997dd7355658f4
 
 export interface User {
   id?: number;
@@ -17,6 +17,7 @@ export interface User {
   updatedAt?: string;
   deletedAt?: string;
   status?: "active" | "inactive" | "banned";
+  type?: "admin" | "user" | "guest";
 }
 
 export interface Post {
@@ -228,6 +229,15 @@ export const schema = {
         "optional": true,
         "meta": {
           "@enum": "(active,inactive,banned)"
+        }
+      },
+      "type": {
+        "type": "\"admin\" | \"user\" | \"guest\" | undefined",
+        "originalType": "\"admin\" | \"user\" | \"guest\"",
+        "optional": true,
+        "meta": {
+          "@enum": "(admin,user,guest)",
+          "default": "user"
         }
       }
     },

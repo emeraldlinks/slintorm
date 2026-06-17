@@ -50,6 +50,8 @@ interface User {
   deletedAt?: string;
   // @enum:(active,inactive,banned)
   status?: "active" | "inactive" | "banned";
+  // @enum:(admin,user,guest);default:user
+  type?: "admin" | "user" | "guest";
 }
 
 /** Profile table */
@@ -248,7 +250,7 @@ async function main() {
   // console.log("newPost: ", newPost);
 
   const oo = await db.User.query()
-    // .preload("posts")
+    // .preload("posts") 
     .preload("profile").first()
   // console.log("profile:x ", oo)
 
@@ -312,8 +314,11 @@ async function main() {
       .first()
 
     const updated = await upuser?.update({ name: "Amike Egwamene" });
+
     // console.log("Updated user:", updated);
     // console.log("excluded user fields:", excupuser);
+
+    console.log("json: ",await upuser?.delete())
 
   } catch (err) {
     console.log("error updated user: ", err)
