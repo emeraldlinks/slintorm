@@ -127,6 +127,12 @@
           "@enum": "(admin,user,guest)",
           "default": "user"
         }
+      },
+      "score": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
       }
     },
     "relations": [

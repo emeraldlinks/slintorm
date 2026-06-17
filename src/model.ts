@@ -4,6 +4,8 @@ import { QueryBuilder, mapBooleans } from "./queryBuilder.js";
 import type { RelationDef, EntityWithUpdate } from "./types.js";
 import { AdvancedQueryBuilder } from "./extra_clauses.js";
 import { pathToFileURL } from "node:url";
+import { ExtendedQueryBuilder, Validator, ValidationError } from "./extensions.js";
+import type { FieldRules } from "./extensions.js";
 
 
 
@@ -18,43 +20,39 @@ function placeholder(driver: string, index: number) {
 }
 
 export type ModelAPI<T extends object> = {
-  /** Inserts a new record into the table */
   insert(item: T): Promise<EntityWithUpdate<T> | null>;
-
-  /** Updates existing records matching the filter */
-  update(
-    filter: Partial<T>,
-    partial: Partial<T>
-  ): Promise<EntityWithUpdate<T> | null>;
-
-  /** Deletes records matching the filter */
-  delete(filter: Partial<T>): Promise<Partial<T>>;
-
-  /** Retrieves a single record matching the filter */
+  update(filter: Partial<T>, partial: Partial<T>): Promise<EntityWithUpdate<T> | null>;
+  delete(filter: Partial<T>): Promise<T | Partial<T>>;
   get(filter: Partial<T>): Promise<EntityWithUpdate<T> | null>;
-
-  /** Retrieves all records from the table */
   getAll(): Promise<T[]>;
+  query(): ExtendedQueryBuilder<T>;
 
-  /** Returns a query builder instance for custom queries */
-  query(): AdvancedQueryBuilder<T>;
-
-  /** Counts the number of records matching the filter */
+  // scalar aggregates — always return numbers
   count(filter?: Partial<T>): Promise<number>;
+  sum(column: keyof T & string, filter?: Partial<T>): Promise<number>;
+  avg(column: keyof T & string, filter?: Partial<T>): Promise<number>;
+  min(column: keyof T & string, filter?: Partial<T>): Promise<number>;
+  max(column: keyof T & string, filter?: Partial<T>): Promise<number>;
 
-  /** Checks if any record exists matching the filter */
   exists(filter: Partial<T>): Promise<boolean>;
-
-  /** Deletes all records in the table */
   truncate(): Promise<void>;
 
-  /** Loads a single related record */
+  // bulk
+  insertMany(items: T[]): Promise<number>;
+  updateMany(filter: Partial<T>, data: Partial<T>): Promise<number>;
+  deleteMany(filter: Partial<T>): Promise<number>;
+  upsert(filter: Partial<T>, data: T): Promise<"inserted" | "updated">;
+  findOrCreate(filter: Partial<T>, defaults: T): Promise<{ record: T; created: boolean }>;
+
+  // soft delete helpers on model level
+  restore(filter: Partial<T>): Promise<void>;
+
+  // validation
+  validate(data: Partial<T>, rules: FieldRules<T>): void;
+  check(data: Partial<T>, rules: FieldRules<T>): Record<string, string> | null;
+
   withOne<K extends keyof T & string>(relation: K): Promise<T[K] | null>;
-
-  /** Loads multiple related records */
   withMany<K extends keyof T & string>(relation: K): Promise<T[K][]>;
-
-  /** Preloads a relation for future queries */
   preload<K extends keyof T & string>(relation: K): Promise<void>;
 };
 
@@ -231,10 +229,46 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       return { clause, params };
     }
 
+
+
     async function ensureModelTable(item?: Partial<T>) {
       await ensure(item);
     }
 
+    function serializeValue(col: string, value: any): any {
+  if (value === undefined) return null;
+  if (value instanceof Date) return value.toISOString();
+  const fieldMeta = modelSchema.fields?.[col]?.meta;
+  if (fieldMeta?.json && value !== null && typeof value === "object") {
+    try { return JSON.stringify(value); } catch { return null; }
+  }
+  return value;
+}
+
+async function scalarAggregate(fn: string, column: string, filter?: Partial<T>): Promise<number> {
+  if (driver === "mongodb") {
+    const res = await adapter.exec(
+      JSON.stringify({ collection: tableName, action: "find", filter: filter ?? {} })
+    );
+    const rows: any[] = res.rows ?? [];
+    const values = rows.map((r) => Number(r[column] ?? 0));
+    if (fn === "SUM") return values.reduce((a, b) => a + b, 0);
+    if (fn === "AVG") return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+    if (fn === "MIN") return values.length ? Math.min(...values) : 0;
+    if (fn === "MAX") return values.length ? Math.max(...values) : 0;
+    return 0;
+  }
+  const isPg = driver === "postgres";
+  const w = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
+  const keys = filter ? Object.keys(filter) : [];
+  const whereClause = keys.length
+    ? "WHERE " + keys.map((k, i) => `${w(k)} = ${isPg ? `$${i + 1}` : "?"}`).join(" AND ")
+    : "";
+  const params = keys.map((k) => (filter as any)[k]);
+  const sql = `SELECT ${fn}(${w(column)}) as __val FROM ${w(tableName)} ${whereClause}`;
+  const res = await adapter.exec(sql, params);
+  return parseFloat(res.rows?.[0]?.__val ?? "0");
+}
     return {
       /** @inheritdoc */
       async insert(item: T) {
@@ -436,25 +470,26 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       },
       /** @inheritdoc */
       async delete(filter: Partial<T>) {
-         
-        if (!Object.keys(filter).length)
-          throw new Error("Delete filter cannot be empty");
-        const toDelete = await this.get(filter);
-        if (hooks?.onDeleteBefore) {
-          await hooks.onDeleteBefore(toDelete || filter);
-        }
-        if (driver === "mongodb") {
-          await adapter.exec(
-            JSON.stringify({ collection: tableName, action: "delete", filter })
-          );
-        } else {
-          const { clause, params } = buildWhereClause(filter);
-          const sql = `DELETE FROM ${tableName} WHERE ${clause}`;
-          await adapter.exec(sql, params);
-        }
-        if (hooks?.onDeleteAfter) await hooks.onDeleteAfter(toDelete || filter);
-        return filter;
-      },
+  if (!Object.keys(filter).length)
+    throw new Error("Delete filter cannot be empty");
+
+  const needsRecord = !!(hooks?.onDeleteBefore || hooks?.onDeleteAfter);
+  const toDelete = needsRecord ? await this.get(filter) : null;
+
+  if (hooks?.onDeleteBefore) await hooks.onDeleteBefore(toDelete || filter);
+
+  if (driver === "mongodb") {
+    await adapter.exec(
+      JSON.stringify({ collection: tableName, action: "delete", filter })
+    );
+  } else {
+    const { clause, params } = buildWhereClause(filter);
+    await adapter.exec(`DELETE FROM ${tableName} WHERE ${clause}`, params);
+  }
+
+  if (hooks?.onDeleteAfter) await hooks.onDeleteAfter(toDelete || filter);
+  return toDelete || filter;
+},
 
       /** @inheritdoc */
       async get(filter: Partial<T>) {
@@ -517,38 +552,34 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       },
 
       /** @inheritdoc */
-     query(): AdvancedQueryBuilder<T> {
-  return new AdvancedQueryBuilder<T>(
+     query(): ExtendedQueryBuilder<T> {
+  return new ExtendedQueryBuilder<T>(
     tableName,
     adapter.dir!,
     adapter.exec.bind(adapter),
-    modelName!, 
-    schemas,                   
+    name,
+    schemas,
     { dialect: adapter.driver }
   );
 },
       /** @inheritdoc */
       async count(filter?: Partial<T>) {
-         
-        if (driver === "mongodb") {
-          const res = await adapter.exec(
-            JSON.stringify({
-              collection: tableName,
-              action: "find",
-              filter: filter || {},
-            })
-          );
-          return res.rows.length;
-        } else {
-          const where =
-            filter && Object.keys(filter).length
-              ? buildWhereClause(filter)
-              : { clause: "1=1", params: [] };
-          const sql = `SELECT COUNT(*) as count FROM ${tableName} WHERE ${where.clause}`;
-          const res = await adapter.exec(sql, where.params);
-          return res.rows[0]?.count ?? 0;
-        }
-      },
+  if (driver === "mongodb") {
+    const res = await adapter.exec(
+      JSON.stringify({ collection: tableName, action: "find", filter: filter ?? {} })
+    );
+    return res.rows.length;
+  }
+  const isPg = driver === "postgres";
+  const keys = filter ? Object.keys(filter) : [];
+  const whereClause = keys.length
+    ? "WHERE " + keys.map((k, i) => `"${k}" = ${isPg ? `$${i + 1}` : "?"}`).join(" AND ")
+    : "";
+  const params = keys.map((k) => (filter as any)[k]);
+  const sql = `SELECT COUNT(*) as count FROM "${tableName}" ${whereClause}`;
+  const res = await adapter.exec(sql, params);
+  return parseInt(res.rows?.[0]?.count ?? "0", 10);
+},
 
       /** @inheritdoc */
       async exists(filter: Partial<T>) {
@@ -572,6 +603,203 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         return (row as any)[_relation] ?? null;
       },
 
+
+// scalar aggregates
+async sum(column: keyof T & string, filter?: Partial<T>) {
+  return scalarAggregate("SUM", column, filter);
+},
+async avg(column: keyof T & string, filter?: Partial<T>) {
+  return scalarAggregate("AVG", column, filter);
+},
+async min(column: keyof T & string, filter?: Partial<T>) {
+  return scalarAggregate("MIN", column, filter);
+},
+async max(column: keyof T & string, filter?: Partial<T>) {
+  return scalarAggregate("MAX", column, filter);
+},
+
+// bulk insertMany
+async insertMany(items: T[]) {
+  if (!items.length) return 0;
+  const now = new Date().toISOString();
+  const prepared = items.map((item) => {
+    const row = { ...item } as any;
+    if (row.createdAt === undefined) row.createdAt = now;
+    if (row.updatedAt === undefined) row.updatedAt = now;
+    return row;
+  });
+
+  if (driver === "mongodb") {
+    await adapter.exec(
+      JSON.stringify({ collection: tableName, action: "insert", data: prepared })
+    );
+    return prepared.length;
+  }
+
+  const cols = Object.keys(prepared[0]).filter((c) => prepared[0][c] !== undefined);
+  const w = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
+
+  if (driver === "sqlite") {
+    await adapter.exec("BEGIN", []);
+    try {
+      for (const row of prepared) {
+        const values = cols.map((c) => serializeValue(c, row[c]));
+        const sql = `INSERT INTO ${w(tableName)} (${cols.map(w).join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`;
+        await adapter.exec(sql, values);
+      }
+      await adapter.exec("COMMIT", []);
+    } catch (err) {
+      await adapter.exec("ROLLBACK", []);
+      throw err;
+    }
+    return prepared.length;
+  }
+
+  // postgres / mysql single multi-row insert
+  const allValues: any[] = [];
+  const isPg = driver === "postgres";
+  const rowPlaceholders = prepared.map((row, rowIdx) => {
+    const phs = cols.map((c, colIdx) => {
+      allValues.push(serializeValue(c, row[c]));
+      return isPg ? `$${rowIdx * cols.length + colIdx + 1}` : "?";
+    });
+    return `(${phs.join(", ")})`;
+  });
+  const sql = `INSERT INTO ${w(tableName)} (${cols.map(w).join(", ")}) VALUES ${rowPlaceholders.join(", ")}`;
+  await adapter.exec(sql, allValues);
+  return prepared.length;
+},
+
+// bulk updateMany
+async updateMany(filter: Partial<T>, data: Partial<T>) {
+  if (!Object.keys(filter).length) throw new Error("updateMany filter cannot be empty");
+  if (!Object.keys(data).length) throw new Error("updateMany data cannot be empty");
+  const now = new Date().toISOString();
+  if ((data as any).updatedAt === undefined) (data as any).updatedAt = now;
+
+  if (driver === "mongodb") {
+    const res = await adapter.exec(
+      JSON.stringify({ collection: tableName, action: "update", filter, data })
+    );
+    return res.changes ?? 0;
+  }
+
+  const isPg = driver === "postgres";
+  const w = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
+  const setCols = Object.keys(data);
+  const whereCols = Object.keys(filter);
+  const setClause = setCols.map((c, i) => `${w(c)} = ${isPg ? `$${i + 1}` : "?"}`).join(", ");
+  const whereClause = whereCols.map((c, i) => `${w(c)} = ${isPg ? `$${setCols.length + i + 1}` : "?"}`).join(" AND ");
+  const values = [
+    ...setCols.map((c) => serializeValue(c, (data as any)[c])),
+    ...whereCols.map((c) => (filter as any)[c]),
+  ];
+  const res = await adapter.exec(`UPDATE ${w(tableName)} SET ${setClause} WHERE ${whereClause}`, values);
+  return res.changes ?? 0;
+},
+
+// bulk deleteMany
+async deleteMany(filter: Partial<T>) {
+  if (!Object.keys(filter).length) throw new Error("deleteMany filter cannot be empty");
+  if (driver === "mongodb") {
+    const res = await adapter.exec(
+      JSON.stringify({ collection: tableName, action: "delete", filter })
+    );
+    return res.changes ?? 0;
+  }
+  const isPg = driver === "postgres";
+  const w = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
+  const whereCols = Object.keys(filter);
+  const whereClause = whereCols.map((c, i) => `${w(c)} = ${isPg ? `$${i + 1}` : "?"}`).join(" AND ");
+  const values = whereCols.map((c) => (filter as any)[c]);
+  const res = await adapter.exec(`DELETE FROM ${w(tableName)} WHERE ${whereClause}`, values);
+  return res.changes ?? 0;
+},
+
+// upsert
+async upsert(filter: Partial<T>, data: T) {
+  const self = this;
+  if (driver === "mongodb") {
+    const check = await adapter.exec(
+      JSON.stringify({ collection: tableName, action: "find", filter })
+    );
+    if (check.rows?.length) {
+      await adapter.exec(JSON.stringify({ collection: tableName, action: "update", filter, data }));
+      return "updated" as const;
+    }
+    await self.insertMany([data]);
+    return "inserted" as const;
+  }
+
+  if (driver === "postgres") {
+    const cols = Object.keys(data);
+    const filterCols = Object.keys(filter);
+    const row = { ...data } as any;
+    const now = new Date().toISOString();
+    if (row.createdAt === undefined) row.createdAt = now;
+    if (row.updatedAt === undefined) row.updatedAt = now;
+    const values = cols.map((c) => serializeValue(c, row[c]));
+    const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
+    const conflictCols = filterCols.map((c) => `"${c}"`).join(", ");
+    const updateSet = cols
+      .filter((c) => !filterCols.includes(c))
+      .map((c) => `"${c}" = EXCLUDED."${c}"`)
+      .join(", ");
+    await adapter.exec(
+      `INSERT INTO "${tableName}" (${cols.map((c) => `"${c}"`).join(", ")}) VALUES (${placeholders})
+       ON CONFLICT (${conflictCols}) DO UPDATE SET ${updateSet}`,
+      values
+    );
+    return "inserted" as const;
+  }
+
+  if (driver === "mysql") {
+    const cols = Object.keys(data);
+    const row = { ...data } as any;
+    const now = new Date().toISOString();
+    if (row.createdAt === undefined) row.createdAt = now;
+    if (row.updatedAt === undefined) row.updatedAt = now;
+    const values = cols.map((c) => serializeValue(c, row[c]));
+    const updateSet = cols.map((c) => `\`${c}\` = VALUES(\`${c}\`)`).join(", ");
+    await adapter.exec(
+      `INSERT INTO \`${tableName}\` (${cols.map((c) => `\`${c}\``).join(", ")}) VALUES (${cols.map(() => "?").join(", ")})
+       ON DUPLICATE KEY UPDATE ${updateSet}`,
+      values
+    );
+    return "inserted" as const;
+  }
+
+  // sqlite manual
+  const existing = await this.get(filter);
+  if (existing) {
+    await this.updateMany(filter, data);
+    return "updated" as const;
+  }
+  await this.insertMany([data]);
+  return "inserted" as const;
+},
+
+// findOrCreate
+async findOrCreate(filter: Partial<T>, defaults: T) {
+  const existing = await this.get(filter);
+  if (existing) return { record: existing as T, created: false };
+  await this.insertMany([defaults]);
+  const created = await this.get(filter);
+  return { record: created as T, created: true };
+},
+
+// restore (undo soft delete)
+async restore(filter: Partial<T>) {
+  await this.updateMany(filter, { deletedAt: null } as any);
+},
+
+// validation — inline, no extra import needed in user code
+validate(data: Partial<T>, rules: FieldRules<T>) {
+  new Validator<T>(rules).validate(data);
+},
+check(data: Partial<T>, rules: FieldRules<T>) {
+  return new Validator<T>(rules).check(data);
+},
       /** @inheritdoc */
       async withMany<K extends keyof T & string>(_relation: K) {
         const row = await this.query().preload(_relation as any).first();
@@ -587,6 +815,8 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
     } as ModelAPI<T>;
   }
 
+
+  
   return defineModel;
 }
 

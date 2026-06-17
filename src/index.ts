@@ -3,7 +3,7 @@ import { createModelFactory, type ModelAPI } from "./model.js";
 import generateSchema from "./generator.js";
 import { Migrator, type SchemaModel } from "./migrator.js";
 import path from "node:path";
-import type { DBDriver } from "./types.js";
+import type { DBDriver, ExecFn } from "./types.js";
 
 const getPaths = (dir = "src") => {
   return path.join(process.cwd(), dir)
@@ -106,7 +106,7 @@ export default class ORMManager<TModelMap extends AnyModelMap = AnyModelMap> {
   }
 
 
-  async defineModel<M extends KnownModelName<TModelMap>>(
+ async defineModel<M extends KnownModelName<TModelMap>>(
     table: string,
     modelName: M,
     hooks?: ModelHooks<TModelMap[M]>
@@ -133,5 +133,30 @@ export default class ORMManager<TModelMap extends AnyModelMap = AnyModelMap> {
 
     return model;
   }
+
+
+  // inside ORMManager class
+
+async transaction<T>(callback: (trx: { exec: ExecFn }) => Promise<T>): Promise<T> {
+  const driver = this.adapter.driver;
+  if (driver !== "mongodb") await this.adapter.exec("BEGIN", []);
+  const trx = { exec: this.adapter.exec.bind(this.adapter) };
+  try {
+    const result = await callback(trx);
+    if (driver !== "mongodb") await this.adapter.exec("COMMIT", []);
+    return result;
+  } catch (err) {
+    if (driver !== "mongodb") await this.adapter.exec("ROLLBACK", []);
+    throw err;
+  }
+}
+
+async batch(statements: { sql: string; params?: any[] }[]): Promise<void> {
+  await this.transaction(async (trx) => {
+    for (const stmt of statements) {
+      await trx.exec(stmt.sql, stmt.params ?? []);
+    }
+  });
+}
 }
 

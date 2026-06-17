@@ -52,6 +52,7 @@ interface User {
   status?: "active" | "inactive" | "banned";
   // @enum:(admin,user,guest);default:user
   type?: "admin" | "user" | "guest";
+  score?: number
 }
 
 /** Profile table */
@@ -257,12 +258,13 @@ async function main() {
   // ==== CREATE PROFILE FOR USER (one-to-one) ====
 
   // ==== FETCH USER WITH POSTS AND PROFILE ====
+  const xpp = await db.Profile.insert({ userId: newUser?.id!, meta: { bio: "This is my profile" } });
   const userWithRelations = await db.User.query()
     // .preload("posts")
     .preload("profile")
     .preload("profile.user")
     // .preload("posts.user")
-    .first("id = 2");
+    .first(`id = ${newUser?.id}`);
   console.log("userxs: ", userWithRelations)
   // console.dir(userWithRelations, { depth: null });
 
@@ -308,7 +310,9 @@ async function main() {
     //  console.log("immediate update: ", uup)
 
     const upuser = await Users.get({ id: 1 })
-    // console.log("fetched updated user: ", upuser)
+    const findd = await Users.findOrCreate({ id: 1 }, { name: "James Egwamene" })
+    console.log("fetched findOrCreate user: ", findd)
+    console.log("======> updated user: ", upuser)
     const excupuser = await Users.query().exclude("profile")
       // .preload("posts").exclude("posts.user")
       .first()
@@ -330,7 +334,7 @@ async function main() {
     .preload("user").preload("user.profile").preload("user.profile.user")
     .preload("user.profile.user.profile.user")
     .exclude("user.name")
-    .first(`userId = ${2}`)
+    .first(`userId = ${newUser?.id}`);
   console.log("profile: ", pp)
 
 
@@ -342,7 +346,35 @@ async function main() {
   // });
   // console.log("Teams:", nnew);
 
+await Users.insertMany([{ name: "Joe" }, { name: "Jane" }])
+await Users.updateMany({ status: "inactive" }, { status: "banned" })
+await Users.deleteMany({ status: "banned" })
+await Users.upsert({ email: "joe@x.com" }, { name: "Joe", email: "joe@x.com" })
+const findOrCreateUser = await Users.findOrCreate({ email: "joe@x.com" }, { name: "Joe", email: "joe@x.com" })
+console.log("findOrCreateUser:", findOrCreateUser.record)
+await Users.restore({ id: 1 })
+await Users.sum("score")
+await Users.avg("score", { status: "active" })
+await Users.min("score")
+await Users.max("score")
+await Users.count({ status: "active" })
+await Users.validate({ email: "bad@example.com" }, { email: { required: false, email: true } })
+await Users.query().withTrashed().get()
+await Users.query().onlyTrashed().get()
+const scopee = await Users.query().scope(qb => qb.where("type", "=", "user")).get()
+// console.log("scoped users:", scopee)
 
+await orm.transaction(async (trx) => {
+  await trx.exec("INSERT INTO users (name) VALUES (?)", ["Joe"])
+  await trx.exec("INSERT INTO profile (userId) VALUES (?)", [1])
+})
+
+const bhhsu = await orm.batch([
+  { sql: "INSERT INTO users (name) VALUES (?)", params: ["Joe"] },
+  { sql: "INSERT INTO profile (userId) VALUES (?)", params: [1] },
+])
+
+console.log("batch insert result:", bhhsu)
 
 
   console.log("=== Done ===");
