@@ -498,7 +498,7 @@ export class QueryBuilder<T extends Record<string, any>> {
    *   .preload("module")
    *   .get();
    */
-  whereRelated<K extends RelationPath<T>> (path: K, column: K, value: any) {
+  whereRelated<K extends RelationPath<T>> (path: string, column: K, value: any) {
     this.throughRelation(path);
 
     // Walk the path to find the final model's table name
@@ -542,7 +542,7 @@ export class QueryBuilder<T extends Record<string, any>> {
    *   .preload("module")
    *   .get();
    */
-    relatedTo<K extends RelationPath<T>> (targetModelName: K, column: K, value: any) {
+    relatedTo<K extends RelationPath<T>> (targetModelName: string, column: K, value: any) {
     // BFS: find shortest relation path from current model to target model
     const queue: { modelName: string; path: string[] }[] = [
       { modelName: this.modelName, path: [] },
