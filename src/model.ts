@@ -20,39 +20,269 @@ function placeholder(driver: string, index: number) {
 }
 
 export type ModelAPI<T extends object> = {
+  /**
+   * Inserts a new record into the table.
+   * Automatically sets `createdAt` and `updatedAt` if not provided.
+   * Returns the full inserted record with `update`, `delete`, and `refresh` methods attached.
+   *
+   * @example
+   * const user = await db.User.insert({ name: "Alice", email: "alice@example.com" });
+   * console.log(user?.id); // 1
+   */
   insert(item: T): Promise<EntityWithUpdate<T> | null>;
+
+  /**
+   * Updates records matching `filter` with the fields in `partial`.
+   * Automatically sets `updatedAt`. Fires `onUpdateBefore` / `onUpdateAfter` hooks.
+   * Returns the updated record after the write.
+   *
+   * @example
+   * const updated = await db.User.update({ id: 1 }, { name: "Alice Smith" });
+   * console.log(updated?.name); // "Alice Smith"
+   */
   update(filter: Partial<T>, partial: Partial<T>): Promise<EntityWithUpdate<T> | null>;
+
+  /**
+   * Deletes the record matching `filter`.
+   * Fires `onDeleteBefore` / `onDeleteAfter` hooks if defined.
+   * Returns the deleted record (or the filter object if the record was not fetched).
+   *
+   * @example
+   * await db.User.delete({ id: 1 });
+   */
   delete(filter: Partial<T>): Promise<T | Partial<T>>;
+
+  /**
+   * Fetches a single record matching `filter`.
+   * Returns `null` if no match is found.
+   * The returned record has `update`, `delete`, and `refresh` methods attached.
+   *
+   * @example
+   * const user = await db.User.get({ id: 1 });
+   * if (user) {
+   *   await user.update({ name: "Bob" });
+   *   await user.delete();
+   * }
+   */
   get(filter: Partial<T>): Promise<EntityWithUpdate<T> | null>;
+
+  /**
+   * Fetches all records from the table with no filter applied.
+   * Use `query()` for filtering, ordering, and pagination.
+   *
+   * @example
+   * const users = await db.User.getAll();
+   * console.log(users.length);
+   */
   getAll(): Promise<T[]>;
+
+  /**
+   * Returns a chainable query builder for advanced queries —
+   * filtering, ordering, pagination, preloading relations, window functions, etc.
+   *
+   * @example
+   * const users = await db.User.query()
+   *   .where("status", "=", "active")
+   *   .preload("profile")
+   *   .orderBy("createdAt", "DESC")
+   *   .limit(10)
+   *   .get();
+   *
+   * const first = await db.User.query()
+   *   .where("email", "=", "alice@example.com")
+   *   .first();
+   */
   query(): ExtendedQueryBuilder<T>;
 
-  // scalar aggregates — always return numbers
+  /**
+   * Counts records matching an optional filter.
+   * Returns 0 if no records match.
+   *
+   * @example
+   * const total = await db.User.count();
+   * const activeCount = await db.User.count({ status: "active" });
+   */
   count(filter?: Partial<T>): Promise<number>;
+
+  /**
+   * Returns the sum of `column` across records matching an optional filter.
+   *
+   * @example
+   * const totalScore = await db.User.sum("score");
+   * const teamScore  = await db.User.sum("score", { status: "active" });
+   */
   sum(column: keyof T & string, filter?: Partial<T>): Promise<number>;
+
+  /**
+   * Returns the average of `column` across records matching an optional filter.
+   *
+   * @example
+   * const avgScore = await db.User.avg("score");
+   * const avgActive = await db.User.avg("score", { status: "active" });
+   */
   avg(column: keyof T & string, filter?: Partial<T>): Promise<number>;
+
+  /**
+   * Returns the minimum value of `column` across records matching an optional filter.
+   *
+   * @example
+   * const lowest = await db.User.min("score");
+   */
   min(column: keyof T & string, filter?: Partial<T>): Promise<number>;
+
+  /**
+   * Returns the maximum value of `column` across records matching an optional filter.
+   *
+   * @example
+   * const highest = await db.User.max("score");
+   */
   max(column: keyof T & string, filter?: Partial<T>): Promise<number>;
 
+  /**
+   * Returns `true` if at least one record matches `filter`, `false` otherwise.
+   *
+   * @example
+   * const taken = await db.User.exists({ email: "alice@example.com" });
+   * if (taken) throw new Error("Email already in use");
+   */
   exists(filter: Partial<T>): Promise<boolean>;
+
+  /**
+   * Deletes every record in the table. Cannot be undone.
+   * Useful for test teardown or resetting seed data.
+   *
+   * @example
+   * await db.User.truncate();
+   */
   truncate(): Promise<void>;
 
-  // bulk
+  /**
+   * Inserts multiple records in a single operation (wrapped in a transaction on SQLite).
+   * Returns the number of rows inserted.
+   * Automatically sets `createdAt` and `updatedAt` on each row.
+   *
+   * @example
+   * const count = await db.User.insertMany([
+   *   { name: "Alice", email: "alice@example.com" },
+   *   { name: "Bob",   email: "bob@example.com"   },
+   * ]);
+   * console.log(count); // 2
+   */
   insertMany(items: T[]): Promise<number>;
+
+  /**
+   * Updates all records matching `filter` with the fields in `data`.
+   * Returns the number of affected rows.
+   * Automatically sets `updatedAt`.
+   *
+   * @example
+   * const affected = await db.User.updateMany({ status: "inactive" }, { status: "banned" });
+   * console.log(affected); // number of rows updated
+   */
   updateMany(filter: Partial<T>, data: Partial<T>): Promise<number>;
+
+  /**
+   * Deletes all records matching `filter`.
+   * Returns the number of affected rows.
+   *
+   * @example
+   * const removed = await db.User.deleteMany({ status: "banned" });
+   * console.log(removed); // number of rows deleted
+   */
   deleteMany(filter: Partial<T>): Promise<number>;
+
+  /**
+   * Inserts `data` if no record matches `filter`, or updates the existing record.
+   * Returns `"inserted"` or `"updated"` to indicate what happened.
+   *
+   * @example
+   * const result = await db.User.upsert(
+   *   { email: "alice@example.com" },
+   *   { name: "Alice", email: "alice@example.com" }
+   * );
+   * console.log(result); // "inserted" | "updated"
+   */
   upsert(filter: Partial<T>, data: T): Promise<"inserted" | "updated">;
+
+  /**
+   * Returns the existing record matching `filter` if found.
+   * If no match, inserts `defaults` and returns the new record.
+   * Always returns `{ record, created }` — `created` is `true` only on insert.
+   *
+   * @example
+   * const { record, created } = await db.User.findOrCreate(
+   *   { email: "alice@example.com" },
+   *   { name: "Alice", email: "alice@example.com" }
+   * );
+   * console.log(created); // true if this was a new insert
+   */
   findOrCreate(filter: Partial<T>, defaults: T): Promise<{ record: T; created: boolean }>;
 
-  // soft delete helpers on model level
+  /**
+   * Restores a soft-deleted record by clearing its `deletedAt` field.
+   * Only meaningful on models that use `@softDelete`.
+   *
+   * @example
+   * await db.User.restore({ id: 1 });
+   */
   restore(filter: Partial<T>): Promise<void>;
 
-  // validation
+  /**
+   * Validates `data` against `rules` and throws a `ValidationError` if any rule fails.
+   * Use `check()` instead if you want the errors returned rather than thrown.
+   *
+   * @example
+   * db.User.validate(
+   *   { email: "not-an-email" },
+   *   { email: { required: true, email: true } }
+   * );
+   * // throws ValidationError: { email: "Must be a valid email address" }
+   */
   validate(data: Partial<T>, rules: FieldRules<T>): void;
+
+  /**
+   * Validates `data` against `rules` and returns a map of field errors,
+   * or `null` if validation passes. Does not throw.
+   *
+   * @example
+   * const errors = db.User.check(
+   *   { email: "not-an-email" },
+   *   { email: { required: true, email: true } }
+   * );
+   * if (errors) console.log(errors.email); // "Must be a valid email address"
+   */
   check(data: Partial<T>, rules: FieldRules<T>): Record<string, string> | null;
 
+  /**
+   * Eagerly loads a single related record for the first result of a query.
+   * Returns the related record or `null` if not found.
+   *
+   * @example
+   * const profile = await db.User.withOne("profile");
+   * console.log(profile?.gender);
+   */
   withOne<K extends keyof T & string>(relation: K): Promise<T[K] | null>;
+
+  /**
+   * Eagerly loads a collection of related records for the first result of a query.
+   * Returns an empty array if no related records are found.
+   *
+   * @example
+   * const posts = await db.User.withMany("posts");
+   * posts.forEach(p => console.log(p.title));
+   */
   withMany<K extends keyof T & string>(relation: K): Promise<T[K][]>;
+
+  /**
+   * Preloads a relation for all results returned by a query.
+   * Prefer using `.query().preload("relation")` for more control.
+   *
+   * @example
+   * await db.User.preload("profile");
+   *
+   * // More common usage via query builder:
+   * const users = await db.User.query().preload("profile").preload("posts").get();
+   */
   preload<K extends keyof T & string>(relation: K): Promise<void>;
 };
 
@@ -271,139 +501,104 @@ async function scalarAggregate(fn: string, column: string, filter?: Partial<T>):
 }
     return {
       /** @inheritdoc */
-      async insert(item: T) {
-        await ensureModelTable(item);
+async insert(item: T) {
+  await ensureModelTable(item);
   const now = new Date().toISOString();
   if ((item as any).createdAt === undefined) (item as any).createdAt = now;
   if ((item as any).updatedAt === undefined) (item as any).updatedAt = now;
 
+  if (hooks?.onCreateBefore) {
+    const modified = await hooks.onCreateBefore(item);
+    if (modified !== undefined) item = modified;
+  }
 
-        if (hooks?.onCreateBefore) {
-          const modified = await hooks.onCreateBefore(item);
-          if (modified !== undefined) {
-            item = modified;
-          }
+  let insertedId: number | undefined;
+
+  if (driver === "mongodb") {
+    await adapter.exec(
+      JSON.stringify({ collection: tableName, action: "insert", data: [item] })
+    );
+  } else {
+    const isJsonField = (col: string) => {
+      const meta = modelSchema.fields[col]?.meta;
+      return !!(meta?.json || meta?.["@json"]);
+    };
+
+    const cols = Object.keys(item).filter((c) => {
+      const value = (item as any)[c];
+      if (value === undefined) return false;
+      if (value === null) return true;
+      if (value instanceof Date) return true;
+      if (typeof value === "object") return isJsonField(c);
+      return true;
+    });
+
+    const values = cols.map((c) => {
+      const value = (item as any)[c];
+      if (value === undefined) return null;
+      if (value instanceof Date) return value.toISOString();
+      if (isJsonField(c) && value !== null && typeof value === "object") {
+        try { return JSON.stringify(value); } catch { return null; }
+      }
+      return value;
+    });
+
+    const wrap = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
+    const placeholders = driver === "postgres"
+      ? cols.map((_, i) => `$${i + 1}`).join(", ")
+      : cols.map(() => "?").join(", ");
+
+    const sql = driver === "postgres"
+      ? `INSERT INTO ${wrap(tableName)} (${cols.map(wrap).join(", ")}) VALUES (${placeholders}) RETURNING *`
+      : `INSERT INTO ${wrap(tableName)} (${cols.map(wrap).join(", ")}) VALUES (${placeholders})`;
+
+    const result: any = await adapter.exec(sql, values);
+
+    if (driver === "sqlite" && result?.lastID)       insertedId = result.lastID;
+    if (driver === "mysql"  && result?.insertId)     insertedId = result.insertId;
+    if (driver === "postgres" && result?.rows?.[0]?.id) insertedId = result.rows[0].id;
+
+    // Postgres RETURNING * gives us the full row — no extra fetch needed
+    if (driver === "postgres" && result?.rows?.[0]) {
+      const row = result.rows[0];
+      if (hooks?.onCreateAfter) await hooks.onCreateAfter(row);
+      return row as any;
+    }
+
+    if (insertedId) (item as any).id = insertedId;
+  }
+
+  // Fetch inserted row — clean single path, no fallback scan
+  let inserted: any = null;
+
+  if ((item as any).id) {
+    inserted = await this.get({ id: (item as any).id } as any);
+  }
+
+  if (!inserted && driver === "sqlite") {
+    try {
+      if (modelSchema?.fields?.["id"]) {
+        const lr = await adapter.exec("SELECT last_insert_rowid() as id");
+        const lastId = lr.rows?.[0]?.id;
+        if (lastId) {
+          (item as any).id = lastId;
+          inserted = await this.get({ id: lastId } as any);
         }
+      }
+    } catch {}
+  }
 
-        let insertedId: number | undefined;
+  // Last resort: match by unique-ish fields — but only email since
+  // title+userId are not unique enough to be reliable
+  if (!inserted && (item as any).email) {
+    try {
+      inserted = await this.get({ email: (item as any).email } as any);
+    } catch {}
+  }
 
-        if (driver === "mongodb") {
-          await adapter.exec(
-            JSON.stringify({
-              collection: tableName,
-              action: "insert",
-              data: [item],
-            })
-          );
-        } else {
-          const cols = Object.keys(item).filter((c) => {
-            const value = item[c as keyof T] as any;
-            if (value === undefined) return false;
-            if (value === null) return true;
-            if (value instanceof Date) return true;
-            if (typeof value === "object") {
-              const fieldMeta = modelSchema.fields[c]?.meta;
-              return !!fieldMeta?.json;
-            }
-            return true;
-          });
-
-          const values = cols.map((c) => {
-            const value = item[c as keyof T] as any;
-            const fieldMeta = modelSchema.fields[c]?.meta;
-            if (value === undefined) return null;
-            if (value instanceof Date) return value.toISOString();
-            if (fieldMeta?.json && value !== null && typeof value === "object") {
-              try {
-                return JSON.stringify(value);
-              } catch {
-                return null;
-              }
-            }
-            return value;
-          });
-
-          const placeholders =
-            driver === "postgres"
-              ? cols.map((_, i) => `$${i + 1}`).join(", ")
-              : cols.map(() => "?").join(", ");
-
-          const wrap = (c: string) =>
-            driver === "mysql" ? `\`${c}\`` : `"${c}"`;
-
-          const sqlCols = cols.map(wrap).join(",");
-
-          const sql = driver === 'postgres'
-            ? `INSERT INTO ${wrap(tableName)} (${sqlCols}) VALUES (${placeholders}) RETURNING *`
-            : `INSERT INTO ${wrap(tableName)} (${sqlCols}) VALUES (${placeholders})`;
-
-          const result: any = await adapter.exec(sql, values);
-
-          if (driver === "sqlite" && result?.lastID) insertedId = result.lastID;
-          if (driver === "mysql" && result?.insertId) insertedId = result.insertId;
-          if (driver === "postgres" && result?.rows?.[0]?.id)
-            insertedId = result.rows[0].id;
-
-          if (insertedId) (item as any).id = insertedId;
-        }
-
-        // Try to fetch the inserted row. Prefer ID-based lookup; if the
-        // adapter/driver didn't provide a lastID (some sqlite builds or
-        // prepared paths), attempt to find the row by sensible fields.
-        let inserted: any = null;
-        if ((item as any).id) {
-          inserted = await this.get({ id: (item as any).id } as any);
-        }
-        if (!inserted) {
-          // For sqlite, as a last-resort, try last_insert_rowid() to
-          // obtain the last inserted row id from the connection.
-          if (driver === "sqlite") {
-            try {
-                // Only try to lookup by last_insert_rowid if this model
-                // actually declares an `id` primary key. Some pivot/join
-                // tables may not have an `id` column and would make this
-                // lookup fail with "no such column: id".
-                if (modelSchema && modelSchema.fields && modelSchema.fields['id']) {
-                  const lr = await adapter.exec("SELECT last_insert_rowid() as id");
-                  const lastId = lr.rows?.[0]?.id;
-                  if (lastId) {
-                    (item as any).id = lastId;
-                    inserted = await this.get({ id: lastId } as any);
-                  }
-                }
-            } catch {}
-          }
-          // Try common unique-ish combinations
-          let tryFilter: any = {};
-          if ((item as any).title) tryFilter.title = (item as any).title;
-          if ((item as any).userId) tryFilter.userId = (item as any).userId;
-          if ((item as any).email) tryFilter.email = (item as any).email;
-          if (Object.keys(tryFilter).length) {
-            try {
-              inserted = await this.get(tryFilter as any);
-            } catch {}
-          }
-
-          if (!inserted) {
-            // Last resort: scan all rows and try to match by the above keys
-            try {
-              const rows = await this.getAll();
-              inserted = rows.find((r: any) => {
-                if (tryFilter.title && r.title !== tryFilter.title) return false;
-                if (tryFilter.userId && r.userId !== tryFilter.userId) return false;
-                if (tryFilter.email && r.email !== tryFilter.email) return false;
-                return true;
-              }) || null;
-            } catch {}
-          }
-        }
-
-        if (hooks?.onCreateAfter && inserted) {
-          await hooks.onCreateAfter(inserted);
-        }
-
-        return inserted;
-      },
+  if (hooks?.onCreateAfter && inserted) await hooks.onCreateAfter(inserted);
+  return inserted;
+},
 
       /** @inheritdoc */
       async update(where: Partial<T>, data: Partial<T>) {

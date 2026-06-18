@@ -1,7 +1,7 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: c746346f12147287
-// Source Hash: 5579130e79e12dc8
+// Schema Hash: 154f5ce92b4b7fbc
+// Source Hash: b504675186909d64
 
 export interface User {
   id?: number;
@@ -141,7 +141,7 @@ export const schema = {
         "optional": false,
         "meta": {
           "@length": "100",
-          "not null": true,
+          "nullable": true,
           "comment": "Last name"
         }
       },
@@ -161,7 +161,8 @@ export const schema = {
         "optional": true,
         "meta": {
           "@unique": true,
-          "comment": "Email"
+          "comment": "Email",
+          "nullable": false
         }
       },
       "posts": {
@@ -348,7 +349,7 @@ export const schema = {
         "meta": {
           "@json": true,
           "nullable": true,
-          "comment": "Extra post data"
+          "comment": "Extra post data   ← add @json here"
         }
       },
       "createdAt": {

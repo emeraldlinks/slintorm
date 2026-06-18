@@ -14,8 +14,8 @@ interface Post {
   userId?: number;
   // @relation manytoone:User;foreignKey:userId;onDelete:SET NULL
   user?: User;
-  // @json;nullable;comment:Extra post data
-  meta?: Record<string, any>;
+// @json;nullable;comment:Extra post data   ← add @json here
+meta?: Record<string, any>;
   createdAt?: string;
   updatedAt?: string;
   // @softDelete
@@ -30,11 +30,11 @@ interface User {
   id?: number;
   // @nullable;length:100;comment:First name
   firstName?: string;
-  // @length:100;not null;comment:Last name
+  // @length:100;nullable;comment:Last name
   name: string;
   // @nullable;length:100;comment:Last name
   lastname?: string;
-  // @unique;comment:Email
+  // @unique;comment:Email;nullable:false;
   email?: string;
   // @relationship onetomany:Post;foreignKey:userId
   posts?: Post[];
@@ -247,9 +247,7 @@ async function main() {
   console.log("newUser: ", newUser);
   // const profile = await Profiles.insert({userId: 2})
 
-  const newPost = await db.Post.insert({ title: "Hello Boys", userId: 2 });
-  // console.log("newPost: ", newPost);
-
+ 
   const oo = await db.User.query()
     // .preload("posts") 
     .preload("profile").first()
@@ -345,12 +343,13 @@ async function main() {
   //   tested: false
   // });
   // console.log("Teams:", nnew);
-
-await Users.insertMany([{ name: "Joe" }, { name: "Jane" }])
+console.log("inserMany")
+// await Users.insertMany([{ name: "Joe" }, { name: "Jane"}])
+console.log("updateMany")
 await Users.updateMany({ status: "inactive" }, { status: "banned" })
 await Users.deleteMany({ status: "banned" })
-await Users.upsert({ email: "joe@x.com" }, { name: "Joe", email: "joe@x.com" })
-const findOrCreateUser = await Users.findOrCreate({ email: "joe@x.com" }, { name: "Joe", email: "joe@x.com" })
+await Users.upsert({ email: "joef@x.com" }, { name: "Joe", email: "jodedd@x.com" })
+const findOrCreateUser = await Users.findOrCreate({ email: "joecc@x.com" }, { name: "Joe", email: "joegjdxkhv@x.com" })
 console.log("findOrCreateUser:", findOrCreateUser.record)
 await Users.restore({ id: 1 })
 await Users.sum("score")
@@ -362,20 +361,23 @@ await Users.validate({ email: "bad@example.com" }, { email: { required: false, e
 await db.User.query().withTrashed().get()
 await db.User.query().onlyTrashed().get()
 const scopee = await db.User.query().scope(qb => qb.where("type", "=", "user")).get()
-console.log("scoped users:", scopee)
+// console.log("scoped users:", scopee)
 
 await orm.transaction(async (trx) => {
-  await trx.exec("INSERT INTO users (name) VALUES (?)", ["Joe"])
+  await trx.exec("INSERT INTO users (name, email) VALUES (?, ?)", ["Joe", "joe@example.com"])
   await trx.exec("INSERT INTO profile (userId) VALUES (?)", [1])
 })
 
-const bhhsu = await orm.batch([
-  { sql: "INSERT INTO users (name) VALUES (?)", params: ["Joe"] },
-  { sql: "INSERT INTO profile (userId) VALUES (?)", params: [1] },
-])
+// const bhhsu = await orm.batch([
+//   { sql: "INSERT INTO users (name) VALUES (?)", params: ["Joe"] },
+//   { sql: "INSERT INTO profile (userId) VALUES (?)", params: [1] },
+// ])
 
-console.log("batch insert result:", bhhsu)
+// console.log("batch insert result:", bhhsu)
 
+ const newPost = await db.Post.insert({ title: "Hello Boys", userId: 2, meta: { tags: ["hello", "world"] } });
+  console.log("newPost: ", newPost);
+  console.log("post with meta: ", await db.Post.query().preload("user").first(`id = ${newPost?.id}`));
 
   console.log("=== Done ===");
 }

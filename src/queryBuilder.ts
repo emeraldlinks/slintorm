@@ -855,15 +855,16 @@ export class QueryBuilder<T extends Record<string, any>> {
   }
 
   private mapJson(row: any, schemaFields: Record<string, any>) {
-    const out = { ...row } as Record<string, any>;
-    for (const key of Object.keys(schemaFields)) {
-      const fieldMeta = schemaFields[key]?.meta;
-      if (fieldMeta?.json && typeof out[key] === "string") {
-        try { out[key] = JSON.parse(out[key]); } catch {}
-      }
+  const out = { ...row } as Record<string, any>;
+  for (const key of Object.keys(schemaFields)) {
+    const meta = schemaFields[key]?.meta;
+    const isJson = !!(meta?.json || meta?.["@json"]);
+    if (isJson && typeof out[key] === "string") {
+      try { out[key] = JSON.parse(out[key]); } catch {}
     }
-    return out;
   }
+  return out;
+}
 
   removeExcluded(obj: any, excludes: string[]): any {
     if (!obj || typeof obj !== "object") return obj;

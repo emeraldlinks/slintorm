@@ -28,7 +28,7 @@
         "optional": false,
         "meta": {
           "@length": "100",
-          "not null": true,
+          "nullable": true,
           "comment": "Last name"
         }
       },
@@ -48,7 +48,8 @@
         "optional": true,
         "meta": {
           "@unique": true,
-          "comment": "Email"
+          "comment": "Email",
+          "nullable": false
         }
       },
       "posts": {
@@ -235,7 +236,7 @@
         "meta": {
           "@json": true,
           "nullable": true,
-          "comment": "Extra post data"
+          "comment": "Extra post data   ← add @json here"
         }
       },
       "createdAt": {
