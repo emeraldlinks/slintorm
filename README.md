@@ -195,11 +195,43 @@ const Posts = await orm.defineModel<Post>("posts", "Post");
 const Todos = await orm.defineModel<Todo>("todos", "Todo");
 
 
-// You can access all your models via the db
   const db = orm.DB
 
 ```
 
+---
+### You can access all your models via the db
+
+##### If you do not want to export multiple Models or items, you can use the ModelMap method and export the DB with full typesetting
+```ts
+
+import {ModelMap} from "./schema/generated.js";
+
+/// Note: Before importing and specifying the ModelMap from your schema generated.ts file, ensure you have ran the migration else this wont work cause until first migration ModelMap is unavailable.
+
+
+const orm = new ORMManager<ModelMap>({
+    driver: "sqlite",
+    databaseUrl: "./testx.db",
+    dir: "src",
+    logs: false,
+    modelMap: {} as ModelMap,
+    
+    //schema: schema
+  });
+
+// Migrate -->
+  await orm.migrate()
+
+  const db = orm.DB
+  
+  // Now you can run db.orm.DB with full type setting.
+  db.Profile.insert({ userId: newUser?.id!, meta: { bio: "This is my profile" } });
+
+```
+
+> Note: All methods work regardless of which you chose
+---
 This example uses SQLite, but you can switch to PostgreSQL, MySQL, or MongoDB by changing `driver` and `databaseUrl`.
 
 If you already have a generated schema object, pass it in as `schema` to avoid reading schema files from disk.
