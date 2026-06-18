@@ -58,6 +58,10 @@ type PreloadPath<T> =
   | (keyof T & string)
   | `${Extract<keyof T, string>}.${string}`;
 
+type RelationPath<T> =
+  | (keyof T & string)
+  | `${Extract<keyof T, string>}.${string}`;
+
 type WhereCondition<T> =
   | Partial<T>
   | {
@@ -83,9 +87,6 @@ export class QueryBuilder<T extends Record<string, any>> {
   protected _preloads: string[] = [];
   protected _exclude: string[] = [];
 
-  // Preload result cache: avoids re-fetching the same relation batch
-  // within a single .get() / .first() call when the same relation is
-  // referenced multiple times (e.g. via nested paths).
   private _preloadCache = new Map<string, any[]>();
 
   protected table: string;
@@ -118,6 +119,14 @@ export class QueryBuilder<T extends Record<string, any>> {
   // SELECT
   // ----------------------------------------------------------------
 
+  /**
+   * Specify which columns to select. Defaults to all columns (*).
+   *
+   * @example
+   * const users = await db.User.query()
+   *   .select("id", "name", "email")
+   *   .get();
+   */
   select<K extends keyof T>(...cols: K[]) {
     this._selects = cols as (keyof T | string)[];
     return this;
@@ -127,41 +136,108 @@ export class QueryBuilder<T extends Record<string, any>> {
   // WHERE helpers
   // ----------------------------------------------------------------
 
+  /**
+   * Add an AND WHERE condition.
+   *
+   * @example
+   * const users = await db.User.query()
+   *   .where("status", "=", "active")
+   *   .get();
+   */
   where<K extends keyof T>(column: K, op: OpComparison, value: T[K]) {
     this._where.push({ column: column as string, op, value, kind: "and" });
     return this;
   }
 
+  /**
+   * Add an OR WHERE condition.
+   *
+   * @example
+   * const users = await db.User.query()
+   *   .where("role", "=", "admin")
+   *   .orWhere("role", "=", "tutor")
+   *   .get();
+   */
   orWhere<K extends keyof T>(column: K, op: OpComparison, value: T[K]) {
     this._where.push({ column: column as string, op, value, kind: "or" });
     return this;
   }
 
+  /**
+   * Add a raw SQL WHERE condition. Useful for cross-table conditions
+   * after joins, or anything the typed helpers can't express.
+   *
+   * @example
+   * const results = await db.Assessment.query()
+   *   .join("modules", "modules.id", "=", "assessments.moduleId")
+   *   .whereRaw("modules.trackId = 3")
+   *   .get();
+   */
   whereRaw(sql: string) {
     this._where.push({ raw: sql, kind: "and" });
     return this;
   }
 
+  /**
+   * Filter rows where a column's value is in the given array.
+   *
+   * @example
+   * const cohorts = await db.Cohort.query()
+   *   .whereIn("status", ["active", "upcoming"])
+   *   .get();
+   */
   whereIn<K extends keyof T>(column: K, values: T[K][]) {
     this._where.push({ column: column as string, value: values, kind: "in" });
     return this;
   }
 
+  /**
+   * Filter rows where a column's value is NOT in the given array.
+   *
+   * @example
+   * const cohorts = await db.Cohort.query()
+   *   .whereNotIn("status", ["cancelled", "completed"])
+   *   .get();
+   */
   whereNotIn<K extends keyof T>(column: K, values: T[K][]) {
     this._where.push({ column: column as string, value: values, kind: "notin" });
     return this;
   }
 
+  /**
+   * Filter rows where a column is NULL.
+   *
+   * @example
+   * const enrollments = await db.Enrollment.query()
+   *   .whereNull("completedAt")
+   *   .get();
+   */
   whereNull<K extends keyof T>(column: K) {
     this._where.push({ column: column as string, kind: "null" });
     return this;
   }
 
+  /**
+   * Filter rows where a column is NOT NULL.
+   *
+   * @example
+   * const enrollments = await db.Enrollment.query()
+   *   .whereNotNull("paidAt")
+   *   .get();
+   */
   whereNotNull<K extends keyof T>(column: K) {
     this._where.push({ column: column as string, kind: "notnull" });
     return this;
   }
 
+  /**
+   * Filter rows where a column's value falls between min and max (inclusive).
+   *
+   * @example
+   * const submissions = await db.Submission.query()
+   *   .whereBetween("score", 50, 100)
+   *   .get();
+   */
   whereBetween<K extends keyof T>(column: K, min: T[K], max: T[K]) {
     this._where.push({ column: column as string, value: [min, max], kind: "between" });
     return this;
@@ -171,21 +247,55 @@ export class QueryBuilder<T extends Record<string, any>> {
   // ORDER / LIMIT / OFFSET / PAGINATE
   // ----------------------------------------------------------------
 
+  /**
+   * Order results by a column.
+   *
+   * @example
+   * const users = await db.User.query()
+   *   .orderBy("createdAt", "desc")
+   *   .get();
+   */
   orderBy<K extends keyof T>(column: K, dir: "asc" | "desc" = "asc") {
     this._orderBy.push(`${String(column)} ${dir.toUpperCase()}`);
     return this;
   }
 
+  /**
+   * Limit the number of rows returned.
+   *
+   * @example
+   * const top5 = await db.Enrollment.query()
+   *   .orderBy("overallScore", "desc")
+   *   .limit(5)
+   *   .get();
+   */
   limit(n: number) {
     this._limit = n;
     return this;
   }
 
+  /**
+   * Skip a number of rows before returning results.
+   *
+   * @example
+   * const results = await db.User.query()
+   *   .offset(20)
+   *   .limit(10)
+   *   .get();
+   */
   offset(n: number) {
     this._offset = n;
     return this;
   }
 
+  /**
+   * Shorthand for limit + offset based pagination.
+   *
+   * @example
+   * const page2 = await db.User.query()
+   *   .paginate(2, 10)
+   *   .get();
+   */
   paginate(page: number, perPage: number) {
     this._limit = perPage;
     this._offset = (page - 1) * perPage;
@@ -196,11 +306,27 @@ export class QueryBuilder<T extends Record<string, any>> {
   // JOINS
   // ----------------------------------------------------------------
 
+  /**
+   * Add an INNER JOIN clause.
+   *
+   * @example
+   * const results = await db.Assessment.query()
+   *   .join("modules", "modules.id", "=", "assessments.moduleId")
+   *   .get();
+   */
   join(table: string, onLeft: string, op: string, onRight: string) {
     this._joins.push(`JOIN ${table} ON ${onLeft} ${op} ${onRight}`);
     return this;
   }
 
+  /**
+   * Add a LEFT JOIN clause.
+   *
+   * @example
+   * const results = await db.Cohort.query()
+   *   .leftJoin("enrollments", "enrollments.cohortId", "=", "cohorts.id")
+   *   .get();
+   */
   leftJoin(table: string, onLeft: string, op: string, onRight: string) {
     this._joins.push(`LEFT JOIN ${table} ON ${onLeft} ${op} ${onRight}`);
     return this;
@@ -210,20 +336,53 @@ export class QueryBuilder<T extends Record<string, any>> {
   // EXCLUDE / PRELOAD
   // ----------------------------------------------------------------
 
+  /**
+   * Exclude specific columns from the result. Supports dot notation
+   * to exclude nested relation fields.
+   *
+   * @example
+   * const users = await db.User.query()
+   *   .exclude("password", "enrollment.paymentRef")
+   *   .get();
+   */
   exclude(...columns: (keyof T | `${string}.${string}`)[]) {
     this._exclude.push(...columns.map((c) => String(c)));
     return this;
   }
 
+  /**
+   * Eagerly load a relation alongside the main query results.
+   * Supports dot notation for nested relations.
+   *
+   * @example
+   * const cohorts = await db.Cohort.query()
+   *   .preload("track")
+   *   .preload("enrollments")
+   *   .get();
+   *
+   * // Nested:
+   * const cohorts = await db.Cohort.query()
+   *   .preload("enrollments.user")
+   *   .get();
+   */
   preload<K extends PreloadPath<T>>(relation: K) {
     this._preloads.push(relation as string);
     return this;
   }
 
   // ----------------------------------------------------------------
-  // ILike — case-insensitive LIKE with correct param index tracking
+  // ILike
   // ----------------------------------------------------------------
 
+  /**
+   * Case-insensitive LIKE filter. Uses LOWER()..LIKE on SQLite,
+   * ILIKE on Postgres, and plain LIKE on MySQL.
+   *
+   * @example
+   * const users = await db.User.query()
+   *   .ILike("name", "john")
+   *   .get();
+   */
   ILike<K extends keyof T>(column: K, value: string) {
     const dialect = Dialects[this.orm?.dialect || "sqlite"];
     const paramIndex = this._countParams();
@@ -232,8 +391,6 @@ export class QueryBuilder<T extends Record<string, any>> {
     return this;
   }
 
-  // Count accumulated params so ILike and raw clauses get the right
-  // placeholder index on Postgres.
   private _countParams(): number {
     return this._where.reduce((acc, w) => {
       if (w.kind === "in" || w.kind === "notin") return acc + (w.value?.length ?? 0);
@@ -244,6 +401,185 @@ export class QueryBuilder<T extends Record<string, any>> {
       if (!w.raw) return acc + 1;
       return acc;
     }, 0);
+  }
+
+  // ----------------------------------------------------------------
+  // RELATION TRAVERSAL HELPERS
+  // ----------------------------------------------------------------
+
+  /**
+   * Resolve a relation field name to its schema metadata for the given model.
+   * Returns undefined if the relation doesn't exist.
+   */
+  private _resolveRelation(
+    modelName: string,
+    fieldName: string
+  ): { relation: any; targetSchema: any; currentSchema: any } | undefined {
+    const currentSchema = this.schema[modelName];
+    if (!currentSchema) return undefined;
+    const relation = (currentSchema.relations || []).find(
+      (r: any) => r.fieldName === fieldName
+    );
+    if (!relation) return undefined;
+    const targetSchema = this.schema[relation.targetModel];
+    if (!targetSchema) return undefined;
+    return { relation, targetSchema, currentSchema };
+  }
+
+  /**
+   * Traverse a dot-separated relation path and apply all intermediate
+   * JOIN clauses automatically based on schema relation metadata.
+   * Returns `this` so you can keep chaining `.where()`, `.get()`, etc.
+   *
+   * Use this when you need joins but still want to write the final
+   * WHERE condition yourself.
+   *
+   * @param path - Dot-separated relation field names to traverse,
+   *   e.g. `"module.cohort.enrollment"`.
+   *
+   * @example
+   * const assessments = await db.Assessment.query()
+   *   .throughRelation("module.cohort.enrollment")
+   *   .where("enrollments.userId", "=", session.id)
+   *   .preload("module")
+   *   .get();
+   */
+
+  throughRelation<K extends RelationPath<T>> (path: K) {
+    const parts = path.split(".");
+    let currentModelName = this.modelName;
+
+    for (const part of parts) {
+      const resolved = this._resolveRelation(currentModelName, part);
+      if (!resolved) break;
+
+      const { relation, targetSchema, currentSchema } = resolved;
+      const foreignKey =
+        relation.foreignKey ||
+        relation.meta?.foreignKey ||
+        relation.meta?.foreignkey;
+      const targetTable = targetSchema.table;
+      const currentTable = currentSchema.table;
+      const targetPK = targetSchema.primaryKey || "id";
+      const currentPK = currentSchema.primaryKey || "id";
+
+      const parentHasFK =
+        currentSchema.fields && foreignKey in currentSchema.fields;
+
+      if (parentHasFK) {
+        this._joins.push(
+          `JOIN ${targetTable} ON ${targetTable}.${targetPK} = ${currentTable}.${foreignKey}`
+        );
+      } else {
+        this._joins.push(
+          `JOIN ${targetTable} ON ${targetTable}.${foreignKey} = ${currentTable}.${currentPK}`
+        );
+      }
+
+      currentModelName = relation.targetModel;
+    }
+
+    return this;
+  }
+
+  /**
+   * Traverse a dot-separated relation path, apply all intermediate JOINs
+   * automatically, then filter by a column on the final table.
+   *
+   * Combines `throughRelation` + a WHERE in one call.
+   *
+   * @param path - Dot-separated relation field names, e.g. `"module.cohort.enrollment"`.
+   * @param column - Column name on the final relation's table to filter by.
+   * @param value - Value to match against.
+   *
+   * @example
+   * const assessments = await db.Assessment.query()
+   *   .whereRelated("module.cohort.enrollment", "userId", session.id)
+   *   .preload("module")
+   *   .get();
+   */
+  whereRelated<K extends RelationPath<T>> (path: K, column: K, value: any) {
+    this.throughRelation(path);
+
+    // Walk the path to find the final model's table name
+    const parts = path.split(".");
+    let currentModelName = this.modelName;
+    let finalTable: string | null = null;
+
+    for (const part of parts) {
+      const resolved = this._resolveRelation(currentModelName, part);
+      if (!resolved) break;
+      finalTable = resolved.targetSchema.table;
+      currentModelName = resolved.relation.targetModel;
+    }
+
+    const targetTable = finalTable ?? parts[parts.length - 1] + "s";
+
+    this._where.push({
+      raw: `${targetTable}.${column} = ?`,
+      value,
+      kind: "and",
+    });
+
+    return this;
+  }
+
+  /**
+   * Automatically find the join path between the current model and a
+   * target model by traversing the schema relation graph (BFS), then
+   * apply all intermediate JOINs and filter by a column on the target table.
+   *
+   * You only need to know the target model name — no path required.
+   * Throws if no path exists between the two models.
+   *
+   * @param targetModelName - The model name to relate to, e.g. `"Enrollment"`.
+   * @param column - Column on the target model's table to filter by.
+   * @param value - Value to match against.
+   *
+   * @example
+   * const assessments = await db.Assessment.query()
+   *   .relatedTo("Enrollment", "userId", session.id)
+   *   .preload("module")
+   *   .get();
+   */
+    relatedTo<K extends RelationPath<T>> (targetModelName: K, column: K, value: any) {
+    // BFS: find shortest relation path from current model to target model
+    const queue: { modelName: string; path: string[] }[] = [
+      { modelName: this.modelName, path: [] },
+    ];
+    const visited = new Set<string>();
+    let foundPath: string[] | null = null;
+
+    while (queue.length) {
+      const { modelName, path } = queue.shift()!;
+      if (visited.has(modelName)) continue;
+      visited.add(modelName);
+
+      if (modelName === targetModelName) {
+        foundPath = path;
+        break;
+      }
+
+      const modelSchema = this.schema[modelName];
+      if (!modelSchema) continue;
+
+      for (const relation of modelSchema.relations || []) {
+        if (!visited.has(relation.targetModel)) {
+          queue.push({
+            modelName: relation.targetModel,
+            path: [...path, relation.fieldName],
+          });
+        }
+      }
+    }
+
+    if (!foundPath) {
+      throw new Error(
+        `relatedTo: no relation path found from "${this.modelName}" to "${targetModelName}"`
+      );
+    }
+
+    return this.whereRelated(foundPath.join("."), column, value);
   }
 
   // ----------------------------------------------------------------
@@ -269,7 +605,7 @@ export class QueryBuilder<T extends Record<string, any>> {
         filter[w.column as string] = { $gte: w.value[0], $lte: w.value[1] };
         continue;
       }
-      if (w.raw) continue; // raw SQL not translatable to Mongo — skip
+      if (w.raw) continue;
       filter[w.column as string] = this._mongoOp(w.op!, w.value);
     }
 
@@ -291,7 +627,7 @@ export class QueryBuilder<T extends Record<string, any>> {
   }
 
   // ----------------------------------------------------------------
-  // SQL builder — shared by subclasses via super.buildSql()
+  // SQL builder
   // ----------------------------------------------------------------
 
   protected buildSql(): { sql: string; params: any[] } {
@@ -345,7 +681,6 @@ export class QueryBuilder<T extends Record<string, any>> {
     return { sql, params };
   }
 
-  // Extracted WHERE builder reused by both buildSql and getPaginated
   protected _buildWhereSql(startIndex = 0): { sql: string; params: any[] } {
     if (!this._where.length) return { sql: "", params: [] };
 
@@ -397,9 +732,18 @@ export class QueryBuilder<T extends Record<string, any>> {
   }
 
   // ----------------------------------------------------------------
-  // getPaginated — total count + page of data in 2 queries
+  // getPaginated
   // ----------------------------------------------------------------
 
+  /**
+   * Fetch a paginated result set alongside the total row count.
+   * Runs two queries: one COUNT and one SELECT with LIMIT/OFFSET.
+   *
+   * @example
+   * const { data, total, page, lastPage } = await db.User.query()
+   *   .where("status", "=", "active")
+   *   .getPaginated(1, 20);
+   */
   async getPaginated(
     page: number,
     perPage: number
@@ -432,9 +776,19 @@ export class QueryBuilder<T extends Record<string, any>> {
   }
 
   // ----------------------------------------------------------------
-  // get — main fetch, applies preloads + post-processing
+  // get
   // ----------------------------------------------------------------
 
+  /**
+   * Execute the query and return all matching rows.
+   * Applies preloads, boolean mapping, JSON parsing, and excludes.
+   *
+   * @example
+   * const cohorts = await db.Cohort.query()
+   *   .where("status", "=", "active")
+   *   .preload("track")
+   *   .get();
+   */
   async get(): Promise<T[]> {
     const { sql, params } = this.buildSql();
     const res = await this.exec(sql, params);
@@ -462,9 +816,21 @@ export class QueryBuilder<T extends Record<string, any>> {
   }
 
   // ----------------------------------------------------------------
-  // first — fetch single row
+  // first
   // ----------------------------------------------------------------
 
+  /**
+   * Execute the query and return the first matching row, or null.
+   * Optionally accepts an inline condition (object or raw string).
+   *
+   * @example
+   * const user = await db.User.query()
+   *   .first({ email: "admin@cofoundracademy.ng" });
+   *
+   * const user = await db.User.query()
+   *   .where("status", "=", "active")
+   *   .first();
+   */
   async first(condition?: WhereCondition<T> | string): Promise<T | null> {
     const dialect = Dialects[this.orm?.dialect || "sqlite"];
     const modelSchema = this.schema ? this.schema[this.modelName] : undefined;
@@ -473,7 +839,6 @@ export class QueryBuilder<T extends Record<string, any>> {
     if (condition) {
       if (typeof condition === "string") {
         let sql = condition;
-        // Quote column names in raw string conditions so they are safe
         if (modelCols.length) {
           for (const col of modelCols) {
             const quoted = dialect.quoteIdentifier(col);
@@ -505,9 +870,6 @@ export class QueryBuilder<T extends Record<string, any>> {
   // Preload engine
   // ----------------------------------------------------------------
 
-  // Spawn a child builder of the same runtime class so soft-delete
-  // filters, scopes, etc. defined in subclasses are inherited by
-  // nested preload fetches automatically.
   private spawnChildBuilder(
     targetTable: string,
     targetModelName: string
@@ -544,7 +906,6 @@ export class QueryBuilder<T extends Record<string, any>> {
     const dialect  = Dialects[this.orm?.dialect || "sqlite"];
     const rootPK   = modelSchema.primaryKey || "id";
 
-    // Parse relation metadata from schema
     const relations: RelationMeta[] = (modelSchema.relations || []).map((r: any) => ({
       fieldName:   r.fieldName,
       kind:        r.kind,
@@ -556,7 +917,6 @@ export class QueryBuilder<T extends Record<string, any>> {
 
     if (!relations.length) return rows;
 
-    // Group nested preload paths: "posts.user" → { posts: ["user"] }
     const grouped: Record<string, string[]> = {};
     for (const preload of this._preloads) {
       const parts = preload.split(".");
@@ -567,10 +927,6 @@ export class QueryBuilder<T extends Record<string, any>> {
 
     const hasValues = (arr: any[]) => Array.isArray(arr) && arr.length > 0;
 
-    // ------------------------------------------------------------------
-    // Single-query fetch helpers
-    // ------------------------------------------------------------------
-
     const mongoFetch = async (
       targetTable: string,
       filter: Record<string, any>
@@ -579,9 +935,6 @@ export class QueryBuilder<T extends Record<string, any>> {
       return (await this.exec(cmd, [])).rows || [];
     };
 
-    // Batch-fetch rows from a SQL table where colName IN (ids).
-    // Uses a cache keyed by "table:col:[ids]" to avoid re-fetching
-    // the same batch when the same relation appears at multiple paths.
     const sqlFetch = async (
       targetTable: string,
       colName: string,
@@ -598,10 +951,6 @@ export class QueryBuilder<T extends Record<string, any>> {
       return result;
     };
 
-    // ------------------------------------------------------------------
-    // manytomany — JOIN pivot + target in ONE query instead of two
-    // ------------------------------------------------------------------
-
     const manyToManyJoinFetch = async (
       through: string,
       targetTable: string,
@@ -611,7 +960,6 @@ export class QueryBuilder<T extends Record<string, any>> {
       parentIds: any[]
     ): Promise<{ junctionRows: any[]; relatedRows: any[] }> => {
       if (isMongo) {
-        // MongoDB: still two round-trips (no JOIN support in our shim)
         const junction = await mongoFetch(through, { [foreignKey]: { $in: parentIds } });
         const targetIds = [...new Set(junction.map((j) => j[relatedKey]))];
         if (!hasValues(targetIds)) return { junctionRows: [], relatedRows: [] };
@@ -619,8 +967,6 @@ export class QueryBuilder<T extends Record<string, any>> {
         return { junctionRows: junction, relatedRows };
       }
 
-      // Single JOIN query: SELECT target.*, pivot.foreignKey
-      // This replaces the previous 2-query approach.
       const ph  = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(", ");
       const sql =
         `SELECT ${dialect.quoteIdentifier(targetTable)}.*, ` +
@@ -633,14 +979,11 @@ export class QueryBuilder<T extends Record<string, any>> {
 
       const rows = (await this.exec(sql, parentIds)).rows || [];
 
-      // Synthesise junction rows from the __pivot_fk column so the
-      // existing distribution logic below works unchanged.
       const junctionRows = rows.map((r: any) => ({
         [foreignKey]: r.__pivot_fk,
         [relatedKey]: r[targetPK],
       }));
 
-      // Strip the synthetic column from the actual result rows.
       const relatedRows = rows.map((r: any) => {
         const copy = { ...r };
         delete copy.__pivot_fk;
@@ -650,15 +993,10 @@ export class QueryBuilder<T extends Record<string, any>> {
       return { junctionRows, relatedRows };
     };
 
-    // ------------------------------------------------------------------
-    // fetchRelation — handles all 4 relation kinds
-    // ------------------------------------------------------------------
-
     const fetchRelation = async (
       relation: RelationMeta,
       parentRows: any[]
     ): Promise<any[]> => {
-      // Cycle detection: prevent infinite recursion on circular relations
       const cycleKey = `${this.modelName}:${relation.fieldName}`;
       if (visited.has(cycleKey)) return [];
       visited.add(cycleKey);
@@ -673,7 +1011,6 @@ export class QueryBuilder<T extends Record<string, any>> {
 
       let relatedRows: any[] = [];
 
-      // ---- ONE TO MANY ------------------------------------------------
       if (kind === "onetomany") {
         const parentIds = Array.from(
           new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))
@@ -699,7 +1036,6 @@ export class QueryBuilder<T extends Record<string, any>> {
         });
         parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[rootPK]) || []));
 
-      // ---- MANY TO ONE ------------------------------------------------
       } else if (kind === "manytoone") {
         const fkValues = Array.from(
           new Set(parentRows.map((r) => r[foreignKey]).filter(Boolean))
@@ -720,14 +1056,12 @@ export class QueryBuilder<T extends Record<string, any>> {
         const map = new Map(relatedRows.map((r) => [r[targetPK] as PropertyKey, r]));
         parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[foreignKey]) || null));
 
-      // ---- ONE TO ONE -------------------------------------------------
       } else if (kind === "onetoone") {
         const parentHasFK = parentRows.some((r) =>
           Object.prototype.hasOwnProperty.call(r, foreignKey)
         );
 
         if (!parentHasFK) {
-          // Child holds FK → look up by child.fk = parent.pk
           const parentIds = Array.from(
             new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))
           );
@@ -747,7 +1081,6 @@ export class QueryBuilder<T extends Record<string, any>> {
           const map = new Map(relatedRows.map((r) => [r[foreignKey] as PropertyKey, r]));
           parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[rootPK]) || null));
         } else {
-          // Parent holds FK → look up by parent.fk = child.pk
           const fkValues = Array.from(
             new Set(parentRows.map((r) => r[foreignKey]).filter(Boolean))
           );
@@ -768,7 +1101,6 @@ export class QueryBuilder<T extends Record<string, any>> {
           parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[foreignKey]) || null));
         }
 
-      // ---- MANY TO MANY -----------------------------------------------
       } else if (kind === "manytomany") {
         if (!through || !foreignKey || !relatedKey) return [];
 
@@ -780,7 +1112,6 @@ export class QueryBuilder<T extends Record<string, any>> {
           return [];
         }
 
-        // Single JOIN query replaces 2-query approach
         const { junctionRows, relatedRows: fetchedRows } = await manyToManyJoinFetch(
           through,
           targetSchema.table,
@@ -811,16 +1142,12 @@ export class QueryBuilder<T extends Record<string, any>> {
         parentRows.forEach((r) => (r[relation.fieldName] = parentMap.get(r[rootPK]) || []));
       }
 
-      // ---- NESTED PRELOADS (recursive, same class) --------------------
       const nested = grouped[relation.fieldName];
       if (nested?.length && hasValues(relatedRows)) {
-        // Spawn a child builder of the same runtime class so subclass
-        // features (soft delete, scopes) apply to nested fetches too.
         const child = this.spawnChildBuilder(targetSchema.table, relation.targetModel);
         child._preloads = nested;
         child._exclude  = this._nestedExcludes(relation.fieldName);
 
-        // Propagate soft-delete flags if the subclass supports them
         if ("_withTrashed"  in this) (child as any)._withTrashed  = (this as any)._withTrashed;
         if ("_onlyTrashed"  in this) (child as any)._onlyTrashed  = (this as any)._onlyTrashed;
 
@@ -830,7 +1157,6 @@ export class QueryBuilder<T extends Record<string, any>> {
       return relatedRows;
     };
 
-    // Process each top-level preload
     for (const root of Object.keys(grouped)) {
       const relation = relations.find((r) => r.fieldName === root);
       if (!relation) continue;
@@ -855,16 +1181,16 @@ export class QueryBuilder<T extends Record<string, any>> {
   }
 
   private mapJson(row: any, schemaFields: Record<string, any>) {
-  const out = { ...row } as Record<string, any>;
-  for (const key of Object.keys(schemaFields)) {
-    const meta = schemaFields[key]?.meta;
-    const isJson = !!(meta?.json || meta?.["@json"]);
-    if (isJson && typeof out[key] === "string") {
-      try { out[key] = JSON.parse(out[key]); } catch {}
+    const out = { ...row } as Record<string, any>;
+    for (const key of Object.keys(schemaFields)) {
+      const meta = schemaFields[key]?.meta;
+      const isJson = !!(meta?.json || meta?.["@json"]);
+      if (isJson && typeof out[key] === "string") {
+        try { out[key] = JSON.parse(out[key]); } catch {}
+      }
     }
+    return out;
   }
-  return out;
-}
 
   removeExcluded(obj: any, excludes: string[]): any {
     if (!obj || typeof obj !== "object") return obj;
@@ -877,9 +1203,9 @@ export class QueryBuilder<T extends Record<string, any>> {
         .map((e) => e.slice(key.length + 1));
       if (excludes.includes(key)) continue;
       const val = obj[key];
-      if (Array.isArray(val))              result[key] = val.map((v) => this.removeExcluded(v, nested));
-      else if (val && typeof val === "object") result[key] = this.removeExcluded(val, nested);
-      else                                     result[key] = val;
+      if (Array.isArray(val))                  result[key] = val.map((v) => this.removeExcluded(v, nested));
+      else if (val && typeof val === "object")  result[key] = this.removeExcluded(val, nested);
+      else                                      result[key] = val;
     }
     return result;
   }
