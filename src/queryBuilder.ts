@@ -64,21 +64,29 @@ type WhereCondition<T> =
       [K in keyof T]?: { op: OpComparison; value: T[K] };
     };
 
+// Internal where clause descriptor
+interface WhereClause {
+  raw?: string;
+  column?: string;
+  op?: OpComparison;
+  value?: any;
+  kind?: "and" | "or" | "in" | "notin" | "null" | "notnull" | "between";
+}
+
 export class QueryBuilder<T extends Record<string, any>> {
   protected _selects: (keyof T | string)[] | null = null;
-  protected _where: {
-    raw?: string;
-    column?: keyof T | string;
-    op?: OpComparison;
-    value?: any;
-    kind?: "and" | "or" | "in" | "notin" | "null" | "notnull" | "between";
-  }[] = [];
+  protected _where: WhereClause[] = [];
   protected _orderBy: string[] = [];
   protected _limit: number | null = null;
   protected _offset: number | null = null;
   protected _joins: string[] = [];
   protected _preloads: string[] = [];
   protected _exclude: string[] = [];
+
+  // Preload result cache: avoids re-fetching the same relation batch
+  // within a single .get() / .first() call when the same relation is
+  // referenced multiple times (e.g. via nested paths).
+  private _preloadCache = new Map<string, any[]>();
 
   protected table: string;
   protected exec: ExecFn;
@@ -106,19 +114,18 @@ export class QueryBuilder<T extends Record<string, any>> {
     if (!this.modelName) throw new Error("modelName not found");
   }
 
-  private normalizeModelName(name: string, explicit?: string) {
-    if (explicit && this.schema[explicit]) return explicit;
-    const normalized = name[0].toUpperCase() + name.slice(1);
-    if (this.schema[normalized]) return normalized;
-    const singular = normalized.endsWith("s") ? normalized.slice(0, -1) : normalized;
-    if (this.schema[singular]) return singular;
-    return normalized;
-  }
+  // ----------------------------------------------------------------
+  // SELECT
+  // ----------------------------------------------------------------
 
   select<K extends keyof T>(...cols: K[]) {
     this._selects = cols as (keyof T | string)[];
     return this;
   }
+
+  // ----------------------------------------------------------------
+  // WHERE helpers
+  // ----------------------------------------------------------------
 
   where<K extends keyof T>(column: K, op: OpComparison, value: T[K]) {
     this._where.push({ column: column as string, op, value, kind: "and" });
@@ -160,6 +167,10 @@ export class QueryBuilder<T extends Record<string, any>> {
     return this;
   }
 
+  // ----------------------------------------------------------------
+  // ORDER / LIMIT / OFFSET / PAGINATE
+  // ----------------------------------------------------------------
+
   orderBy<K extends keyof T>(column: K, dir: "asc" | "desc" = "asc") {
     this._orderBy.push(`${String(column)} ${dir.toUpperCase()}`);
     return this;
@@ -181,6 +192,10 @@ export class QueryBuilder<T extends Record<string, any>> {
     return this;
   }
 
+  // ----------------------------------------------------------------
+  // JOINS
+  // ----------------------------------------------------------------
+
   join(table: string, onLeft: string, op: string, onRight: string) {
     this._joins.push(`JOIN ${table} ON ${onLeft} ${op} ${onRight}`);
     return this;
@@ -190,6 +205,10 @@ export class QueryBuilder<T extends Record<string, any>> {
     this._joins.push(`LEFT JOIN ${table} ON ${onLeft} ${op} ${onRight}`);
     return this;
   }
+
+  // ----------------------------------------------------------------
+  // EXCLUDE / PRELOAD
+  // ----------------------------------------------------------------
 
   exclude(...columns: (keyof T | `${string}.${string}`)[]) {
     this._exclude.push(...columns.map((c) => String(c)));
@@ -201,21 +220,36 @@ export class QueryBuilder<T extends Record<string, any>> {
     return this;
   }
 
+  // ----------------------------------------------------------------
+  // ILike — case-insensitive LIKE with correct param index tracking
+  // ----------------------------------------------------------------
+
   ILike<K extends keyof T>(column: K, value: string) {
     const dialect = Dialects[this.orm?.dialect || "sqlite"];
-    // count params already accumulated so placeholder index is correct
-    const paramIndex = this._where.reduce((acc, w) => {
-      if (w.kind === "in" || w.kind === "notin" || w.kind === "between") return acc + (w.value?.length ?? 0);
-      if (w.raw && w.value !== undefined) return acc + (Array.isArray(w.value) ? w.value.length : 1);
-      if (w.kind === "null" || w.kind === "notnull") return acc;
-      return acc + 1;
-    }, 0);
+    const paramIndex = this._countParams();
     const clause = dialect.caseInsensitiveLike(String(column), paramIndex);
     this._where.push({ raw: clause, value: `%${value}%`, kind: "and" });
     return this;
   }
 
-  // ---- MongoDB filter builder ----
+  // Count accumulated params so ILike and raw clauses get the right
+  // placeholder index on Postgres.
+  private _countParams(): number {
+    return this._where.reduce((acc, w) => {
+      if (w.kind === "in" || w.kind === "notin") return acc + (w.value?.length ?? 0);
+      if (w.kind === "between") return acc + 2;
+      if (w.kind === "null" || w.kind === "notnull") return acc;
+      if (w.raw && w.value !== undefined)
+        return acc + (Array.isArray(w.value) ? w.value.length : 1);
+      if (!w.raw) return acc + 1;
+      return acc;
+    }, 0);
+  }
+
+  // ----------------------------------------------------------------
+  // MongoDB helpers
+  // ----------------------------------------------------------------
+
   private buildMongoFilter(): Record<string, any> {
     const filter: Record<string, any> = {};
     const orClauses: Record<string, any>[] = [];
@@ -227,42 +261,43 @@ export class QueryBuilder<T extends Record<string, any>> {
         orClauses.push(clause);
         continue;
       }
-      if (w.kind === "null") { filter[w.column as string] = null; continue; }
+      if (w.kind === "null")    { filter[w.column as string] = null; continue; }
       if (w.kind === "notnull") { filter[w.column as string] = { $ne: null }; continue; }
-      if (w.kind === "in") { filter[w.column as string] = { $in: w.value }; continue; }
-      if (w.kind === "notin") { filter[w.column as string] = { $nin: w.value }; continue; }
-      if (w.kind === "between") { filter[w.column as string] = { $gte: w.value[0], $lte: w.value[1] }; continue; }
-      if (w.raw) {
-        // raw not supported in mongo filter — skip silently
+      if (w.kind === "in")      { filter[w.column as string] = { $in: w.value }; continue; }
+      if (w.kind === "notin")   { filter[w.column as string] = { $nin: w.value }; continue; }
+      if (w.kind === "between") {
+        filter[w.column as string] = { $gte: w.value[0], $lte: w.value[1] };
         continue;
       }
+      if (w.raw) continue; // raw SQL not translatable to Mongo — skip
       filter[w.column as string] = this._mongoOp(w.op!, w.value);
     }
 
-    if (orClauses.length) {
-      filter["$or"] = orClauses;
-    }
-
+    if (orClauses.length) filter["$or"] = orClauses;
     return filter;
   }
 
   private _mongoOp(op: OpComparison, value: any): any {
     switch (op) {
-      case "=": return value;
-      case "!=": return { $ne: value };
-      case ">": return { $gt: value };
-      case ">=": return { $gte: value };
-      case "<": return { $lt: value };
-      case "<=": return { $lte: value };
+      case "=":    return value;
+      case "!=":   return { $ne: value };
+      case ">":    return { $gt: value };
+      case ">=":   return { $gte: value };
+      case "<":    return { $lt: value };
+      case "<=":   return { $lte: value };
       case "LIKE": return { $regex: value.replace(/%/g, ".*"), $options: "i" };
-      default: return value;
+      default:     return value;
     }
   }
 
+  // ----------------------------------------------------------------
+  // SQL builder — shared by subclasses via super.buildSql()
+  // ----------------------------------------------------------------
+
   protected buildSql(): { sql: string; params: any[] } {
     const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
+
     if (isMongo) {
-      // Return a serialised command the exec shim understands
       const mongoCmd = {
         collection: this.table,
         action: "find",
@@ -292,114 +327,57 @@ export class QueryBuilder<T extends Record<string, any>> {
     sql += ` FROM ${dialect.quoteIdentifier(this.table)}`;
     if (this._joins.length) sql += " " + this._joins.join(" ");
 
-    const params: any[] = [];
-    let paramIndex = 0;
-
-    if (this._where.length) {
-      const parts: string[] = [];
-      for (let i = 0; i < this._where.length; i++) {
-        const w = this._where[i];
-        const connector = i === 0 ? "" : w.kind === "or" ? " OR " : " AND ";
-
-        if (w.kind === "null") {
-          parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} IS NULL`);
-          continue;
-        }
-        if (w.kind === "notnull") {
-          parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} IS NOT NULL`);
-          continue;
-        }
-        if (w.kind === "in" || w.kind === "notin") {
-          const placeholders = (w.value as any[]).map(() => {
-            const ph = dialect.formatPlaceholder(paramIndex++);
-            return ph;
-          });
-          params.push(...w.value);
-          const op = w.kind === "in" ? "IN" : "NOT IN";
-          parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} ${op} (${placeholders.join(", ")})`);
-          continue;
-        }
-        if (w.kind === "between") {
-          const ph1 = dialect.formatPlaceholder(paramIndex++);
-          const ph2 = dialect.formatPlaceholder(paramIndex++);
-          params.push(w.value[0], w.value[1]);
-          parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} BETWEEN ${ph1} AND ${ph2}`);
-          continue;
-        }
-        if (w.raw) {
-          if (w.value !== undefined) {
-            if (Array.isArray(w.value)) { params.push(...w.value); paramIndex += w.value.length; }
-            else { params.push(w.value); paramIndex++; }
-          }
-          parts.push(`${connector}${w.raw}`);
-          continue;
-        }
-        const ph = dialect.formatPlaceholder(paramIndex++);
-        params.push(w.value);
-        parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} ${w.op} ${ph}`);
-      }
-      sql += " WHERE " + parts.join("");
-    }
+    const { sql: whereSql, params } = this._buildWhereSql(0);
+    if (whereSql) sql += " WHERE " + whereSql;
 
     if (this._orderBy.length) {
-      sql += " ORDER BY " + this._orderBy.map((c) => {
-        const [col, dir] = c.split(" ");
-        return `${dialect.quoteIdentifier(col)} ${dir || ""}`;
-      }).join(", ");
+      sql += " ORDER BY " + this._orderBy
+        .map((c) => {
+          const [col, dir] = c.split(" ");
+          return `${dialect.quoteIdentifier(col)} ${dir || ""}`;
+        })
+        .join(", ");
     }
 
-    if (this._limit != null) sql += " LIMIT " + this._limit;
+    if (this._limit  != null) sql += " LIMIT "  + this._limit;
     if (this._offset != null) sql += " OFFSET " + this._offset;
 
     return { sql, params };
   }
 
-  async getPaginated(page: number, perPage: number): Promise<{ data: T[]; total: number; page: number; lastPage: number }> {
-    const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
-
-    let total = 0;
-    if (isMongo) {
-      const countCmd = JSON.stringify({ collection: this.table, action: "count", filter: this.buildMongoFilter() });
-      const countRes = await this.exec(countCmd, []);
-      total = countRes.rows?.[0]?.count ?? 0;
-    } else {
-      const dialect = Dialects[this.orm?.dialect || "sqlite"];
-      const { params } = this.buildSql();
-      // Build WHERE-only sql for count
-      let countSql = `SELECT COUNT(*) as count FROM ${dialect.quoteIdentifier(this.table)}`;
-      const whereClauses = this._buildWhereOnly();
-      if (whereClauses.sql) countSql += " WHERE " + whereClauses.sql;
-      const countRes = await this.exec(countSql, whereClauses.params);
-      total = parseInt(countRes.rows?.[0]?.count ?? "0", 10);
-    }
-
-    this.paginate(page, perPage);
-    const data = await this.get();
-    const lastPage = Math.ceil(total / perPage);
-    return { data, total, page, lastPage };
-  }
-
-  private _buildWhereOnly(): { sql: string; params: any[] } {
-    const dialect = Dialects[this.orm?.dialect || "sqlite"];
-    const params: any[] = [];
-    let paramIndex = 0;
+  // Extracted WHERE builder reused by both buildSql and getPaginated
+  protected _buildWhereSql(startIndex = 0): { sql: string; params: any[] } {
     if (!this._where.length) return { sql: "", params: [] };
 
+    const dialect = Dialects[this.orm?.dialect || "sqlite"];
+    const params: any[] = [];
+    let paramIndex = startIndex;
     const parts: string[] = [];
+
     for (let i = 0; i < this._where.length; i++) {
       const w = this._where[i];
       const connector = i === 0 ? "" : w.kind === "or" ? " OR " : " AND ";
-      if (w.kind === "null") { parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} IS NULL`); continue; }
-      if (w.kind === "notnull") { parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} IS NOT NULL`); continue; }
+
+      if (w.kind === "null") {
+        parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} IS NULL`);
+        continue;
+      }
+      if (w.kind === "notnull") {
+        parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} IS NOT NULL`);
+        continue;
+      }
       if (w.kind === "in" || w.kind === "notin") {
-        const phs = (w.value as any[]).map(() => dialect.formatPlaceholder(paramIndex++));
+        const placeholders = (w.value as any[]).map(() => dialect.formatPlaceholder(paramIndex++));
         params.push(...w.value);
-        parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} ${w.kind === "in" ? "IN" : "NOT IN"} (${phs.join(", ")})`);
+        const op = w.kind === "in" ? "IN" : "NOT IN";
+        parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} ${op} (${placeholders.join(", ")})`);
         continue;
       }
       if (w.kind === "between") {
+        const ph1 = dialect.formatPlaceholder(paramIndex++);
+        const ph2 = dialect.formatPlaceholder(paramIndex++);
         params.push(w.value[0], w.value[1]);
-        parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} BETWEEN ${dialect.formatPlaceholder(paramIndex++)} AND ${dialect.formatPlaceholder(paramIndex++)}`);
+        parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} BETWEEN ${ph1} AND ${ph2}`);
         continue;
       }
       if (w.raw) {
@@ -410,26 +388,62 @@ export class QueryBuilder<T extends Record<string, any>> {
         parts.push(`${connector}${w.raw}`);
         continue;
       }
+      const ph = dialect.formatPlaceholder(paramIndex++);
       params.push(w.value);
-      parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} ${w.op} ${dialect.formatPlaceholder(paramIndex++)}`);
+      parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} ${w.op} ${ph}`);
     }
+
     return { sql: parts.join(""), params };
   }
 
-  async get(): Promise<T[]> {
-    const { sql, params } = this.buildSql();
-    const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
+  // ----------------------------------------------------------------
+  // getPaginated — total count + page of data in 2 queries
+  // ----------------------------------------------------------------
 
-    let rows: T[];
+  async getPaginated(
+    page: number,
+    perPage: number
+  ): Promise<{ data: T[]; total: number; page: number; lastPage: number }> {
+    const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
+    let total = 0;
+
     if (isMongo) {
-      const res = await this.exec(sql, params);
-      rows = (res.rows || []) as T[];
+      const countCmd = JSON.stringify({
+        collection: this.table,
+        action: "count",
+        filter: this.buildMongoFilter(),
+      });
+      const countRes = await this.exec(countCmd, []);
+      total = parseInt(countRes.rows?.[0]?.count ?? "0", 10);
     } else {
-      const res = await this.exec(sql, params);
-      rows = (res.rows || []) as T[];
+      const dialect = Dialects[this.orm?.dialect || "sqlite"];
+      const { sql: whereSql, params } = this._buildWhereSql(0);
+      let countSql = `SELECT COUNT(*) as count FROM ${dialect.quoteIdentifier(this.table)}`;
+      if (this._joins.length) countSql += " " + this._joins.join(" ");
+      if (whereSql) countSql += " WHERE " + whereSql;
+      const countRes = await this.exec(countSql, params);
+      total = parseInt(countRes.rows?.[0]?.count ?? "0", 10);
     }
 
-    if (this._preloads.length) rows = await this.applyPreloads(rows);
+    this.paginate(page, perPage);
+    const data = await this.get();
+    const lastPage = Math.ceil(total / perPage) || 1;
+    return { data, total, page, lastPage };
+  }
+
+  // ----------------------------------------------------------------
+  // get — main fetch, applies preloads + post-processing
+  // ----------------------------------------------------------------
+
+  async get(): Promise<T[]> {
+    const { sql, params } = this.buildSql();
+    const res = await this.exec(sql, params);
+    let rows = (res.rows || []) as T[];
+
+    if (this._preloads.length) {
+      this._preloadCache.clear();
+      rows = await this.applyPreloads(rows);
+    }
 
     const schemaFields = this.schema![this.modelName]?.fields ?? {};
     rows = rows.map((r) => this.mapJson(mapBooleans(r, schemaFields), schemaFields)) as T[];
@@ -447,6 +461,10 @@ export class QueryBuilder<T extends Record<string, any>> {
     return rows;
   }
 
+  // ----------------------------------------------------------------
+  // first — fetch single row
+  // ----------------------------------------------------------------
+
   async first(condition?: WhereCondition<T> | string): Promise<T | null> {
     const dialect = Dialects[this.orm?.dialect || "sqlite"];
     const modelSchema = this.schema ? this.schema[this.modelName] : undefined;
@@ -455,10 +473,14 @@ export class QueryBuilder<T extends Record<string, any>> {
     if (condition) {
       if (typeof condition === "string") {
         let sql = condition;
+        // Quote column names in raw string conditions so they are safe
         if (modelCols.length) {
           for (const col of modelCols) {
             const quoted = dialect.quoteIdentifier(col);
-            sql = sql.replace(new RegExp(`(?<![A-Za-z0-9_])${col}(?![A-Za-z0-9_])`, "g"), quoted);
+            sql = sql.replace(
+              new RegExp(`(?<![A-Za-z0-9_"])${col}(?![A-Za-z0-9_"])`, "g"),
+              quoted
+            );
           }
         }
         this._where.push({ raw: sql, kind: "and" });
@@ -478,6 +500,349 @@ export class QueryBuilder<T extends Record<string, any>> {
     const rows = await this.get();
     return rows[0] || null;
   }
+
+  // ----------------------------------------------------------------
+  // Preload engine
+  // ----------------------------------------------------------------
+
+  // Spawn a child builder of the same runtime class so soft-delete
+  // filters, scopes, etc. defined in subclasses are inherited by
+  // nested preload fetches automatically.
+  private spawnChildBuilder(
+    targetTable: string,
+    targetModelName: string
+  ): QueryBuilder<any> {
+    const ChildClass = this.constructor as new (
+      table: string,
+      dir: string,
+      exec: ExecFn,
+      modelName: string,
+      schema: Record<string, any>,
+      orm?: { dialect?: string }
+    ) => QueryBuilder<any>;
+
+    return new ChildClass(
+      targetTable,
+      this.dir,
+      this.exec,
+      targetModelName,
+      this.schema,
+      this.orm
+    );
+  }
+
+  protected async applyPreloads(
+    rows: any[],
+    visited = new Set<string>()
+  ): Promise<any[]> {
+    if (!rows.length) return rows;
+
+    const modelSchema = this.schema![this.modelName];
+    if (!modelSchema) return rows;
+
+    const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
+    const dialect  = Dialects[this.orm?.dialect || "sqlite"];
+    const rootPK   = modelSchema.primaryKey || "id";
+
+    // Parse relation metadata from schema
+    const relations: RelationMeta[] = (modelSchema.relations || []).map((r: any) => ({
+      fieldName:   r.fieldName,
+      kind:        r.kind,
+      targetModel: r.targetModel,
+      foreignKey:  r.foreignKey  || r.meta?.foreignKey  || r.meta?.foreignkey,
+      relatedKey:  r.relatedKey  || r.meta?.relatedKey  || r.meta?.relatedkey,
+      through:     r.through     || r.meta?.through,
+    }));
+
+    if (!relations.length) return rows;
+
+    // Group nested preload paths: "posts.user" → { posts: ["user"] }
+    const grouped: Record<string, string[]> = {};
+    for (const preload of this._preloads) {
+      const parts = preload.split(".");
+      const root  = parts.shift()!;
+      if (!grouped[root]) grouped[root] = [];
+      if (parts.length) grouped[root].push(parts.join("."));
+    }
+
+    const hasValues = (arr: any[]) => Array.isArray(arr) && arr.length > 0;
+
+    // ------------------------------------------------------------------
+    // Single-query fetch helpers
+    // ------------------------------------------------------------------
+
+    const mongoFetch = async (
+      targetTable: string,
+      filter: Record<string, any>
+    ): Promise<any[]> => {
+      const cmd = JSON.stringify({ collection: targetTable, action: "find", filter });
+      return (await this.exec(cmd, [])).rows || [];
+    };
+
+    // Batch-fetch rows from a SQL table where colName IN (ids).
+    // Uses a cache keyed by "table:col:[ids]" to avoid re-fetching
+    // the same batch when the same relation appears at multiple paths.
+    const sqlFetch = async (
+      targetTable: string,
+      colName: string,
+      ids: any[]
+    ): Promise<any[]> => {
+      const cacheKey = `${targetTable}:${colName}:${ids.sort().join(",")}`;
+      if (this._preloadCache.has(cacheKey)) {
+        return this._preloadCache.get(cacheKey)!;
+      }
+      const ph  = ids.map((_, i) => dialect.formatPlaceholder(i)).join(", ");
+      const sql = `SELECT * FROM ${dialect.quoteIdentifier(targetTable)} WHERE ${dialect.quoteIdentifier(colName)} IN (${ph})`;
+      const result = (await this.exec(sql, ids)).rows || [];
+      this._preloadCache.set(cacheKey, result);
+      return result;
+    };
+
+    // ------------------------------------------------------------------
+    // manytomany — JOIN pivot + target in ONE query instead of two
+    // ------------------------------------------------------------------
+
+    const manyToManyJoinFetch = async (
+      through: string,
+      targetTable: string,
+      targetPK: string,
+      foreignKey: string,
+      relatedKey: string,
+      parentIds: any[]
+    ): Promise<{ junctionRows: any[]; relatedRows: any[] }> => {
+      if (isMongo) {
+        // MongoDB: still two round-trips (no JOIN support in our shim)
+        const junction = await mongoFetch(through, { [foreignKey]: { $in: parentIds } });
+        const targetIds = [...new Set(junction.map((j) => j[relatedKey]))];
+        if (!hasValues(targetIds)) return { junctionRows: [], relatedRows: [] };
+        const relatedRows = await mongoFetch(targetTable, { [targetPK]: { $in: targetIds } });
+        return { junctionRows: junction, relatedRows };
+      }
+
+      // Single JOIN query: SELECT target.*, pivot.foreignKey
+      // This replaces the previous 2-query approach.
+      const ph  = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(", ");
+      const sql =
+        `SELECT ${dialect.quoteIdentifier(targetTable)}.*, ` +
+        `${dialect.quoteIdentifier(through)}.${dialect.quoteIdentifier(foreignKey)} AS __pivot_fk ` +
+        `FROM ${dialect.quoteIdentifier(targetTable)} ` +
+        `INNER JOIN ${dialect.quoteIdentifier(through)} ` +
+        `ON ${dialect.quoteIdentifier(through)}.${dialect.quoteIdentifier(relatedKey)} = ` +
+        `${dialect.quoteIdentifier(targetTable)}.${dialect.quoteIdentifier(targetPK)} ` +
+        `WHERE ${dialect.quoteIdentifier(through)}.${dialect.quoteIdentifier(foreignKey)} IN (${ph})`;
+
+      const rows = (await this.exec(sql, parentIds)).rows || [];
+
+      // Synthesise junction rows from the __pivot_fk column so the
+      // existing distribution logic below works unchanged.
+      const junctionRows = rows.map((r: any) => ({
+        [foreignKey]: r.__pivot_fk,
+        [relatedKey]: r[targetPK],
+      }));
+
+      // Strip the synthetic column from the actual result rows.
+      const relatedRows = rows.map((r: any) => {
+        const copy = { ...r };
+        delete copy.__pivot_fk;
+        return copy;
+      });
+
+      return { junctionRows, relatedRows };
+    };
+
+    // ------------------------------------------------------------------
+    // fetchRelation — handles all 4 relation kinds
+    // ------------------------------------------------------------------
+
+    const fetchRelation = async (
+      relation: RelationMeta,
+      parentRows: any[]
+    ): Promise<any[]> => {
+      // Cycle detection: prevent infinite recursion on circular relations
+      const cycleKey = `${this.modelName}:${relation.fieldName}`;
+      if (visited.has(cycleKey)) return [];
+      visited.add(cycleKey);
+
+      const targetSchema = this.schema![relation.targetModel];
+      if (!targetSchema) return [];
+
+      const targetPK  = targetSchema.primaryKey || "id";
+      const { kind, through } = relation;
+      const foreignKey = relation.foreignKey as string;
+      const relatedKey = relation.relatedKey as string;
+
+      let relatedRows: any[] = [];
+
+      // ---- ONE TO MANY ------------------------------------------------
+      if (kind === "onetomany") {
+        const parentIds = Array.from(
+          new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))
+        );
+        if (!hasValues(parentIds)) {
+          parentRows.forEach((r) => (r[relation.fieldName] = []));
+          return [];
+        }
+
+        relatedRows = isMongo
+          ? await mongoFetch(targetSchema.table, { [foreignKey]: { $in: parentIds } })
+          : await sqlFetch(targetSchema.table, foreignKey, parentIds);
+
+        relatedRows = relatedRows.map((r) =>
+          this.cleanRow(r, targetSchema, relation.fieldName)
+        );
+
+        const map = new Map<any, any[]>();
+        relatedRows.forEach((r) => {
+          const key = r[foreignKey];
+          if (!map.has(key)) map.set(key, []);
+          map.get(key)!.push(r);
+        });
+        parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[rootPK]) || []));
+
+      // ---- MANY TO ONE ------------------------------------------------
+      } else if (kind === "manytoone") {
+        const fkValues = Array.from(
+          new Set(parentRows.map((r) => r[foreignKey]).filter(Boolean))
+        );
+        if (!hasValues(fkValues)) {
+          parentRows.forEach((r) => (r[relation.fieldName] = null));
+          return [];
+        }
+
+        relatedRows = isMongo
+          ? await mongoFetch(targetSchema.table, { [targetPK]: { $in: fkValues } })
+          : await sqlFetch(targetSchema.table, targetPK, fkValues);
+
+        relatedRows = relatedRows.map((r) =>
+          this.cleanRow(r, targetSchema, relation.fieldName)
+        );
+
+        const map = new Map(relatedRows.map((r) => [r[targetPK] as PropertyKey, r]));
+        parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[foreignKey]) || null));
+
+      // ---- ONE TO ONE -------------------------------------------------
+      } else if (kind === "onetoone") {
+        const parentHasFK = parentRows.some((r) =>
+          Object.prototype.hasOwnProperty.call(r, foreignKey)
+        );
+
+        if (!parentHasFK) {
+          // Child holds FK → look up by child.fk = parent.pk
+          const parentIds = Array.from(
+            new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))
+          );
+          if (!hasValues(parentIds)) {
+            parentRows.forEach((r) => (r[relation.fieldName] = null));
+            return [];
+          }
+
+          relatedRows = isMongo
+            ? await mongoFetch(targetSchema.table, { [foreignKey]: { $in: parentIds } })
+            : await sqlFetch(targetSchema.table, foreignKey, parentIds);
+
+          relatedRows = relatedRows.map((r) =>
+            this.cleanRow(r, targetSchema, relation.fieldName)
+          );
+
+          const map = new Map(relatedRows.map((r) => [r[foreignKey] as PropertyKey, r]));
+          parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[rootPK]) || null));
+        } else {
+          // Parent holds FK → look up by parent.fk = child.pk
+          const fkValues = Array.from(
+            new Set(parentRows.map((r) => r[foreignKey]).filter(Boolean))
+          );
+          if (!hasValues(fkValues)) {
+            parentRows.forEach((r) => (r[relation.fieldName] = null));
+            return [];
+          }
+
+          relatedRows = isMongo
+            ? await mongoFetch(targetSchema.table, { [targetPK]: { $in: fkValues } })
+            : await sqlFetch(targetSchema.table, targetPK, fkValues);
+
+          relatedRows = relatedRows.map((r) =>
+            this.cleanRow(r, targetSchema, relation.fieldName)
+          );
+
+          const map = new Map(relatedRows.map((r) => [r[targetPK] as PropertyKey, r]));
+          parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[foreignKey]) || null));
+        }
+
+      // ---- MANY TO MANY -----------------------------------------------
+      } else if (kind === "manytomany") {
+        if (!through || !foreignKey || !relatedKey) return [];
+
+        const parentIds = Array.from(
+          new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))
+        );
+        if (!hasValues(parentIds)) {
+          parentRows.forEach((r) => (r[relation.fieldName] = []));
+          return [];
+        }
+
+        // Single JOIN query replaces 2-query approach
+        const { junctionRows, relatedRows: fetchedRows } = await manyToManyJoinFetch(
+          through,
+          targetSchema.table,
+          targetPK,
+          foreignKey,
+          relatedKey,
+          parentIds
+        );
+
+        if (!hasValues(fetchedRows)) {
+          parentRows.forEach((r) => (r[relation.fieldName] = []));
+          return [];
+        }
+
+        relatedRows = fetchedRows.map((r) =>
+          this.cleanRow(r, targetSchema, relation.fieldName)
+        );
+
+        const targetMap = new Map(relatedRows.map((r) => [r[targetPK] as PropertyKey, r]));
+        const parentMap = new Map<any, any[]>();
+
+        junctionRows.forEach((j) => {
+          const arr = parentMap.get(j[foreignKey]) || [];
+          if (targetMap.has(j[relatedKey])) arr.push(targetMap.get(j[relatedKey]));
+          parentMap.set(j[foreignKey], arr);
+        });
+
+        parentRows.forEach((r) => (r[relation.fieldName] = parentMap.get(r[rootPK]) || []));
+      }
+
+      // ---- NESTED PRELOADS (recursive, same class) --------------------
+      const nested = grouped[relation.fieldName];
+      if (nested?.length && hasValues(relatedRows)) {
+        // Spawn a child builder of the same runtime class so subclass
+        // features (soft delete, scopes) apply to nested fetches too.
+        const child = this.spawnChildBuilder(targetSchema.table, relation.targetModel);
+        child._preloads = nested;
+        child._exclude  = this._nestedExcludes(relation.fieldName);
+
+        // Propagate soft-delete flags if the subclass supports them
+        if ("_withTrashed"  in this) (child as any)._withTrashed  = (this as any)._withTrashed;
+        if ("_onlyTrashed"  in this) (child as any)._onlyTrashed  = (this as any)._onlyTrashed;
+
+        await child.applyPreloads(relatedRows, visited);
+      }
+
+      return relatedRows;
+    };
+
+    // Process each top-level preload
+    for (const root of Object.keys(grouped)) {
+      const relation = relations.find((r) => r.fieldName === root);
+      if (!relation) continue;
+      await fetchRelation(relation, rows);
+    }
+
+    return rows.map((r) => this.applyExcludes(r));
+  }
+
+  // ----------------------------------------------------------------
+  // Utility helpers
+  // ----------------------------------------------------------------
 
   private cleanRow(row: any, targetSchema: any, root?: string) {
     let clean = mapBooleans(row, targetSchema.fields || {});
@@ -500,187 +865,20 @@ export class QueryBuilder<T extends Record<string, any>> {
     return out;
   }
 
-  private async applyPreloads(rows: any[], visited = new Set<string>()): Promise<any[]> {
-    if (!rows.length) return rows;
-    const modelSchema = this.schema![this.modelName];
-    if (!modelSchema) return rows;
-
-    const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
-    const dialect = Dialects[this.orm?.dialect || "sqlite"];
-    const rootPK = modelSchema.primaryKey;
-
-    const relations: RelationMeta[] = modelSchema.relations.map((r: any) => ({
-      fieldName: r.fieldName,
-      kind: r.kind,
-      targetModel: r.targetModel,
-      foreignKey: r.foreignKey || r.meta?.foreignKey || r.meta?.foreignkey,
-      relatedKey: r.relatedKey || r.meta?.relatedKey || r.meta?.relatedkey,
-      through: r.through || r.meta?.through,
-    }));
-
-    if (!relations.length) return rows;
-
-    const grouped: Record<string, string[]> = {};
-    for (const preload of this._preloads) {
-      const parts = preload.split(".");
-      const root = parts.shift()!;
-      if (!grouped[root]) grouped[root] = [];
-      if (parts.length) grouped[root].push(parts.join("."));
-    }
-
-    const hasValues = (arr: any[]) => Array.isArray(arr) && arr.length > 0;
-
-    const mongoFetch = async (targetTable: string, filter: Record<string, any>) => {
-      const cmd = JSON.stringify({ collection: targetTable, action: "find", filter });
-      return (await this.exec(cmd, [])).rows || [];
-    };
-
-    const sqlFetch = async (targetTable: string, colName: string, ids: any[]) => {
-      const ph = ids.map((_, i) => dialect.formatPlaceholder(i)).join(",");
-      const sql = `SELECT * FROM ${dialect.quoteIdentifier(targetTable)} WHERE ${dialect.quoteIdentifier(colName)} IN (${ph})`;
-      return (await this.exec(sql, ids)).rows || [];
-    };
-
-    const fetchRelation = async (relation: RelationMeta, parentRows: any[]) => {
-  const cycleKey = `${this.modelName}:${relation.fieldName}`;
-  if (visited.has(cycleKey)) return [];
-  visited.add(cycleKey);
-
-  const targetSchema = this.schema![relation.targetModel];
-  if (!targetSchema) return [];
-
-  const targetPK = targetSchema.primaryKey || "id";
-  const { kind, through } = relation;
-  const foreignKey = relation.foreignKey as string;
-  const relatedKey = relation.relatedKey as string;
-  let relatedRows: any[] = [];
-
-  if (kind === "onetomany") {
-    const parentIds = Array.from(new Set(parentRows.map((r) => r[rootPK]).filter(Boolean)));
-    if (!hasValues(parentIds)) { parentRows.forEach((r) => (r[relation.fieldName] = [])); return []; }
-
-    relatedRows = isMongo
-      ? await mongoFetch(targetSchema.table, { [foreignKey]: { $in: parentIds } })
-      : await sqlFetch(targetSchema.table, foreignKey, parentIds);
-
-    relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
-    const map = new Map<any, any[]>();
-    relatedRows.forEach((r) => {
-      const key = r[foreignKey];
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(r);
-    });
-    parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[rootPK]) || []));
-
-  } else if (kind === "manytoone") {
-    const fkValues = Array.from(new Set(parentRows.map((r) => r[foreignKey]).filter(Boolean)));
-    if (!hasValues(fkValues)) { parentRows.forEach((r) => (r[relation.fieldName] = null)); return []; }
-
-    relatedRows = isMongo
-      ? await mongoFetch(targetSchema.table, { [targetPK]: { $in: fkValues } })
-      : await sqlFetch(targetSchema.table, targetPK, fkValues);
-
-    relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
-    const map = new Map(relatedRows.map((r) => [r[targetPK] as PropertyKey, r]));
-    parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[foreignKey]) || null));
-
-  } else if (kind === "onetoone") {
-    const parentHasFK = parentRows.some((r) => Object.prototype.hasOwnProperty.call(r, foreignKey));
-
-    if (!parentHasFK) {
-      const parentIds = Array.from(new Set(parentRows.map((r) => r[rootPK]).filter(Boolean)));
-      if (!hasValues(parentIds)) { parentRows.forEach((r) => (r[relation.fieldName] = null)); return []; }
-
-      relatedRows = isMongo
-        ? await mongoFetch(targetSchema.table, { [foreignKey]: { $in: parentIds } })
-        : await sqlFetch(targetSchema.table, foreignKey, parentIds);
-
-      relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
-      const map = new Map(relatedRows.map((r) => [r[foreignKey] as PropertyKey, r]));
-      parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[rootPK]) || null));
-    } else {
-      const fkValues = Array.from(new Set(parentRows.map((r) => r[foreignKey]).filter(Boolean)));
-      if (!hasValues(fkValues)) { parentRows.forEach((r) => (r[relation.fieldName] = null)); return []; }
-
-      relatedRows = isMongo
-        ? await mongoFetch(targetSchema.table, { [targetPK]: { $in: fkValues } })
-        : await sqlFetch(targetSchema.table, targetPK, fkValues);
-
-      relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
-      const map = new Map(relatedRows.map((r) => [r[targetPK] as PropertyKey, r]));
-      parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[foreignKey]) || null));
-    }
-
-  } else if (kind === "manytomany") {
-    if (!through || !foreignKey || !relatedKey) return [];
-
-    const parentIds = Array.from(new Set(parentRows.map((r) => r[rootPK]).filter(Boolean)));
-    if (!hasValues(parentIds)) { parentRows.forEach((r) => (r[relation.fieldName] = [])); return []; }
-
-    let junction: any[] = [];
-    if (isMongo) {
-      junction = await mongoFetch(through, { [foreignKey]: { $in: parentIds } });
-    } else {
-      const ph = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(",");
-      const jSql = `SELECT * FROM ${dialect.quoteIdentifier(through)} WHERE ${dialect.quoteIdentifier(foreignKey)} IN (${ph})`;
-      junction = (await this.exec(jSql, parentIds)).rows || [];
-    }
-
-    const targetIds = [...new Set(junction.map((j) => j[relatedKey]))];
-    if (!hasValues(targetIds)) { parentRows.forEach((r) => (r[relation.fieldName] = [])); return []; }
-
-    relatedRows = isMongo
-      ? await mongoFetch(targetSchema.table, { [targetPK]: { $in: targetIds } })
-      : await sqlFetch(targetSchema.table, targetPK, targetIds);
-
-    relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
-    const targetMap = new Map(relatedRows.map((r) => [r[targetPK] as PropertyKey, r]));
-    const parentMap = new Map<any, any[]>();
-    junction.forEach((j) => {
-      const arr = parentMap.get(j[foreignKey]) || [];
-      if (targetMap.has(j[relatedKey])) arr.push(targetMap.get(j[relatedKey]));
-      parentMap.set(j[foreignKey], arr);
-    });
-    parentRows.forEach((r) => (r[relation.fieldName] = parentMap.get(r[rootPK]) || []));
-  }
-
-  const nested = grouped[relation.fieldName];
-  if (nested?.length && hasValues(relatedRows)) {
-    const qb = new QueryBuilder(
-      targetSchema.table,
-      this.dir,
-      this.exec,
-      relation.targetModel,
-      this.schema,
-      this.orm
-    );
-    qb._preloads = nested;
-    qb._exclude = this._nestedExcludes(relation.fieldName);
-    await qb.applyPreloads(relatedRows, visited);
-  }
-
-  return relatedRows;
-};
-    for (const root of Object.keys(grouped)) {
-      const relation = relations.find((r) => r.fieldName === root);
-      if (!relation) continue;
-      await fetchRelation(relation, rows);
-    }
-
-    return rows.map((r) => this.applyExcludes(r));
-  }
-
   removeExcluded(obj: any, excludes: string[]): any {
     if (!obj || typeof obj !== "object") return obj;
     if (Array.isArray(obj)) return obj.map((item) => this.removeExcluded(item, excludes));
+
     const result: Record<string, any> = {};
     for (const key of Object.keys(obj)) {
-      const nested = excludes.filter((e) => e.startsWith(key + ".")).map((e) => e.slice(key.length + 1));
+      const nested = excludes
+        .filter((e) => e.startsWith(key + "."))
+        .map((e) => e.slice(key.length + 1));
       if (excludes.includes(key)) continue;
       const val = obj[key];
-      if (Array.isArray(val)) result[key] = val.map((v) => this.removeExcluded(v, nested));
+      if (Array.isArray(val))              result[key] = val.map((v) => this.removeExcluded(v, nested));
       else if (val && typeof val === "object") result[key] = this.removeExcluded(val, nested);
-      else result[key] = val;
+      else                                     result[key] = val;
     }
     return result;
   }
