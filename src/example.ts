@@ -378,7 +378,7 @@ await orm.transaction(async (trx) => {
  const newPost = await db.Post.insert({ title: "Hello Boys", userId: 2, meta: { tags: ["hello", "world"] } });
   console.log("newPost: ", newPost);
   console.log("post with meta: ", await db.Post.query()
-  // .relatedTo("user", "id", 2)
+  // .relatedTo("User", "email", 2)
   .preload("user").first(`id = ${newPost?.id}`));
 
   console.log("=== Done ===");
