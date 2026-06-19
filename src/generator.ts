@@ -4,7 +4,7 @@
  * Usage:
  *   import generateSchema from './generator';
  *   await generateSchema("src");
- */
+ */ 
 import fs from "fs";
 import path from "node:path";
 import { createHash } from "crypto";

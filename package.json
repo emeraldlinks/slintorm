@@ -29,11 +29,14 @@
     "type": "git",
     "url": "git+https://github.com/emeraldlinks/slintorm.git"
   },
+  "bin": {
+    "slintorm": "./dist/bin/cli.js"
+  },
   "scripts": {
     "build": "tsc && tsc-alias",
     "prepare": "npm run build",
-    "test": "tsx src/example.ts"
-    
+    "test": "tsx src/example.ts",
+    "cli": "tsx bin/cli.ts"    
   },
   "dependencies": {
     "mongodb": "^6.20.0",

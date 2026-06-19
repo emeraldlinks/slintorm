@@ -28,6 +28,7 @@ meta?: Record<string, any>;
 interface User {
   // @index;auto;comment:primary key
   id?: number;
+  dc?: string
   // @nullable;length:100;comment:First name
   firstName?: string;
   // @length:100;nullable;comment:Last name
