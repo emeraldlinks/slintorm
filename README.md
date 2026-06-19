@@ -309,6 +309,83 @@ const userWithRelations = await Users.query()
   .preload("posts")
   .preload("profile")
   .first("id = 2");
+
+//Accessing distant relationship/connection with joins
+     const assessments = await db.Assessment.query()
+  .join("modules", "modules.id", "=", "assessments.moduleId")
+  .join("cohorts", "cohorts.trackId", "=", "modules.trackId")
+  .join("enrollments", "enrollments.cohortId", "=", "cohorts.id")
+  .whereRaw(`enrollments.userId = ${session.id}`)
+  .preload("module")
+  .get();
+  
+
+  // All of the joins can be shortened with the relatedTo query method
+  const assessments2 = await db.Assessment.query()
+  .relatedTo("Enrollment", "userId", session.id)
+  .preload("module")
+  .get();
+
+
+
+const batched = await orm.batch([
+  { sql: "INSERT INTO users (name) VALUES (?)", params: ["Joe"] },
+  { sql: "INSERT INTO profile (userId) VALUES (?)", params: [1] },
+])
+
+
+
+  /**
+   * Traverse a dot-separated relation path, apply all intermediate JOINs
+   * automatically, then filter by a column on the final table.
+   *
+   * Combines `throughRelation` + a WHERE in one call.
+   *
+   * @param path - Dot-separated relation field names, e.g. `"module.cohort.enrollment"`.
+   * @param column - Column name on the final relation's table to filter by.
+   * @param value - Value to match against.
+   */
+   const assessments = await db.Assessment.query()
+  .whereRelated("module.cohort.enrollment", "userId", session.id)
+  .preload("module")
+  .get();
+
+
+  /**
+   * Automatically find the join path between the current model and a
+   * target model by traversing the schema relation graph (BFS), then
+   * apply all intermediate JOINs and filter by a column on the target table.
+   *
+   * You only need to know the target model name — no path required.
+   * Throws if no path exists between the two models.
+   *
+   * @param targetModelName - The model name to relate to, e.g. `"Enrollment"`.
+   * @param column - Column on the target model's table to filter by.
+   * @param value - Value to match against.
+   */
+   const assessments = await db.Assessment.query()
+  .relatedTo("Enrollment", "userId", session.id)
+  .preload("module")
+  .get();
+
+
+  /**
+   * Traverse a dot-separated relation path and apply all intermediate
+   * JOIN clauses automatically based on schema relation metadata.
+   * Returns `this` so you can keep chaining `.where()`, `.get()`, etc.
+   *
+   * Use this when you need joins but still want to write the final
+   * WHERE condition yourself.
+   *
+   * @param path - Dot-separated relation field names to traverse,
+   *   e.g. `"module.cohort.enrollment"`.
+   */
+   const assessments = await db.Assessment.query()
+  .throughRelation("module.cohort.enrollment")
+  .where("enrollments.userId", "=", session.id)
+  .preload("module")
+  .get();
+
 ```
 
 ---
