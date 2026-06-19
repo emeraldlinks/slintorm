@@ -369,10 +369,10 @@ await orm.transaction(async (trx) => {
   await trx.exec("INSERT INTO profile (userId) VALUES (?)", [1])
 })
 
-const bhhsu = await orm.batch([
-  { sql: "INSERT INTO users (name) VALUES (?)", params: ["Joe"] },
-  { sql: "INSERT INTO profile (userId) VALUES (?)", params: [1] },
-])
+// const bhhsu = await orm.batch([
+//   { sql: "INSERT INTO users (name) VALUES (?)", params: ["Joe"] },
+//   { sql: "INSERT INTO profile (userId) VALUES (?)", params: [1] },
+// ])
 
 // console.log("batch insert result:", bhhsu)
 
@@ -380,9 +380,9 @@ const bhhsu = await orm.batch([
   console.log("newPost: ", newPost);
   console.log("post with meta: ") 
     const xdpp = await db.Post.query()
-  .whereRelated("user.profile", "id", 2)
-  .relatedTo("User", "email", 2)
-  .throughRelation("user.profile")
+  // .whereRelated("user.profile", "id", 2)
+  // .relatedTo("User", "email", 2)
+  // .throughRelation("user.profile")
   .preload("user").get();
 
   console.log("=== Done ===");

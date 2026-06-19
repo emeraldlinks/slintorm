@@ -12,6 +12,12 @@
           "comment": "primary key"
         }
       },
+      "dc": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
       "firstName": {
         "type": "string | undefined",
         "originalType": "string",

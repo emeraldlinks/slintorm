@@ -1,10 +1,11 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: 154f5ce92b4b7fbc
-// Source Hash: cac5eeeab724fe89
+// Schema Hash: d6369ea34949f659
+// Source Hash: cb867ea07e5bd6be
 
 export interface User {
   id?: number;
+  dc?: string;
   firstName?: string;
   name: string;
   lastname?: string;
@@ -124,6 +125,12 @@ export const schema = {
           "auto": true,
           "comment": "primary key"
         }
+      },
+      "dc": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
       },
       "firstName": {
         "type": "string | undefined",

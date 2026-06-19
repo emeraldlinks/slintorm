@@ -428,10 +428,13 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
     /** Ensures the table exists and is up-to-date */
     async function ensure(item?: Partial<T>) {
-      const schemaForTable = buildSchemaForItem(item);
-      await migrator.ensureTable(tableName, schemaForTable || {}, schemaForTable?.relations);
-    }
-  
+  const schemaForTable = buildSchemaForItem(item);
+  await migrator.ensureTable(
+    tableName,
+    schemaForTable?.fields || {},
+    schemaForTable?.relations
+  );
+}
 
     /**
      * Builds a WHERE clause for SQL queries
