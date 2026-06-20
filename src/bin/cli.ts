@@ -575,7 +575,7 @@ async function loadGeneratedSchema(dir: string): Promise<Record<string, any> | n
 async function resolveSchemaGenerator(): Promise<(dir: string) => Promise<Record<string, any>>> {
   try {
     const mod = await import(pathToFileURL(
-      path.join(process.cwd(), "node_modules", "slintorm", "dist", "generator.js")
+      path.join(process.cwd(), "node_modules", "slintorm", "dist", "src", "generator.js")
     ).href);
     return mod.default;
   } catch {
@@ -632,7 +632,7 @@ async function cmdGenerate(cfg: ORMConfig) {
 
   try {
     const mod = await import(pathToFileURL(
-      path.join(process.cwd(), "node_modules", "slintorm", "dist", "generator.js")
+      path.join(process.cwd(), "node_modules", "slintorm", "dist", "src", "generator.js")
     ).href);
     generateSchema = mod.default;
   } catch {
