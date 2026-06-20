@@ -2,6 +2,7 @@ import { DBAdapter } from "./dbAdapter.js";
 import { createModelFactory, type ModelAPI } from "./model.js";
 import generateSchema from "./generator.js";
 import { Migrator, type SchemaModel } from "./migrator.js";
+import { runMigrations, snapshotCurrentGeneratedSchema } from "./migration-history.js";
 import { wrapExec } from "./db-error.js";          // ← ADD THIS
 import path from "node:path";
 import type { DBDriver, ExecFn } from "./types.js";
@@ -130,16 +131,23 @@ export default class ORMManager<
   async migrate() {
     if (!schemaGenerated) {
       schemaGenerated = true;
+      await snapshotCurrentGeneratedSchema({
+        exec: this.adapter.exec,
+        driver: this.cfg.driver,
+        dir: this.cfg.dir || "src",
+      });
       const schemaPath = getPaths(this.cfg.dir);
       const schema =
         this.cfg.schema ?? (await generateSchema(schemaPath));
       if (!this.cfg.schema) {
         console.log("✅ Schema generated:", schemaPath);
       }
-      const sqlDriver = resolveDriver(this.adapter.driver);
-      // exec is already wrapped — pass it directly, no extra bind needed
-      const migrator = new Migrator(this.adapter.exec, sqlDriver);
-      await migrator.migrateSchema(schema as Record<string, SchemaModel>);
+      await runMigrations({
+        exec: this.adapter.exec,
+        driver: this.cfg.driver,
+        dir: this.cfg.dir || "src",
+        schema: schema as Record<string, SchemaModel>,
+      });
     }
   }
 

@@ -1,0 +1,18 @@
+{
+  "name": "Profile__20bb286d3ca9",
+  "modelName": "Profile",
+  "tableName": "profile",
+  "schemaHash": "20bb286d3ca9268028d49689b49a01d39d5bccf81a106a3e518e311ffd6dd80c",
+  "batch": 1,
+  "appliedAt": "2026-06-20T14:18:19.495Z",
+  "fields": [
+    "id",
+    "user",
+    "userId",
+    "meta",
+    "createdAt",
+    "updatedAt",
+    "deletedAt",
+    "gender"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "Post__3759dd9284a5",
+  "modelName": "Post",
+  "tableName": "post",
+  "schemaHash": "3759dd9284a5f85a6b078414cde8bbf9034638de6a1c65a470eb2ec7f95e9045",
+  "batch": 1,
+  "appliedAt": "2026-06-20T14:18:19.484Z",
+  "fields": [
+    "id",
+    "title",
+    "body",
+    "userId",
+    "user",
+    "meta",
+    "createdAt",
+    "updatedAt",
+    "deletedAt",
+    "status"
+  ]
+}

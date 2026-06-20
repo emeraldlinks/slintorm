@@ -1,21 +1,40 @@
-import { Game } from "./_tmp_runtime_model.js";
-import ORMManager from "./index.js";
-import {ModelMap} from "./schema/generated.js";
+/**
+ * example.ts
+ *
+ * A runnable walkthrough of SlintORM covering:
+ *  - model definitions with relations (1:1, 1:N, N:M), JSON fields, soft delete
+ *  - ORMManager init with ModelMap for a fully typed `db`
+ *  - migrations
+ *  - CRUD, bulk ops, upsert, findOrCreate, soft delete/restore
+ *  - query builder: preload (nested), exclude, joins, relation-path helpers,
+ *    window functions, scopes, pagination
+ *  - hooks
+ *  - transactions and batch
+ *
+ * Run with: npx tsx example.ts   (or compile with tsc and run with node)
+ */
+
+import ORMManager from "slintorm";
+import { ModelMap } from "./schema/generated.js";
+
+// ──────────────────────────────────────────────────────────────────────────
+// Model interfaces
+// ──────────────────────────────────────────────────────────────────────────
 
 /** Post table */
 interface Post {
   // @index;
   id?: number;
-  subID?: number
   // @length:255;not null;comment:Post title
   title: string;
-  // @nullable;comment:Author user ID
+  // @nullable;length:1000
   body?: string;
+  // @nullable;comment:Author user ID
   userId?: number;
   // @relation manytoone:User;foreignKey:userId;onDelete:SET NULL
   user?: User;
-// @json;nullable;comment:Extra post data   ← add @json here
-meta?: Record<string, any>;
+  // @json;nullable;comment:Extra post data
+  meta?: Record<string, any>;
   createdAt?: string;
   updatedAt?: string;
   // @softDelete
@@ -28,14 +47,13 @@ meta?: Record<string, any>;
 interface User {
   // @index;auto;comment:primary key
   id?: number;
-  dc?: string
   // @nullable;length:100;comment:First name
   firstName?: string;
   // @length:100;nullable;comment:Last name
   name: string;
   // @nullable;length:100;comment:Last name
   lastname?: string;
-  // @unique;comment:Email;nullable:false;
+  // @unique;comment:Email;nullable:false
   email?: string;
   // @relationship onetomany:Post;foreignKey:userId
   posts?: Post[];
@@ -53,7 +71,7 @@ interface User {
   status?: "active" | "inactive" | "banned";
   // @enum:(admin,user,guest);default:user
   type?: "admin" | "user" | "guest";
-  score?: number
+  score?: number;
 }
 
 /** Profile table */
@@ -69,7 +87,7 @@ interface Profile {
   updatedAt?: string;
   // @softDelete
   deletedAt?: string;
-  // @enum:(male,female, other)
+  // @enum:(male,female,other)
   gender?: "male" | "female" | "other";
 }
 
@@ -89,42 +107,6 @@ interface Todo {
   meta?: Record<string, any>;
   // @enum:(low,medium,high)
   priority?: "low" | "medium" | "high";
-}
-
-/** Task table */
-interface Task {
-  // @index;auto
-  id?: number;
-  // @length:255;not null
-  title: string;
-  // @nullable;length:1000
-  detail: string;
-  createdAt?: string;
-  updatedAt?: string;
-  // @softDelete
-  deletedAt?: string;
-  // @json;nullable
-  meta?: Record<string, any>;
-  // @enum:(todo,inprogress,done)
-  status?: "todo" | "inprogress" | "done";
-}
-
-/** Tasksx table */
-interface Tasksx {
-  // @index;auto
-  id?: number;
-  // @length:255;not null
-  title: string;
-  // @nullable;length:1000
-  detail: string;
-  createdAt?: string;
-  updatedAt?: string;
-  // @softDelete
-  deletedAt?: string;
-  // @json;nullable
-  meta?: Record<string, any>;
-  // @enum:(todo, inprogress, done)
-  status?: "todo" | "inprogress" | "done";
 }
 
 /** Team table */
@@ -151,66 +133,45 @@ interface Team {
   members?: User[];
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Main
+// ──────────────────────────────────────────────────────────────────────────
 
-
-// ==== MAIN FUNCTION ====
 async function main() {
-  // Initialize ORM
-  // const orm = await createORM({
-  //   driver: "postgres",
-  //   databaseUrl:
-  //     "postgres://postgres@localhost:5432/postgres?connect_timeout=10",
-  // }, );
-
-    /* const orm = new ORMManager({
-    driver: "postgres",
-    databaseUrl: "postgres://u_e0449281:1efcf44e34b1@localhost:15435/test_db",
-     dir: "src",
-    logs: false
-  }); */
-  
-
+  // ── Init ───────────────────────────────────────────────────────────────
   const orm = new ORMManager<ModelMap>({
     driver: "sqlite",
-    databaseUrl: "./testx.db",
+    databaseUrl: "./example.db",
     dir: "src",
     logs: false,
     modelMap: {} as ModelMap,
-    
-    // schema: schema
   });
 
-  const db = orm.DB
-  
-  
-  
-  
-  
-  
-  await orm.migrate()
-  // Define models
+  // Generate schema from source files (if needed) and apply pending migrations
+  await orm.migrate();
+
+  const db = orm.DB;
+
+  // Define models with hooks where useful
   const Users = await orm.defineModel<User>("users", "User");
   const Posts = await orm.defineModel<Post>("post", "Post");
   const Todos = await orm.defineModel<Todo>("todo", "Todo");
   const Profiles = await orm.defineModel<Profile>("profile", "Profile");
-  const Tasks = await orm.defineModel<Task>("tasks", "Task");
-  const Tasksx = await orm.defineModel<Tasksx>("tasksx", "Tasksx");
-  const Game = await orm.defineModel<Game>("game", "Game");
   const Teams = await orm.defineModel<Team>("team", "Team", {
     onCreateBefore(item) {
       console.log("before create Team:", item);
     },
     onCreateAfter(item) {
-      console.log("after create:", item);
+      console.log("after create Team:", item);
     },
     onUpdateAfter(oldData, newData) {
-      console.log("after update Team:", { oldData, newData });
+      console.log("Team updated:", { oldData, newData });
     },
   });
-  const Games = await orm.defineModel<Game>("game", "Game");
-  const createdGame = await db.Game.insert({ name: "Demo Game" });
-  console.log("createdGame:", createdGame);
 
+  console.log("=== SlintORM Example ===");
+
+  // ── Hooked insert/update ──────────────────────────────────────────────
   const newTeam = await db.Team.insert({
     title: "Hook Team",
     detail: "Hook test",
@@ -219,174 +180,144 @@ async function main() {
     createdAt: new Date().toISOString(),
   });
   console.log("newTeam:", newTeam);
+
   if (newTeam?.id) {
     await db.Team.update({ id: newTeam.id }, { tested: true });
   }
 
-  Tasksx.query().first()
-  // const uu =  await Users.insert({name: "McGarret", firstName: "Helpper" });
-  //  console.log("instered: ", uu)
-
-
-  console.log("=== ORM Example ===");
-
-  // ==== CREATE TODOS ====
+  // ── Basic CRUD ────────────────────────────────────────────────────────
   await Todos.insert({
-    title: "To watch plates",
+    title: "Watch the plates",
     detail: "Wash all plates",
     createdAt: new Date().toISOString(),
   });
-  // console.log("todos:", await Todos.getAll());
+  console.log("todos:", await Todos.getAll());
 
-  // ==== CREATE USERS AND POSTS ====
   const newUser = await db.User.insert({
     name: "Catherine",
     lastname: "Christopher",
     firstName: "Chris",
-    email: "jj@test.com"
+    email: "catherine@example.com",
   });
-  console.log("newUser: ", newUser);
-  // const profile = await Profiles.insert({userId: 2})
+  console.log("newUser:", newUser);
 
- 
-  const oo = await db.User.query()
-    // .preload("posts") 
-    .preload("profile").first()
-  // console.log("profile:x ", oo)
+  await db.Profile.insert({
+    userId: newUser?.id!,
+    meta: { bio: "This is my profile" },
+  });
 
-  // ==== CREATE PROFILE FOR USER (one-to-one) ====
+  const newPost = await db.Post.insert({
+    title: "Hello World",
+    userId: newUser?.id,
+    meta: { tags: ["hello", "world"] },
+  });
+  console.log("newPost:", newPost);
 
-  // ==== FETCH USER WITH POSTS AND PROFILE ====
-  const xpp = await db.Profile.insert({ userId: newUser?.id!, meta: { bio: "This is my profile" } });
+  // ── Preloading relations (nested, batched — no N+1) ─────────────────
   const userWithRelations = await db.User.query()
-    // .preload("posts")
     .preload("profile")
     .preload("profile.user")
-    // .preload("posts.user")
+    .preload("posts")
     .first(`id = ${newUser?.id}`);
-  console.log("userxs: ", userWithRelations)
-  // console.dir(userWithRelations, { depth: null });
+  console.dir(userWithRelations, { depth: null });
 
-  // ==== FETCH POST WITH USER RELATION ====
-  console.log("posts with user =====>");
   const postWithUser = await db.Post.query()
-
     .preload("user")
-    // .preload("user.posts")
     .preload("user.profile")
-    // .preload("user.posts.user")
     .exclude("user.lastname")
     .first();
-  // console.dir(postWithUser, { depth: null });
+  console.dir(postWithUser, { depth: null });
+
+  // ── Window functions ─────────────────────────────────────────────────
   const rankedUsers = await db.User.query()
     .window("ROW_NUMBER()", "PARTITION BY lastname ORDER BY id ASC")
     .get();
+  console.log("rankedUsers:", rankedUsers);
 
-  // Subquery example
-  // const subquery = Users.query().select("id").where("name", "=", "Amike");
-  // const usersFromSub = await Users.query()
-  //   .selectSubquery(subquery, "sub_id")
-  //   .get();
+  // ── Update / findOrCreate / delete on a fetched record ──────────────
+  const user = await Users.get({ id: newUser?.id! });
+  await user?.update({ name: "Catherine Updated" });
 
-  // EXISTS / NOT EXISTS example
-  // const existsQuery  = await Posts.query()
-  //   .exists(subquery)
-  //   .get();
-  // ==== DELETE EXAMPLE ====
+  const { record: foundOrCreated, created } = await Users.findOrCreate(
+    { id: newUser?.id! },
+    { name: "Fallback Name" }
+  );
+  console.log("findOrCreate:", { foundOrCreated, created });
+
+  const excludedUser = await db.User.query()
+    .exclude("profile")
+    .first();
+  console.log("excludedUser:", excludedUser);
+
+  // ── Bulk operations ───────────────────────────────────────────────────
+  await Users.insertMany([{ name: "Joe" }, { name: "Jane" }]);
+  await Users.updateMany({ status: "inactive" }, { status: "banned" });
+  await Users.deleteMany({ status: "banned" });
+
+  await Users.upsert(
+    { email: "joe@example.com" },
+    { name: "Joe", email: "joe@example.com" }
+  );
+
+  const findOrCreateUser = await Users.findOrCreate(
+    { email: "joe2@example.com" },
+    { name: "Joe Two", email: "joe2@example.com" }
+  );
+  console.log("findOrCreateUser:", findOrCreateUser.record);
+
+  // ── Soft delete ───────────────────────────────────────────────────────
+  await Users.restore({ id: 1 });
+  await db.User.query().withTrashed().get();
+  await db.User.query().onlyTrashed().get();
+
+  // ── Aggregates ────────────────────────────────────────────────────────
+  console.log("sum score:", await Users.sum("score"));
+  console.log("avg score (active):", await Users.avg("score", { status: "active" }));
+  console.log("min score:", await Users.min("score"));
+  console.log("max score:", await Users.max("score"));
+  console.log("count (active):", await Users.count({ status: "active" }));
+
+  // ── Validation ────────────────────────────────────────────────────────
+  const errors = Users.check(
+    { email: "not-an-email" },
+    { email: { required: true, email: true } }
+  );
+  console.log("validation errors:", errors);
+
+  // ── Scopes ────────────────────────────────────────────────────────────
+  const scopedUsers = await db.User.query()
+    .scope((qb) => qb.where("type", "=", "user"))
+    .get();
+  console.log("scoped users:", scopedUsers);
+
+  // ── Pagination ────────────────────────────────────────────────────────
+  const page = await db.User.query()
+    .where("status", "=", "active")
+    .getPaginated(1, 10);
+  console.log("paginated:", { total: page.total, lastPage: page.lastPage });
+
+  // ── Transactions & batch ─────────────────────────────────────────────
+  await orm.transaction(async (trx) => {
+    await trx.exec("INSERT INTO users (name, email) VALUES (?, ?)", [
+      "Trx User",
+      "trx@example.com",
+    ]);
+    await trx.exec("INSERT INTO profile (userId) VALUES (?)", [1]);
+  });
+
+  await orm.batch([
+    { sql: "INSERT INTO users (name) VALUES (?)", params: ["Batched Joe"] },
+    { sql: "INSERT INTO profile (userId) VALUES (?)", params: [1] },
+  ]);
+
+  // ── Cleanup example ───────────────────────────────────────────────────
   try {
-    await Posts.delete({ id: 3 });
+    await Posts.delete({ id: newPost?.id! });
   } catch (err) {
     console.log("Delete error:", err);
   }
 
-
-  const user = await Users.get({ id: 1 })
-  // console.log("user: ", user)
-
-
-  try {
-    const uup = await Users.update({ id: 1 }, { name: "Amike Catherine" })
-    //  console.log("immediate update: ", uup)
-
-    const upuser = await Users.get({ id: 1 })
-    const findd = await Users.findOrCreate({ id: 1 }, { name: "James Egwamene" })
-    console.log("fetched findOrCreate user: ", findd)
-    console.log("======> updated user: ", upuser)
-    const excupuser = await Users.query().exclude("profile")
-      // .preload("posts").exclude("posts.user")
-      .first()
-
-    const updated = await upuser?.update({ name: "Amike Egwamene" });
-
-    // console.log("Updated user:", updated);
-    // console.log("excluded user fields:", excupuser);
-
-    console.log("json: ",await upuser?.delete())
-
-  } catch (err) {
-    console.log("error updated user: ", err)
-
-  }
-
-
-  const pp = await Profiles.query()
-    .preload("user").preload("user.profile").preload("user.profile.user")
-    .preload("user.profile.user.profile.user")
-    .exclude("user.name")
-    .first(`userId = ${newUser?.id}`);
-  console.log("profile: ", pp)
-
-
-  // const nnew = await Teams.insert({
-  //   title: "To watch plates",
-  //   detail: "Wash all plates",
-  //   open: true,
-  //   tested: false
-  // });
-  // console.log("Teams:", nnew);
-console.log("inserMany")
-// await Users.insertMany([{ name: "Joe" }, { name: "Jane"}])
-console.log("updateMany")
-await Users.updateMany({ status: "inactive" }, { status: "banned" })
-await Users.deleteMany({ status: "banned" })
-await Users.upsert({ email: "joef@x.com" }, { name: "Joe", email: "jodedd@x.com" })
-const findOrCreateUser = await Users.findOrCreate({ email: "joecc@x.com" }, { name: "Joe", email: "joegjdxkhv@x.com" })
-console.log("findOrCreateUser:", findOrCreateUser.record)
-await Users.restore({ id: 1 })
-await Users.sum("score")
-await Users.avg("score", { status: "active" })
-await Users.min("score")
-await Users.max("score")
-await Users.count({ status: "active" })
-await Users.validate({ email: "bad@example.com" }, { email: { required: false, email: true } })
-await db.User.query().withTrashed().get()
-await db.User.query().onlyTrashed().get()
-const scopee = await db.User.query().scope(qb => qb.where("type", "=", "user")).get()
-// console.log("scoped users:", scopee)
-
-await orm.transaction(async (trx) => {
-  await trx.exec("INSERT INTO users (name, email) VALUES (?, ?)", ["Joe", "joe@example.com"])
-  await trx.exec("INSERT INTO profile (userId) VALUES (?)", [1])
-})
-
-// const bhhsu = await orm.batch([
-//   { sql: "INSERT INTO users (name) VALUES (?)", params: ["Joe"] },
-//   { sql: "INSERT INTO profile (userId) VALUES (?)", params: [1] },
-// ])
-
-// console.log("batch insert result:", bhhsu)
-
- const newPost = await db.Post.insert({ title: "Hello Boys", userId: 2, meta: { tags: ["hello", "world"] } });
-  console.log("newPost: ", newPost);
-  console.log("post with meta: ") 
-    const xdpp = await db.Post.query()
-  // .whereRelated("user.profile", "id", 2)
-  // .relatedTo("User", "email", 2)
-  // .throughRelation("user.profile")
-  .preload("user").get();
-
   console.log("=== Done ===");
 }
 
-// ==== RUN MAIN ====
 main().catch(console.error);

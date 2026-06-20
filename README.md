@@ -1,34 +1,59 @@
-# Simple TypeScript ORM
+# SlintORM
 
-A lightweight TypeScript ORM for SQLite, PostgreSQL, MySQL, and MongoDB.
+**A lightweight, GORM-inspired TypeScript ORM for SQLite, PostgreSQL, MySQL, and MongoDB — zero-config migrations, a full SQL query builder, and everything hangs off your model instances.**
 
-This library focuses on:
+No schema DSL to learn. No Prisma Client generation step. No separate import for every query feature. Write a TypeScript interface, annotate a few fields with comments, call `migrate()`, and start querying.
 
-- simplicity and easy setup
-- type-safe model definitions
-- automatic migrations and table generation
-- relationship support for one-to-one, one-to-many, and many-to-many
-- query building with preloads, filters, and joins
-- minimal runtime footprint by loading only the selected database driver
+```ts
+const Users = await orm.defineModel<User>("users", "User");
+const active = await Users.query().where("status", "=", "active").get();
+```
+
+That's it. No `db.select().from(users).where(...)` ceremony, no `prisma.user.findMany({ where: { ... } })` client object indirection — just your model, chained.
 
 ---
+
+## Why SlintORM?
+
+Most TypeScript ORMs force a tradeoff: **Drizzle** is fast and type-safe but minimal — no preloads, no built-in migrations, you write SQL-shaped queries by hand. **Prisma** is full-featured but heavy — a generated client, a separate schema DSL, and raw SQL the moment you need a window function or a real subquery.
+
+SlintORM aims for the GORM sweet spot: **automatic migrations, a real query builder with joins/preloads/aggregates/subqueries, and zero boilerplate**, while staying TypeScript-native and lightweight.
+
+| Feature                          | SlintORM | Drizzle | Prisma |
+|-----------------------------------|:---:|:---:|:---:|
+| Auto table creation & migration   | ✅ Automatic, zero-config | ❌ Manual/CLI | ✅ CLI-based |
+| Type-safe queries                 | ✅ | ✅ | ✅ |
+| Relationships (1:1, 1:N, N:M)     | ✅ Fully supported with preloads | ✅ Via join tables | ✅ Via relations |
+| Query builder: joins & HAVING     | ✅ Advanced SQL capabilities | ❌ Limited | ⚠️ Client API only; raw SQL for complex cases |
+| Aggregates & window functions     | ✅ COUNT/SUM/AVG/MIN/MAX + custom window fns | ❌ Limited | ⚠️ Raw SQL required |
+| Subquery support                  | ✅ Built-in | ❌ Limited | ⚠️ Raw SQL only |
+| Preload / eager loading           | ✅ Nested, batched (no N+1) | ❌ Not supported | ✅ select/include |
+| Auto relation-path joins          | ✅ `relatedTo()` BFS-discovers joins | ❌ | ❌ |
+| Migration rollback + snapshots    | ✅ CLI rollback to batch/name | ⚠️ Manual | ✅ |
+| Boilerplate                       | ✅ Single import, no generated client | ✅ Minimal | ❌ Requires client generation |
+| Learning curve                    | ✅ Very low | ✅ Low | ❌ Medium — schema DSL + client |
+| Raw SQL escape hatch              | ✅ `whereRaw`, `exec`, `batch`, `transaction` | ✅ | ⚠️ Available, more friction |
+| Ideal use case                    | Rapid prototyping → production, GORM-style workflows | Type-safe lightweight projects | Large, ecosystem-heavy apps |
+
+**Bottom line:** if you want migrations that just work, a query builder that can actually do joins and subqueries, and relationship loading without N+1 — without adopting a whole new schema language — SlintORM is built for you.
+
+---
+
 ## Installation
 
 ```bash
 npm install slintorm
 ```
 
-> Note: runtime database drivers are loaded lazily. If you only use `sqlite`, then `pg`, `mysql2`, and `mongodb` are not required at runtime.
+> Database drivers are loaded **lazily** at runtime. Using only `sqlite`? Then `pg`, `mysql2`, and `mongodb` are never required or installed into your runtime bundle.
 
 ---
 
-
-
-
 ## Model Interfaces
 
-```ts
+Models are plain TypeScript interfaces. Metadata lives in comments directly above each field — no decorators, no separate schema file to hand-maintain.
 
+```ts
 /** Post table */
 interface Post {
   // @index;
@@ -59,12 +84,14 @@ interface User {
   name: string;
   // @nullable;length:100;comment:Last name
   lastname?: string;
-  // unique;comment:Email
+  // @unique;comment:Email
   email?: string;
   // @relationship onetomany:Post;foreignKey:userId
   posts?: Post[];
   // @relationship onetoone:Profile;foreignKey:userId;onDelete:CASCADE
   profile?: Profile;
+  // @relation manytomany:Team;through:team_members;foreignKey:userId;relatedKey:teamId
+  teams?: Team[];
   // @json;nullable;comment:Extra user info
   meta?: Record<string, any>;
   createdAt?: string;
@@ -88,7 +115,7 @@ interface Profile {
   updatedAt?: string;
   // @softDelete
   deletedAt?: string;
-  // @enum:(male,female, other)
+  // @enum:(male,female,other)
   gender?: "male" | "female" | "other";
 }
 
@@ -108,42 +135,6 @@ interface Todo {
   meta?: Record<string, any>;
   // @enum:(low,medium,high)
   priority?: "low" | "medium" | "high";
-}
-
-/** Task table */
-interface Task {
-  // @index;auto
-  id?: number;
-  // @length:255;not null
-  title: string;
-  // @nullable;length:1000
-  detail: string;
-  createdAt?: string;
-  updatedAt?: string;
-  // @softDelete
-  deletedAt?: string;
-  // @json;nullable
-  meta?: Record<string, any>;
-  // @enum:(todo,inprogress,done)
-  status?: "todo" | "inprogress" | "done";
-} 
-
-/** Tasksx table */
-interface Tasksx {
-  // @index;auto
-  id?: number;
-  // @length:255;not null
-  title: string;
-  // @nullable;length:1000
-  detail: string;
-  createdAt?: string;
-  updatedAt?: string;
-  // @softDelete
-  deletedAt?: string;
-  // @json;nullable
-  meta?: Record<string, any>;
-  // @enum:(todo, inprogress, done)
-  status?: "todo" | "inprogress" | "done";
 }
 
 /** Team table */
@@ -166,77 +157,100 @@ interface Team {
   deletedAt?: string;
   // @enum:(active,archived)
   status?: "active" | "archived";
+  // @relation manytomany:User;through:team_members;foreignKey:teamId;relatedKey:userId
+  members?: User[];
 }
 ```
 
+### Field metadata reference
 
+| Tag | Meaning |
+|---|---|
+| `@index` | Create an index on this column |
+| `@auto` | Auto-increment / serial primary key |
+| `@unique` | Unique constraint |
+| `@nullable` | Column allows NULL |
+| `@not null` | Column is required |
+| `@length:N` | VARCHAR length |
+| `@json` | Serialize/deserialize this field as JSON automatically |
+| `@softDelete` | Marks the field (e.g. `deletedAt`) used for soft deletes; enables `withTrashed()`/`onlyTrashed()`/`restore()` |
+| `@enum:(a,b,c)` | Restrict to a set of string values |
+| `@default:value` | Default value |
+| `@comment:text` | Column comment (where supported) |
+| `@relation kind:Model;foreignKey:col;onDelete:ACTION` | One-to-one / many-to-one relation |
+| `@relationship kind:Model;foreignKey:col` | One-to-many / one-to-one relation (alias form) |
+| `@relation manytomany:Model;through:pivot;foreignKey:col;relatedKey:col` | Many-to-many relation. The pivot table is auto-synthesized at migration time if not declared as its own model. |
+
+---
 
 ## Initialization
 
 ```ts
 import ORMManager from "slintorm";
-// import {schema} from "./schema/generated.js";
 
+const orm = new ORMManager({
+  driver: "sqlite",          // sqlite | postgres | mysql | mongodb
+  databaseUrl: "./testx.db",
+  dir: "src",                // folder containing your model interfaces
+  logs: false,
+});
 
-  const orm = new ORMManager({
-    driver: "sqlite",
-    databaseUrl: "./testx.db",
-    dir: "src",
-    logs: false,
-    
-    // schema: schema
-  });
-
-// Generate schema from source files and apply migrations
+// Generate schema from source files and apply pending migrations
 await orm.migrate();
 
 const Users = await orm.defineModel<User>("users", "User");
 const Posts = await orm.defineModel<Post>("posts", "Post");
 const Todos = await orm.defineModel<Todo>("todos", "Todo");
 
-
-  const db = orm.DB
-
+const db = orm.DB;
 ```
 
----
-### You can access all your models via the db
+If you already have a generated schema object, pass it directly as `schema` to skip reading schema files from disk:
 
-##### If you do not want to export multiple Models or items, you can use the ModelMap method and export the DB with full typesetting
 ```ts
+import { schema } from "./schema/generated.js";
 
-import {ModelMap} from "./schema/generated.js";
+const orm = new ORMManager({
+  driver: "sqlite",
+  databaseUrl: "./testx.db",
+  dir: "src",
+  schema,
+});
+```
 
-/// Note: Before importing and specifying the ModelMap from your schema generated.ts file, ensure you have ran the migration else this wont work cause until first migration ModelMap is unavailable.
+This example uses SQLite — switch to PostgreSQL, MySQL, or MongoDB by changing `driver` and `databaseUrl`.
 
+---
+
+## Fully typed `db` via `ModelMap`
+
+If you don't want to manually export every model from `defineModel()`, generate a `ModelMap` and get a fully typed `db` store for free:
+
+```ts
+import { ModelMap } from "./schema/generated.js";
+
+// Note: ModelMap is only available after your first successful migration —
+// run `await orm.migrate()` (or `npx slintorm migrate`) at least once first.
 
 const orm = new ORMManager<ModelMap>({
-    driver: "sqlite",
-    databaseUrl: "./testx.db",
-    dir: "src",
-    logs: false,
-    modelMap: {} as ModelMap,
-    
-    //schema: schema
-  });
+  driver: "sqlite",
+  databaseUrl: "./testx.db",
+  dir: "src",
+  logs: false,
+  modelMap: {} as ModelMap,
+});
 
-// Migrate -->
-  await orm.migrate()
+await orm.migrate();
+const db = orm.DB;
 
-  const db = orm.DB
-  
-  // Now you can run db.orm.DB with full type setting.
-  db.Profile.insert({ userId: newUser?.id!, meta: { bio: "This is my profile" } });
-
+// Fully typed, no manual defineModel() exports needed
+await db.Profile.insert({ userId: newUser?.id!, meta: { bio: "This is my profile" } });
 ```
 
-> Note: All methods work regardless of which you chose
----
-This example uses SQLite, but you can switch to PostgreSQL, MySQL, or MongoDB by changing `driver` and `databaseUrl`.
-
-If you already have a generated schema object, pass it in as `schema` to avoid reading schema files from disk.
+> Both approaches — manual `defineModel()` exports or `ModelMap` + `db` — expose identical functionality. Pick whichever fits your project's style.
 
 ---
+
 ## Define models
 
 ```ts
@@ -245,7 +259,7 @@ const Posts = await orm.defineModel<Post>("posts", "Post");
 const Todos = await orm.defineModel<Todo>("todos", "Todo");
 ```
 
-### Hooks
+### Lifecycle hooks
 
 ```ts
 const Teams = await orm.defineModel<Team>("team", "Team", {
@@ -260,21 +274,23 @@ const Teams = await orm.defineModel<Team>("team", "Team", {
   },
 });
 
-// db DBStore
- const newTeam = await db.Team.insert({
-    title: "Hook Team",
-    detail: "Hook test",
-    open: true,
-    tested: false,
-    createdAt: new Date().toISOString(),
-  });
-  console.log("newTeam:", newTeam);
-  if (newTeam?.id) {
-    await db.Team.update({ id: newTeam.id }, { tested: true });
-  }
+const newTeam = await db.Team.insert({
+  title: "Hook Team",
+  detail: "Hook test",
+  open: true,
+  tested: false,
+  createdAt: new Date().toISOString(),
+});
+
+if (newTeam?.id) {
+  await db.Team.update({ id: newTeam.id }, { tested: true });
+}
 ```
 
+Available hooks: `onCreateBefore`, `onCreateAfter`, `onUpdateBefore`, `onUpdateAfter`, `onDeleteBefore`, `onDeleteAfter`.
+
 ---
+
 ## Basic CRUD examples
 
 ```ts
@@ -292,7 +308,64 @@ await fetchedUser?.update({ name: "Amike Egwamene" });
 await Posts.delete({ id: 3 });
 ```
 
+Every record returned by `.get()` / `.insert()` comes with `.update()`, `.delete()`, and `.refresh()` attached — no need to re-pass the filter:
+
+```ts
+const user = await Users.get({ id: 1 });
+await user?.update({ name: "New Name" });
+await user?.delete();
+```
+
+### Bulk operations
+
+```ts
+await Users.insertMany([{ name: "Joe" }, { name: "Jane" }]);
+await Users.updateMany({ status: "inactive" }, { status: "banned" });
+await Users.deleteMany({ status: "banned" });
+```
+
+### Upsert & findOrCreate
+
+```ts
+await Users.upsert({ email: "joe@x.com" }, { name: "Joe", email: "joe@x.com" });
+
+const { record, created } = await Users.findOrCreate(
+  { email: "joe@x.com" },
+  { name: "Joe", email: "joe@x.com" }
+);
+```
+
+### Soft delete
+
+```ts
+await Users.restore({ id: 1 });                 // un-delete
+await db.User.query().withTrashed().get();        // include deleted rows
+await db.User.query().onlyTrashed().get();         // only deleted rows
+```
+
+### Aggregates
+
+```ts
+await Users.count({ status: "active" });
+await Users.sum("score");
+await Users.avg("score", { status: "active" });
+await Users.min("score");
+await Users.max("score");
+```
+
+### Validation
+
+```ts
+await Users.validate(
+  { email: "bad@example.com" },
+  { email: { required: false, email: true } }
+);
+
+const errors = Users.check({ email: "bad@example.com" }, { email: { email: true } });
+```
+
 ---
+
 ## Query builder examples
 
 ```ts
@@ -309,100 +382,156 @@ const userWithRelations = await Users.query()
   .preload("posts")
   .preload("profile")
   .first("id = 2");
+```
 
-//Accessing distant relationship/connection with joins
-     const assessments = await db.Assessment.query()
+### Accessing distant relationships with joins
+
+```ts
+const assessments = await db.Assessment.query()
   .join("modules", "modules.id", "=", "assessments.moduleId")
   .join("cohorts", "cohorts.trackId", "=", "modules.trackId")
   .join("enrollments", "enrollments.cohortId", "=", "cohorts.id")
   .whereRaw(`enrollments.userId = ${session.id}`)
   .preload("module")
   .get();
-  
+```
 
-  // All of the joins can be shortened with the relatedTo query method
-  const assessments2 = await db.Assessment.query()
-  .relatedTo("Enrollment", "userId", session.id)
-  .preload("module")
-  .get();
+### The same query, shortened with relation-path helpers
 
+You don't have to spell out every intermediate join — SlintORM reads your schema's relation metadata and builds the chain for you.
 
-
-const batched = await orm.batch([
-  { sql: "INSERT INTO users (name) VALUES (?)", params: ["Joe"] },
-  { sql: "INSERT INTO profile (userId) VALUES (?)", params: [1] },
-])
-
-
-
-  /**
-   * Traverse a dot-separated relation path, apply all intermediate JOINs
-   * automatically, then filter by a column on the final table.
-   *
-   * Combines `throughRelation` + a WHERE in one call.
-   *
-   * @param path - Dot-separated relation field names, e.g. `"module.cohort.enrollment"`.
-   * @param column - Column name on the final relation's table to filter by.
-   * @param value - Value to match against.
-   */
-   const assessments = await db.Assessment.query()
-  .whereRelated("module.cohort.enrollment", "userId", session.id)
-  .preload("module")
-  .get();
-
-
-  /**
-   * Automatically find the join path between the current model and a
-   * target model by traversing the schema relation graph (BFS), then
-   * apply all intermediate JOINs and filter by a column on the target table.
-   *
-   * You only need to know the target model name — no path required.
-   * Throws if no path exists between the two models.
-   *
-   * @param targetModelName - The model name to relate to, e.g. `"Enrollment"`.
-   * @param column - Column on the target model's table to filter by.
-   * @param value - Value to match against.
-   */
-   const assessments = await db.Assessment.query()
-  .relatedTo("Enrollment", "userId", session.id)
-  .preload("module")
-  .get();
-
-
-  /**
-   * Traverse a dot-separated relation path and apply all intermediate
-   * JOIN clauses automatically based on schema relation metadata.
-   * Returns `this` so you can keep chaining `.where()`, `.get()`, etc.
-   *
-   * Use this when you need joins but still want to write the final
-   * WHERE condition yourself.
-   *
-   * @param path - Dot-separated relation field names to traverse,
-   *   e.g. `"module.cohort.enrollment"`.
-   */
-   const assessments = await db.Assessment.query()
+```ts
+/**
+ * Traverse a dot-separated relation path and apply all intermediate
+ * JOIN clauses automatically. Returns `this`, so you can keep chaining
+ * your own `.where()`, `.get()`, etc.
+ */
+const assessments = await db.Assessment.query()
   .throughRelation("module.cohort.enrollment")
   .where("enrollments.userId", "=", session.id)
   .preload("module")
   .get();
 
+/**
+ * Combines throughRelation + a final WHERE in one call.
+ */
+const assessments2 = await db.Assessment.query()
+  .whereRelated("module.cohort.enrollment", "userId", session.id)
+  .preload("module")
+  .get();
+
+/**
+ * Don't even know the path? relatedTo() BFS-discovers the shortest
+ * relation chain to the target model automatically. Throws if no
+ * path exists between the two models.
+ */
+const assessments3 = await db.Assessment.query()
+  .relatedTo("Enrollment", "userId", session.id)
+  .preload("module")
+  .get();
+```
+
+### More query builder features
+
+```ts
+// distinct / group by / having
+const grouped = await db.Enrollment.query()
+  .select("cohortId")
+  .countAggregate("*")
+  .groupBy("cohortId")
+  .having("COUNT(*) > 5")
+  .get();
+
+// window functions
+const ranked = await db.User.query()
+  .window("ROW_NUMBER()", "PARTITION BY lastname ORDER BY id ASC")
+  .get();
+
+// pagination with totals
+const { data, total, page, lastPage } = await db.User.query()
+  .where("status", "=", "active")
+  .getPaginated(1, 20);
+
+// scopes — reusable, composable query fragments
+const activeUsers = await db.User.query()
+  .scope((qb) => qb.where("type", "=", "user"))
+  .get();
+```
+
+See **`QUERY_BUILDER.md`** in this repo for the complete method-by-method reference (every `where*`, join, preload, aggregate, subquery, and soft-delete method with examples).
+
+---
+
+## Transactions & batches
+
+```ts
+await orm.transaction(async (trx) => {
+  await trx.exec("INSERT INTO users (name, email) VALUES (?, ?)", ["Joe", "joe@example.com"]);
+  await trx.exec("INSERT INTO profile (userId) VALUES (?)", [1]);
+});
+```
+
+`transaction()` wraps the callback in `BEGIN`/`COMMIT`, rolling back automatically on error (no-op wrapper on MongoDB, which has no implicit transaction here).
+
+For a flat list of statements without a callback, use `batch()`:
+
+```ts
+await orm.batch([
+  { sql: "INSERT INTO users (name) VALUES (?)", params: ["Joe"] },
+  { sql: "INSERT INTO profile (userId) VALUES (?)", params: [1] },
+]);
 ```
 
 ---
+
 ## Schema generation and migrations
 
-`orm.migrate()` generates schema from source files and updates tables automatically.
+`orm.migrate()` generates a schema from your source files and updates tables automatically — no separate `generate` step required in app code.
 
-If you pass `schema` directly to `ORMManager`, the ORM uses that schema instead of generating from disk.
+If you pass `schema` directly to `ORMManager`, the ORM uses that schema instead of reading from disk at all.
+
+### CLI
+
+For migrations outside your app's runtime — CI/CD, deploy hooks, production cutover — use the bundled CLI:
+
+```bash
+npx slintorm generate          # Scan source files and (re)generate schema/generated.ts
+npx slintorm migrate           # Apply all pending migrations
+npx slintorm rollback          # Roll back the last batch
+npx slintorm rollback <name>   # Roll back to a specific migration name
+npx slintorm rollback --to 2   # Roll back to a specific batch number
+npx slintorm status            # Show applied / pending migrations
+npx slintorm fresh             # Drop all tables, then re-run all migrations
+npx slintorm drop-tracking     # Drop the _slint_migrations table (irreversible — production cutover only)
+npx slintorm --help            # Show help
+```
+
+Config file (`slintorm.config.js` in your project root, or a `"slintorm"` key in `package.json`):
+
+```js
+// slintorm.config.js
+export default {
+  driver: "sqlite",          // sqlite | postgres | mysql | mongodb
+  databaseUrl: "./myapp.db",
+  dir: "src",
+  logs: false,
+};
+```
+
+Each applied migration writes a JSON record to `<dir>/schema/migrations/`, in addition to the internal `_slint_migrations` tracking table. `rollback` drops the rolled-back batch's tables, then automatically rebuilds the target batch's tables from its schema snapshot — skipping anything still present, so re-running rollback is safe.
 
 ---
+
 ## Notes
 
-- `fs` and `path` are only loaded when schema files are loaded from disk.
-- Only the selected database driver is required at runtime.
+- `fs` and `path` are only loaded when schema files are read from disk.
+- Only the selected database driver is required at runtime — others are never imported.
 - Use `autoInstallDrivers: false` if you prefer to install the driver manually.
+- All queries return mapped boolean fields, parsed JSON fields, and respect configured excludes automatically.
+- MongoDB support covers CRUD, filtering, and preloads via the same query builder API; DDL/migrations are limited to index creation (`@index`/`@unique`) since MongoDB is schemaless.
 
 ---
+
 ## Build & test
 
 ```bash
@@ -410,64 +539,41 @@ npm run build
 npm test
 ```
 
-
-
 ---
 
 ## Relationships
 
-* One-to-many: @relation onetomany:Post;foreignKey:userId
-* Many-to-one: @relation manytoone:User;foreignKey:userId
-* One-to-one: @relationship onetoone:Profile;foreignKey:userId
-* Many-to-many: Use a through table in schema metadata
+* One-to-many: `@relation onetomany:Post;foreignKey:userId`
+* Many-to-one: `@relation manytoone:User;foreignKey:userId`
+* One-to-one: `@relationship onetoone:Profile;foreignKey:userId`
+* Many-to-many: `@relation manytomany:Team;through:team_members;foreignKey:userId;relatedKey:teamId` — the pivot table is auto-created if not declared as its own model.
 
 ---
 
 ## Migrations
 
-The ORM automatically ensures that tables exist and applies schema changes based on your model metadata. Use:
+The ORM automatically ensures that tables exist and applies schema changes based on your model metadata:
 
 ```ts
 await orm.migrate();
 ```
-to synchronize your database schema.
+
+For rollback, snapshotting, status, and production cutover, see [CLI](#cli) above.
 
 ---
 
+## Why use SlintORM?
 
-## Why use Simple TypeScript ORM?
+Many TypeScript ORMs are either minimal but lacking features (like Drizzle) or extremely heavy (like Prisma). SlintORM balances **ease of use, flexibility, and performance** — ideal for projects that need quick iteration, full control over queries, and GORM-inspired patterns in TypeScript, from the very first prototype through to production.
 
-Many TypeScript ORMs are either minimal but lack features (like Drizzle) or extremely heavy (like Prisma). Simple TypeScript ORM balances **ease of use, flexibility, and performance**, making it ideal for projects that require quick iteration, full control over queries, and GORM-inspired patterns in TypeScript.
+SlintORM is **best suited for developers who want a GORM-inspired workflow in TypeScript**: minimal setup, automatic migrations, and full SQL query control. Drizzle is lightweight and type-safe but lacks advanced query features. Prisma is powerful and production-ready, but heavier, with more boilerplate and tooling setup.
 
-| Feature                         | Simple TypeScript ORM | Drizzle        | Prisma        |
-|---------------------------------|---------------------|----------------|---------------|
-| Auto table creation & migration  | ✅ Automatic and zero-config migrations | ❌ Manual or CLI-based | ✅ CLI-based migrations |
-| Type-safe queries                | ✅ Full TypeScript support | ✅ Type-safe | ✅ Type-safe |
-| Relationships (1:1,1:N,N:M)     | ✅ Fully supported with preloads | ✅ Supported via join tables | ✅ Supported via relations |
-| Query builder with joins & HAVING| ✅ Advanced SQL capabilities | ❌ Limited | ✅ Limited to client API, raw SQL for complex cases |
-| Aggregates & window functions    | ✅ COUNT, SUM, AVG, custom window functions | ❌ Limited | ✅ Raw SQL required for window functions |
-| Subquery support                 | ✅ Easy subquery integration | ❌ Limited | ✅ Possible via raw SQL |
-| Preload / eager loading          | ✅ Preload nested relations | ❌ Not supported | ✅ Supports select/include |
-| Lightweight & minimal boilerplate| ✅ Minimal setup, single import | ✅ Minimal | ❌ Requires Prisma Client generation and schema setup |
-| Inspiration / design             | GORM-like (Go ORM) | TypeScript-only | Prisma Engine with schema DSL |
-| Learning curve                   | ✅ Very low, intuitive | ✅ Low | ❌ Medium, requires learning schema DSL and client |
-| Flexibility / raw SQL            | ✅ Direct SQL injection when needed | ✅ Limited raw SQL | ✅ Raw SQL available but requires Prisma Client |
-| Ideal use case                   | Rapid prototyping, small to medium apps, GORM-style workflow | Type-safe lightweight projects | Large-scale apps, strong typing, ecosystem-heavy projects |
+SlintORM fills the niche for **quick iteration, flexible queries, and minimal friction** — perfect for both learning and production projects.
 
 ---
 
-### Summary
+## Further reading
 
-SlintORM is **best suited for developers who want a GORM-inspired workflow in TypeScript**: minimal setup, automatic migrations, and full SQL query control.  
-Drizzle is lightweight and type-safe but lacks advanced query features.  
-Prisma is powerful and production-ready, but heavier and requires more boilerplate and tooling setup.  
-
-SlintORM fills the niche for **quick iteration, flexible queries, and minimal friction**, making it perfect for both learning and production projects.
-
-
-## Notes
-
-- Supports SQLite, PostgreSQL, and MySQL.
-- MongoDB support is limited to basic CRUD via the adapter.
-- All queries are type-safe and return mapped Boolean fields and excluded columns if configured.
-- Advanced query builder supports joins, group by, having, distinct, window functions, subqueries, and preloads.
+- **`QUERY_BUILDER.md`** — full query builder & `ModelAPI` reference, every method with usage examples.
+- **`llms.txt`** — condensed reference for AI coding assistants working in a SlintORM codebase.
+- **`example.ts`** — a complete, runnable walkthrough exercising most of the library in one file.
