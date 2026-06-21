@@ -3,8 +3,8 @@
   "modelName": "Cohort",
   "tableName": "cohorts",
   "schemaHash": "708d1a3b7174e773825d5c2d9145d0714ed5e389d7fbf94a39d90ac39838ec67",
-  "batch": 3,
-  "appliedAt": "2026-06-21T01:53:09.807Z",
+  "batch": 1,
+  "appliedAt": "2026-06-21T09:00:15.318Z",
   "fields": [
     "id",
     "name",

@@ -22,9 +22,12 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
 
     const dialect = Dialects[this.orm?.dialect || "sqlite"];
 
-    let selectClause = this._selects?.length
-      ? (this._selects as string[]).map((c) => dialect.quoteIdentifier(String(c))).join(", ")
-      : "*";
+
+let selectClause = this._selects?.length
+  ? (this._selects as string[]).map((c) => dialect.quoteIdentifier(String(c))).join(", ")
+  : this._joins.length
+    ? `${dialect.quoteIdentifier(this.table)}.*`   // match base class's collision-safe default
+    : "*";
 
     if (this._aggregates.length) {
       selectClause =

@@ -1,7 +1,7 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: 496321ec870927f8
-// Source Hash: fe27ff9c4cd11d11
+// Schema Hash: 7858a0a7f6b4520c
+// Source Hash: 497b77fd732b4ac5
 
 export interface User {
   id?: number;
@@ -29,9 +29,9 @@ export interface Track {
   durationWeeks?: number;
   price?: number;
   isActive?: boolean;
-  certifications?: Certification[];
   createdAt?: string;
   updatedAt?: string;
+  certifications?: Certification[];
   courseClass?: CourseClass;
   cohorts?: Cohort[];
   modules?: Module[];
@@ -115,7 +115,6 @@ export interface Assessment {
   updatedAt?: string;
   module?: Module;
   submitted?: boolean;
-  enrollment?: Enrollment;
 }
 
 export interface Submission {
@@ -607,15 +606,6 @@ export const schema = {
         "optional": true,
         "meta": {}
       },
-      "certifications": {
-        "type": "Certification[] | undefined",
-        "originalType": "Certification[]",
-        "optional": true,
-        "meta": {
-          "@relation onetomany": "Cohort",
-          "foreignKey": "trackId"
-        }
-      },
       "createdAt": {
         "type": "string | undefined",
         "originalType": "string",
@@ -627,6 +617,15 @@ export const schema = {
         "originalType": "string",
         "optional": true,
         "meta": {}
+      },
+      "certifications": {
+        "type": "Certification[] | undefined",
+        "originalType": "Certification[]",
+        "optional": true,
+        "meta": {
+          "@relation onetomany": "Certification",
+          "foreignKey": "trackId"
+        }
       },
       "courseClass": {
         "type": "CourseClass | undefined",
@@ -651,7 +650,7 @@ export const schema = {
         "originalType": "Module[]",
         "optional": true,
         "meta": {
-          "@relation onetomany": "Enrollment",
+          "@relation onetomany": "Module",
           "foreignKey": "trackId"
         }
       }
@@ -661,10 +660,10 @@ export const schema = {
         "sourceModel": "Track",
         "fieldName": "certifications",
         "kind": "onetomany",
-        "targetModel": "Cohort",
+        "targetModel": "Certification",
         "foreignKey": "trackId",
         "meta": {
-          "@relation onetomany": "Cohort",
+          "@relation onetomany": "Certification",
           "foreignKey": "trackId"
         }
       },
@@ -694,10 +693,10 @@ export const schema = {
         "sourceModel": "Track",
         "fieldName": "modules",
         "kind": "onetomany",
-        "targetModel": "Enrollment",
+        "targetModel": "Module",
         "foreignKey": "trackId",
         "meta": {
-          "@relation onetomany": "Enrollment",
+          "@relation onetomany": "Module",
           "foreignKey": "trackId"
         }
       }
@@ -1229,15 +1228,6 @@ export const schema = {
         "originalType": "boolean",
         "optional": true,
         "meta": {}
-      },
-      "enrollment": {
-        "type": "Enrollment | undefined",
-        "originalType": "Enrollment",
-        "optional": true,
-        "meta": {
-          "@relation onetoone": "Enrollment",
-          "foreignKey": "enrollmentId"
-        }
       }
     },
     "relations": [
@@ -1250,17 +1240,6 @@ export const schema = {
         "meta": {
           "@relation onetoone": "Module",
           "foreignKey": "moduleId"
-        }
-      },
-      {
-        "sourceModel": "Assessment",
-        "fieldName": "enrollment",
-        "kind": "onetoone",
-        "targetModel": "Enrollment",
-        "foreignKey": "enrollmentId",
-        "meta": {
-          "@relation onetoone": "Enrollment",
-          "foreignKey": "enrollmentId"
         }
       }
     ],

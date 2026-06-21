@@ -3,8 +3,8 @@
   "modelName": "Enrollment",
   "tableName": "enrollments",
   "schemaHash": "60dbdf8eccf23c235f2c0b120d05cb077d32b0068d2e8322379eb5eb463c45e9",
-  "batch": 3,
-  "appliedAt": "2026-06-21T01:53:09.822Z",
+  "batch": 1,
+  "appliedAt": "2026-06-21T09:00:15.331Z",
   "fields": [
     "id",
     "userId",

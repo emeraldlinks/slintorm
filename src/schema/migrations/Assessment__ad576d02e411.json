@@ -1,10 +1,10 @@
 {
-  "name": "Assessment__d6d98d38acf0",
+  "name": "Assessment__ad576d02e411",
   "modelName": "Assessment",
   "tableName": "assessments",
-  "schemaHash": "d6d98d38acf0be9cf73249c382ba9ff372262f430639df87e33a963ef9f7803b",
-  "batch": 1,
-  "appliedAt": "2026-06-21T09:00:15.295Z",
+  "schemaHash": "ad576d02e411f58809cfb93dddf005d10be8c5a42bfdb8f84839b4c019ae9175",
+  "batch": 2,
+  "appliedAt": "2026-06-21T10:48:43.230Z",
   "fields": [
     "id",
     "moduleId",
@@ -17,7 +17,6 @@
     "createdAt",
     "updatedAt",
     "module",
-    "submitted",
-    "enrollment"
+    "submitted"
   ]
 }

@@ -3,8 +3,8 @@
   "modelName": "AlumniReport",
   "tableName": "alumni_reports",
   "schemaHash": "2ebbf34465ac0acea9408d9512834e473496ae07e3f1e383a0b52b3a0ad1fe8f",
-  "batch": 3,
-  "appliedAt": "2026-06-21T01:53:09.752Z",
+  "batch": 1,
+  "appliedAt": "2026-06-21T09:00:15.274Z",
   "fields": [
     "id",
     "userId",

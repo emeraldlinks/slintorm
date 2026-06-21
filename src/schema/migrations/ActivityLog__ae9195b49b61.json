@@ -3,8 +3,8 @@
   "modelName": "ActivityLog",
   "tableName": "activity_logs",
   "schemaHash": "ae9195b49b61e16267e41f40d6e78c7c92e5acbaf1b4d650714b770053c51561",
-  "batch": 3,
-  "appliedAt": "2026-06-21T01:53:09.736Z",
+  "batch": 1,
+  "appliedAt": "2026-06-21T09:00:15.268Z",
   "fields": [
     "id",
     "userId",

@@ -3,8 +3,8 @@
   "modelName": "PPT",
   "tableName": "ppts",
   "schemaHash": "265027d228774b5b69d1096b5a7fc6793658d1bed9281087a7e11e0ad07cd99b",
-  "batch": 3,
-  "appliedAt": "2026-06-21T01:53:09.967Z",
+  "batch": 1,
+  "appliedAt": "2026-06-21T09:00:15.398Z",
   "fields": [
     "id",
     "companyName",

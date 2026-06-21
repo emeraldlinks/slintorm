@@ -517,103 +517,111 @@ whereRelated<K extends RelationPath<T>>(path: K, column: string, value: any): th
 }
 
 private async _resolvePendingRelated(): Promise<void> {
-  if (!this._pendingRelated.length) return;
+    if (!this._pendingRelated.length) return;
 
-  const dialect = Dialects[this.orm?.dialect || "sqlite"];
+    const dialect = Dialects[this.orm?.dialect || "sqlite"];
 
-  for (const pending of this._pendingRelated) {
-  const { path, column, value } = pending;
-  const op = (pending as any).op ?? "=";
-    const parts = path.split(".");
-    let currentModelName = this.modelName;
+    for (const pending of this._pendingRelated) {
+      const { path, column, value } = pending;
+      const op = pending.op ?? "=";
+      const parts = path.split(".");
+      let currentModelName = this.modelName;
 
-    type Step = {
-      targetTable: string;
-      targetPK: string;
-      foreignKey: string;
-      parentHasFK: boolean;
-      currentTable: string;
-      currentPK: string;
-    };
+      type Step = {
+        targetTable: string;
+        targetPK: string;
+        foreignKey: string;
+        parentOwnsFK: boolean;
+        currentTable: string;
+        currentPK: string;
+      };
 
-    const steps: Step[] = [];
+      const steps: Step[] = [];
 
-    for (const part of parts) {
-      const resolved = this._resolveRelation(currentModelName, part);
-      if (!resolved) break;
+      for (const part of parts) {
+        const resolved = this._resolveRelation(currentModelName, part);
+        if (!resolved) break;
 
-      const { relation, targetSchema, currentSchema } = resolved;
-      const foreignKey =
-        relation.foreignKey ||
-        relation.meta?.foreignKey ||
-        relation.meta?.foreignkey;
+        const { relation, targetSchema, currentSchema } = resolved;
+        const foreignKey =
+          relation.foreignKey ||
+          relation.meta?.foreignKey ||
+          relation.meta?.foreignkey;
 
-      steps.push({
-        targetTable: targetSchema.table,
-        targetPK: targetSchema.primaryKey || "id",
-        foreignKey,
-        parentHasFK: !!(currentSchema.fields && foreignKey in currentSchema.fields),
-        currentTable: currentSchema.table,
-        currentPK: currentSchema.primaryKey || "id",
-      });
+        steps.push({
+          targetTable: targetSchema.table,
+          targetPK: targetSchema.primaryKey || "id",
+          foreignKey,
+          parentOwnsFK: !!(currentSchema.fields && foreignKey in currentSchema.fields),
+          currentTable: currentSchema.table,
+          currentPK: currentSchema.primaryKey || "id",
+        });
 
-      currentModelName = relation.targetModel;
-    }
-
-    if (!steps.length) continue;
-
-    // Step 1: fetch matching ids from the final (deepest) table using op
-const lastStep = steps[steps.length - 1];
-const finalSql = `SELECT ${dialect.quoteIdentifier(lastStep.targetPK)} FROM ${dialect.quoteIdentifier(lastStep.targetTable)} WHERE ${dialect.quoteIdentifier(column)} ${op} ${dialect.formatPlaceholder(0)}`;
-    const finalRes = await this.exec(finalSql, [value]);
-    let matchingIds: any[] = (finalRes.rows || []).map((r: any) => r[lastStep.targetPK]);
-
-    if (!matchingIds.length) {
-      this._where.push({ raw: "1 = 0", kind: "and" });
-      continue;
-    }
-
-    // Step 2: walk backwards through steps collecting ids at each level
-    for (let i = steps.length - 1; i >= 1; i--) {
-      const step = steps[i];
-      const prevStep = steps[i - 1];
-      const ph = matchingIds.map((_: any, idx: number) => dialect.formatPlaceholder(idx)).join(", ");
-
-      let sql: string;
-
-      if (step.parentHasFK) {
-        // prev (parent) table owns the FK — select parent PKs where FK is in matchingIds
-        sql = `SELECT ${dialect.quoteIdentifier(prevStep.currentPK)} FROM ${dialect.quoteIdentifier(prevStep.currentTable)} WHERE ${dialect.quoteIdentifier(step.foreignKey)} IN (${ph})`;
-      } else {
-        // current (target) table owns the FK — select the FK values (which are parent PKs)
-        sql = `SELECT ${dialect.quoteIdentifier(step.foreignKey)} FROM ${dialect.quoteIdentifier(step.targetTable)} WHERE ${dialect.quoteIdentifier(step.targetPK)} IN (${ph})`;
+        currentModelName = relation.targetModel;
       }
 
-      const res = await this.exec(sql, matchingIds);
-      matchingIds = (res.rows || []).map((r: any) => Object.values(r)[0]);
+      if (!steps.length) continue;
+
+      // Step 1: get matching ids from the final (deepest) table
+      const lastStep = steps[steps.length - 1];
+      const finalSql = `SELECT ${dialect.quoteIdentifier(lastStep.targetPK)} FROM ${dialect.quoteIdentifier(lastStep.targetTable)} WHERE ${dialect.quoteIdentifier(column)} ${op} ${dialect.formatPlaceholder(0)}`;
+      const finalRes = await this.exec(finalSql, [value]);
+      let matchingIds: any[] = (finalRes.rows || []).map((r: any) => r[lastStep.targetPK]);
 
       if (!matchingIds.length) {
         this._where.push({ raw: "1 = 0", kind: "and" });
-        break;
+        continue;
       }
+
+      // Step 2: walk backwards through steps
+      // At each step i, matchingIds are ids of steps[i].targetTable
+      // We need to find ids of steps[i].currentTable to pass up to the next level
+      for (let i = steps.length - 1; i >= 1; i--) {
+        const step = steps[i];
+        const ph = matchingIds.map((_: any, idx: number) => dialect.formatPlaceholder(idx)).join(", ");
+
+        let sql: string;
+
+        if (step.parentOwnsFK) {
+          // step.currentTable owns the FK pointing at step.targetTable
+          // matchingIds are step.targetTable PKs
+          // want: step.currentTable PKs where FK IN matchingIds
+          sql = `SELECT ${dialect.quoteIdentifier(step.currentPK)} FROM ${dialect.quoteIdentifier(step.currentTable)} WHERE ${dialect.quoteIdentifier(step.foreignKey)} IN (${ph})`;
+        } else {
+          // step.targetTable owns the FK pointing at step.currentTable
+          // matchingIds are step.targetTable PKs
+          // want: the FK values from step.targetTable (which are step.currentTable PKs)
+          sql = `SELECT ${dialect.quoteIdentifier(step.foreignKey)} FROM ${dialect.quoteIdentifier(step.targetTable)} WHERE ${dialect.quoteIdentifier(step.targetPK)} IN (${ph})`;
+        }
+
+        const res = await this.exec(sql, matchingIds);
+        matchingIds = [...new Set((res.rows || []).map((r: any) => Object.values(r)[0]))];
+
+        if (!matchingIds.length) {
+          this._where.push({ raw: "1 = 0", kind: "and" });
+          break;
+        }
+      }
+
+      if (!matchingIds.length) continue;
+
+      // Step 3: apply final IN filter on root table using steps[0]
+      // matchingIds are now steps[0].targetTable PKs
+      // root table links to steps[0].targetTable via steps[0].foreignKey
+      const firstStep = steps[0];
+      const ph = matchingIds.map((_: any, idx: number) => dialect.formatPlaceholder(idx)).join(", ");
+
+      const rootFilterSql = firstStep.parentOwnsFK
+        // root table has the FK (e.g. assessments.moduleId) → filter by it
+        ? `${dialect.quoteIdentifier(this.table)}.${dialect.quoteIdentifier(firstStep.foreignKey)} IN (${ph})`
+        // target table has the FK pointing at root → filter root by PK
+        : `${dialect.quoteIdentifier(this.table)}.${dialect.quoteIdentifier(firstStep.currentPK)} IN (${ph})`;
+
+      this._where.push({ raw: rootFilterSql, value: matchingIds, kind: "and" });
     }
 
-    if (!matchingIds.length) continue;
-
-    // Step 3: apply final IN filter on the root table
-    const firstStep = steps[0];
-    const ph = matchingIds.map((_: any, idx: number) => dialect.formatPlaceholder(idx)).join(", ");
-
-    const rootFilterSql = firstStep.parentHasFK
-      ? `${dialect.quoteIdentifier(this.table)}.${dialect.quoteIdentifier(firstStep.foreignKey)} IN (${ph})`
-      : `${dialect.quoteIdentifier(this.table)}.${dialect.quoteIdentifier(firstStep.currentPK)} IN (${ph})`;
-
-    this._where.push({ raw: rootFilterSql, value: matchingIds, kind: "and" });
+    this._pendingRelated = [];
   }
-
-  this._pendingRelated = [];
-}
-
   /**
    * Automatically find the join path between the current model and a
    * target model by traversing the schema relation graph (BFS), then
@@ -672,6 +680,7 @@ const finalSql = `SELECT ${dialect.quoteIdentifier(lastStep.targetPK)} FROM ${di
       );
     }
 
+console.log("relatedTo BFS path:", foundPath.join(".")); 
     return this.whereRelated(foundPath.join("."), column, value);
   }
 
@@ -872,6 +881,7 @@ const finalSql = `SELECT ${dialect.quoteIdentifier(lastStep.targetPK)} FROM ${di
     page: number,
     perPage: number
   ): Promise<{ data: T[]; total: number; page: number; lastPage: number }> {
+    await this._resolvePendingRelated();
     const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
     let total = 0;
 
@@ -914,6 +924,7 @@ const finalSql = `SELECT ${dialect.quoteIdentifier(lastStep.targetPK)} FROM ${di
    *   .get();
    */
   async get(): Promise<T[]> {
+    await this._resolvePendingRelated();
     const { sql, params } = this.buildSql();
     const res = await this.exec(sql, params);
     let rows = (res.rows || []) as T[];
@@ -988,6 +999,7 @@ const finalSql = `SELECT ${dialect.quoteIdentifier(lastStep.targetPK)} FROM ${di
     }
 
     if (!this._limit) this.limit(1);
+    // get() calls _resolvePendingRelated — do NOT call it here too
     const rows = await this.get();
     return rows[0] || null;
   }

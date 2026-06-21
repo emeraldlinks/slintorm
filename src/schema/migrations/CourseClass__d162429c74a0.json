@@ -3,8 +3,8 @@
   "modelName": "CourseClass",
   "tableName": "classes",
   "schemaHash": "d162429c74a011741ab1c62dc99ffff0c93afe28ea2b9adbb3c8311c14870f5e",
-  "batch": 3,
-  "appliedAt": "2026-06-21T01:53:09.815Z",
+  "batch": 1,
+  "appliedAt": "2026-06-21T09:00:15.325Z",
   "fields": [
     "id",
     "trackId",

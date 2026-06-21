@@ -3,8 +3,8 @@
   "modelName": "PortfolioItem",
   "tableName": "portfolio_items",
   "schemaHash": "dd7c9c6534077276a369db1de0fc7dcd6d9e5e18a5194aac685834449b3c6268",
-  "batch": 3,
-  "appliedAt": "2026-06-21T01:53:09.936Z",
+  "batch": 1,
+  "appliedAt": "2026-06-21T09:00:15.385Z",
   "fields": [
     "id",
     "userId",

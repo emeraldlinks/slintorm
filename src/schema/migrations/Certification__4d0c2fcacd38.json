@@ -3,8 +3,8 @@
   "modelName": "Certification",
   "tableName": "certifications",
   "schemaHash": "4d0c2fcacd389d8b8baa357267a5a06b909541d6f42bb2a38c2343a3df870026",
-  "batch": 3,
-  "appliedAt": "2026-06-21T01:53:09.793Z",
+  "batch": 1,
+  "appliedAt": "2026-06-21T09:00:15.312Z",
   "fields": [
     "id",
     "enrollmentId",

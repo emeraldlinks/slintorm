@@ -3,8 +3,8 @@
   "modelName": "Module",
   "tableName": "modules",
   "schemaHash": "4ec5b17898edb2ec3a465c648e0bdd2ffd0f4962a7ad20a233171f6252112b5c",
-  "batch": 3,
-  "appliedAt": "2026-06-21T01:53:09.860Z",
+  "batch": 1,
+  "appliedAt": "2026-06-21T09:00:15.349Z",
   "fields": [
     "id",
     "trackId",

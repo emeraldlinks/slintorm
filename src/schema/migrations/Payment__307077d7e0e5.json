@@ -3,8 +3,8 @@
   "modelName": "Payment",
   "tableName": "payments",
   "schemaHash": "307077d7e0e5d9913c44825a8a872634b16567711e9eb2f967cecf152dd51d43",
-  "batch": 3,
-  "appliedAt": "2026-06-21T01:53:09.870Z",
+  "batch": 1,
+  "appliedAt": "2026-06-21T09:00:15.358Z",
   "fields": [
     "id",
     "userId",
