@@ -1,0 +1,22 @@
+{
+  "name": "Module__4ec5b17898ed",
+  "modelName": "Module",
+  "tableName": "modules",
+  "schemaHash": "4ec5b17898edb2ec3a465c648e0bdd2ffd0f4962a7ad20a233171f6252112b5c",
+  "batch": 3,
+  "appliedAt": "2026-06-21T01:53:09.860Z",
+  "fields": [
+    "id",
+    "trackId",
+    "title",
+    "description",
+    "weekNumber",
+    "durationHours",
+    "learningObjectives",
+    "resources",
+    "isPublished",
+    "createdAt",
+    "updatedAt",
+    "track"
+  ]
+}

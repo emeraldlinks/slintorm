@@ -1,0 +1,23 @@
+{
+  "name": "Track__dc6b5d9a9710",
+  "modelName": "Track",
+  "tableName": "tracks",
+  "schemaHash": "dc6b5d9a97104c57627f1a1fb7dadb9668a3024b5d058edf0e41d2c7ea61f414",
+  "batch": 3,
+  "appliedAt": "2026-06-21T01:53:09.986Z",
+  "fields": [
+    "id",
+    "name",
+    "description",
+    "slug",
+    "durationWeeks",
+    "price",
+    "isActive",
+    "certifications",
+    "createdAt",
+    "updatedAt",
+    "courseClass",
+    "cohorts",
+    "modules"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "Tutor__3bb10e844543",
+  "modelName": "Tutor",
+  "tableName": "tutors",
+  "schemaHash": "3bb10e844543379d1f425431b6a155162ececf66ad3877dad098fb5ef069e292",
+  "batch": 3,
+  "appliedAt": "2026-06-21T01:53:09.996Z",
+  "fields": [
+    "id",
+    "userId",
+    "specialisation",
+    "trackIds",
+    "linkedinUrl",
+    "isActive",
+    "contractType",
+    "createdAt",
+    "updatedAt"
+  ]
+}

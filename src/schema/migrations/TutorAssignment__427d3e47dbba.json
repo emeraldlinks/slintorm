@@ -1,0 +1,19 @@
+{
+  "name": "TutorAssignment__427d3e47dbba",
+  "modelName": "TutorAssignment",
+  "tableName": "tutor_assignments",
+  "schemaHash": "427d3e47dbba8754e12e65d713e1ad89ad619c0f89ae551eb6fbf585969e2bd7",
+  "batch": 3,
+  "appliedAt": "2026-06-21T01:53:10.007Z",
+  "fields": [
+    "id",
+    "tutorId",
+    "cohortId",
+    "weekStart",
+    "weekEnd",
+    "role",
+    "createdAt",
+    "updatedAt",
+    "tutor"
+  ]
+}

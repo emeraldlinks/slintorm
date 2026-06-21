@@ -86,7 +86,7 @@ export class QueryBuilder<T extends Record<string, any>> {
   protected _joins: string[] = [];
   protected _preloads: string[] = [];
   protected _exclude: string[] = [];
-
+protected _pendingRelated: { path: string; column: string; value: any; op?: OpComparison }[] = [];
   private _preloadCache = new Map<string, any[]>();
 
   protected table: string;
@@ -137,20 +137,32 @@ export class QueryBuilder<T extends Record<string, any>> {
   // ----------------------------------------------------------------
 
   /**
-   * Add an AND WHERE condition.
+   * Add an AND WHERE condition. If the column name is unqualified
+   * (no "table.column" dot) and the query currently has JOINs,
+   * it is automatically qualified with this model's own table name
+   * so it never collides with a same-named column on a joined table.
    *
    * @example
    * const users = await db.User.query()
    *   .where("status", "=", "active")
    *   .get();
    */
-  where<K extends keyof T>(column: K, op: OpComparison, value: T[K]) {
-    this._where.push({ column: column as string, op, value, kind: "and" });
-    return this;
+  where<K extends keyof T>(column: K | string, op: OpComparison, value: any) {
+  const col = column as string;
+  if (col.includes(".")) {
+    // Dotted path: "module.id" means traverse relation "module", filter by "id"
+    const lastDot = col.lastIndexOf(".");
+    const relationPath = col.slice(0, lastDot);
+    const fieldName = col.slice(lastDot + 1);
+    this._pendingRelated.push({ path: relationPath, column: fieldName, value, op });
+  } else {
+    this._where.push({ column: col, op, value, kind: "and" });
   }
+  return this;
+}
 
   /**
-   * Add an OR WHERE condition.
+   * Add an OR WHERE condition. Same auto-qualification rules as `where()`.
    *
    * @example
    * const users = await db.User.query()
@@ -315,7 +327,8 @@ export class QueryBuilder<T extends Record<string, any>> {
    *   .get();
    */
   join(table: string, onLeft: string, op: string, onRight: string) {
-    this._joins.push(`JOIN ${table} ON ${onLeft} ${op} ${onRight}`);
+    const clause = `JOIN ${table} ON ${onLeft} ${op} ${onRight}`;
+    if (!this._joins.includes(clause)) this._joins.push(clause);
     return this;
   }
 
@@ -328,7 +341,8 @@ export class QueryBuilder<T extends Record<string, any>> {
    *   .get();
    */
   leftJoin(table: string, onLeft: string, op: string, onRight: string) {
-    this._joins.push(`LEFT JOIN ${table} ON ${onLeft} ${op} ${onRight}`);
+    const clause = `LEFT JOIN ${table} ON ${onLeft} ${op} ${onRight}`;
+    if (!this._joins.includes(clause)) this._joins.push(clause);
     return this;
   }
 
@@ -432,7 +446,9 @@ export class QueryBuilder<T extends Record<string, any>> {
    * Returns `this` so you can keep chaining `.where()`, `.get()`, etc.
    *
    * Use this when you need joins but still want to write the final
-   * WHERE condition yourself.
+   * WHERE condition yourself. Joins are de-duplicated automatically,
+   * so calling this (directly or via whereRelated/relatedTo) multiple
+   * times with overlapping paths is safe.
    *
    * @param path - Dot-separated relation field names to traverse,
    *   e.g. `"module.cohort.enrollment"`.
@@ -444,7 +460,6 @@ export class QueryBuilder<T extends Record<string, any>> {
    *   .preload("module")
    *   .get();
    */
-
   throughRelation<K extends RelationPath<T>> (path: K) {
     const parts = path.split(".");
     let currentModelName = this.modelName;
@@ -467,13 +482,11 @@ export class QueryBuilder<T extends Record<string, any>> {
         currentSchema.fields && foreignKey in currentSchema.fields;
 
       if (parentHasFK) {
-        this._joins.push(
-          `JOIN ${targetTable} ON ${targetTable}.${targetPK} = ${currentTable}.${foreignKey}`
-        );
+        const clause = `JOIN ${targetTable} ON ${targetTable}.${targetPK} = ${currentTable}.${foreignKey}`;
+        if (!this._joins.includes(clause)) this._joins.push(clause);
       } else {
-        this._joins.push(
-          `JOIN ${targetTable} ON ${targetTable}.${foreignKey} = ${currentTable}.${currentPK}`
-        );
+        const clause = `JOIN ${targetTable} ON ${targetTable}.${foreignKey} = ${currentTable}.${currentPK}`;
+        if (!this._joins.includes(clause)) this._joins.push(clause);
       }
 
       currentModelName = relation.targetModel;
@@ -482,55 +495,135 @@ export class QueryBuilder<T extends Record<string, any>> {
     return this;
   }
 
-  /**
-   * Traverse a dot-separated relation path, apply all intermediate JOINs
-   * automatically, then filter by a column on the final table.
-   *
-   * Combines `throughRelation` + a WHERE in one call.
-   *
-   * @param path - Dot-separated relation field names, e.g. `"module.cohort.enrollment"`.
-   * @param column - Column name on the final relation's table to filter by.
-   * @param value - Value to match against.
-   *
-   * @example
-   * const assessments = await db.Assessment.query()
-   *   .whereRelated("module.cohort.enrollment", "userId", session.id)
-   *   .preload("module")
-   *   .get();
-   */
-  whereRelated<K extends RelationPath<T>> (path: K, column: string, value: any) {
-    this.throughRelation(path);
+ /**
+ * Traverse a dot-separated relation path using nested IN subqueries
+ * instead of JOINs, then filter the root table by matching ids.
+ * This avoids column name collisions entirely.
+ *
+ * @param path - Dot-separated relation field names, e.g. `"module.track.cohorts.enrollments"`.
+ * @param column - Column name on the final relation's table to filter by.
+ * @param value - Value to match against.
+ *
+ * @example
+ * const assessments = await db.Assessment.query()
+ *   .whereRelated("module.track.cohorts.enrollments", "id", enrollment.id)
+ *   .where("id", "=", 2)
+ *   .get();
+ */
+whereRelated<K extends RelationPath<T>>(path: K, column: string, value: any): this {
+  // Store the pending async filter — resolved lazily in get()/first()
+  this._pendingRelated.push({ path: path as string, column, value });
+  return this;
+}
 
-    // Walk the path to find the final model's table name
+private async _resolvePendingRelated(): Promise<void> {
+  if (!this._pendingRelated.length) return;
+
+  const dialect = Dialects[this.orm?.dialect || "sqlite"];
+
+  for (const pending of this._pendingRelated) {
+  const { path, column, value } = pending;
+  const op = (pending as any).op ?? "=";
     const parts = path.split(".");
     let currentModelName = this.modelName;
-    let finalTable: string | null = null;
+
+    type Step = {
+      targetTable: string;
+      targetPK: string;
+      foreignKey: string;
+      parentHasFK: boolean;
+      currentTable: string;
+      currentPK: string;
+    };
+
+    const steps: Step[] = [];
 
     for (const part of parts) {
       const resolved = this._resolveRelation(currentModelName, part);
       if (!resolved) break;
-      finalTable = resolved.targetSchema.table;
-      currentModelName = resolved.relation.targetModel;
+
+      const { relation, targetSchema, currentSchema } = resolved;
+      const foreignKey =
+        relation.foreignKey ||
+        relation.meta?.foreignKey ||
+        relation.meta?.foreignkey;
+
+      steps.push({
+        targetTable: targetSchema.table,
+        targetPK: targetSchema.primaryKey || "id",
+        foreignKey,
+        parentHasFK: !!(currentSchema.fields && foreignKey in currentSchema.fields),
+        currentTable: currentSchema.table,
+        currentPK: currentSchema.primaryKey || "id",
+      });
+
+      currentModelName = relation.targetModel;
     }
 
-    const targetTable = finalTable ?? parts[parts.length - 1] + "s";
+    if (!steps.length) continue;
 
-    this._where.push({
-      raw: `${targetTable}.${column} = ?`,
-      value,
-      kind: "and",
-    });
+    // Step 1: fetch matching ids from the final (deepest) table using op
+const lastStep = steps[steps.length - 1];
+const finalSql = `SELECT ${dialect.quoteIdentifier(lastStep.targetPK)} FROM ${dialect.quoteIdentifier(lastStep.targetTable)} WHERE ${dialect.quoteIdentifier(column)} ${op} ${dialect.formatPlaceholder(0)}`;
+    const finalRes = await this.exec(finalSql, [value]);
+    let matchingIds: any[] = (finalRes.rows || []).map((r: any) => r[lastStep.targetPK]);
 
-    return this;
+    if (!matchingIds.length) {
+      this._where.push({ raw: "1 = 0", kind: "and" });
+      continue;
+    }
+
+    // Step 2: walk backwards through steps collecting ids at each level
+    for (let i = steps.length - 1; i >= 1; i--) {
+      const step = steps[i];
+      const prevStep = steps[i - 1];
+      const ph = matchingIds.map((_: any, idx: number) => dialect.formatPlaceholder(idx)).join(", ");
+
+      let sql: string;
+
+      if (step.parentHasFK) {
+        // prev (parent) table owns the FK — select parent PKs where FK is in matchingIds
+        sql = `SELECT ${dialect.quoteIdentifier(prevStep.currentPK)} FROM ${dialect.quoteIdentifier(prevStep.currentTable)} WHERE ${dialect.quoteIdentifier(step.foreignKey)} IN (${ph})`;
+      } else {
+        // current (target) table owns the FK — select the FK values (which are parent PKs)
+        sql = `SELECT ${dialect.quoteIdentifier(step.foreignKey)} FROM ${dialect.quoteIdentifier(step.targetTable)} WHERE ${dialect.quoteIdentifier(step.targetPK)} IN (${ph})`;
+      }
+
+      const res = await this.exec(sql, matchingIds);
+      matchingIds = (res.rows || []).map((r: any) => Object.values(r)[0]);
+
+      if (!matchingIds.length) {
+        this._where.push({ raw: "1 = 0", kind: "and" });
+        break;
+      }
+    }
+
+    if (!matchingIds.length) continue;
+
+    // Step 3: apply final IN filter on the root table
+    const firstStep = steps[0];
+    const ph = matchingIds.map((_: any, idx: number) => dialect.formatPlaceholder(idx)).join(", ");
+
+    const rootFilterSql = firstStep.parentHasFK
+      ? `${dialect.quoteIdentifier(this.table)}.${dialect.quoteIdentifier(firstStep.foreignKey)} IN (${ph})`
+      : `${dialect.quoteIdentifier(this.table)}.${dialect.quoteIdentifier(firstStep.currentPK)} IN (${ph})`;
+
+    this._where.push({ raw: rootFilterSql, value: matchingIds, kind: "and" });
   }
+
+  this._pendingRelated = [];
+}
 
   /**
    * Automatically find the join path between the current model and a
    * target model by traversing the schema relation graph (BFS), then
    * apply all intermediate JOINs and filter by a column on the target table.
    *
-   * You only need to know the target model name — no path required.
-   * Throws if no path exists between the two models.
+   * NOTE: if more than one relation path exists between the two models,
+   * BFS will pick whichever is shortest / first-found, which may not be
+   * the path you intend. When you already know the relation chain,
+   * prefer `whereRelated(path, column, value)` instead — it's explicit
+   * and has no ambiguity.
    *
    * @param targetModelName - The model name to relate to, e.g. `"Enrollment"`.
    * @param column - Column on the target model's table to filter by.
@@ -542,7 +635,7 @@ export class QueryBuilder<T extends Record<string, any>> {
    *   .preload("module")
    *   .get();
    */
-    relatedTo(targetModelName: string, column: string, value: any) {
+  relatedTo(targetModelName: string, column: string, value: any) {
     // BFS: find shortest relation path from current model to target model
     const queue: { modelName: string; path: string[] }[] = [
       { modelName: this.modelName, path: [] },
@@ -657,9 +750,18 @@ export class QueryBuilder<T extends Record<string, any>> {
 
     const dialect = Dialects[this.orm?.dialect || "sqlite"];
     let sql = "SELECT ";
-    sql += this._selects?.length
-      ? (this._selects as string[]).map((c) => dialect.quoteIdentifier(c)).join(", ")
-      : "*";
+
+    if (this._selects?.length) {
+      sql += (this._selects as string[])
+        .map((c) => dialect.quoteIdentifier(c))
+        .join(", ");
+    } else if (this._joins.length) {
+      // Avoid column name collisions when joins are present
+      sql += `${dialect.quoteIdentifier(this.table)}.*`;
+    } else {
+      sql += "*";
+    }
+
     sql += ` FROM ${dialect.quoteIdentifier(this.table)}`;
     if (this._joins.length) sql += " " + this._joins.join(" ");
 
@@ -681,6 +783,16 @@ export class QueryBuilder<T extends Record<string, any>> {
     return { sql, params };
   }
 
+  /**
+   * Build the WHERE clause SQL. Any column reference that is NOT
+   * already dot-qualified (e.g. "id" rather than "enrollments.id")
+   * gets automatically qualified with this model's own table name,
+   * but ONLY when joins are present on the query. This means
+   * .where("id", "=", x) always means "this model's id" even after
+   * joining in other tables that also have an "id" column — avoiding
+   * "ambiguous column name" errors — while plain (joinless) queries
+   * are completely unaffected.
+   */
   protected _buildWhereSql(startIndex = 0): { sql: string; params: any[] } {
     if (!this._where.length) return { sql: "", params: [] };
 
@@ -689,30 +801,42 @@ export class QueryBuilder<T extends Record<string, any>> {
     let paramIndex = startIndex;
     const parts: string[] = [];
 
+    const quoteRef = (ref: string): string =>
+      ref
+        .split(".")
+        .map((part) => dialect.quoteIdentifier(part))
+        .join(".");
+
+    const qualify = (col: string | undefined): string => {
+      const c = String(col);
+      if (this._joins.length && !c.includes(".")) return `${this.table}.${c}`;
+      return c;
+    };
+
     for (let i = 0; i < this._where.length; i++) {
       const w = this._where[i];
       const connector = i === 0 ? "" : w.kind === "or" ? " OR " : " AND ";
 
       if (w.kind === "null") {
-        parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} IS NULL`);
+        parts.push(`${connector}${quoteRef(qualify(w.column))} IS NULL`);
         continue;
       }
       if (w.kind === "notnull") {
-        parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} IS NOT NULL`);
+        parts.push(`${connector}${quoteRef(qualify(w.column))} IS NOT NULL`);
         continue;
       }
       if (w.kind === "in" || w.kind === "notin") {
         const placeholders = (w.value as any[]).map(() => dialect.formatPlaceholder(paramIndex++));
         params.push(...w.value);
         const op = w.kind === "in" ? "IN" : "NOT IN";
-        parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} ${op} (${placeholders.join(", ")})`);
+        parts.push(`${connector}${quoteRef(qualify(w.column))} ${op} (${placeholders.join(", ")})`);
         continue;
       }
       if (w.kind === "between") {
         const ph1 = dialect.formatPlaceholder(paramIndex++);
         const ph2 = dialect.formatPlaceholder(paramIndex++);
         params.push(w.value[0], w.value[1]);
-        parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} BETWEEN ${ph1} AND ${ph2}`);
+        parts.push(`${connector}${quoteRef(qualify(w.column))} BETWEEN ${ph1} AND ${ph2}`);
         continue;
       }
       if (w.raw) {
@@ -725,7 +849,7 @@ export class QueryBuilder<T extends Record<string, any>> {
       }
       const ph = dialect.formatPlaceholder(paramIndex++);
       params.push(w.value);
-      parts.push(`${connector}${dialect.quoteIdentifier(String(w.column))} ${w.op} ${ph}`);
+      parts.push(`${connector}${quoteRef(qualify(w.column))} ${w.op} ${ph}`);
     }
 
     return { sql: parts.join(""), params };
@@ -822,6 +946,8 @@ export class QueryBuilder<T extends Record<string, any>> {
   /**
    * Execute the query and return the first matching row, or null.
    * Optionally accepts an inline condition (object or raw string).
+   * Object conditions go through `where()`, so they get the same
+   * automatic table-qualification when joins are present.
    *
    * @example
    * const user = await db.User.query()

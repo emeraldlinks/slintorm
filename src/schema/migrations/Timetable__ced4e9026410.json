@@ -1,0 +1,28 @@
+{
+  "name": "Timetable__ced4e9026410",
+  "modelName": "Timetable",
+  "tableName": "timetables",
+  "schemaHash": "ced4e90264105bb871630f96b6c1c35a6e6a22bdf7cc918d199f121df6da8e85",
+  "batch": 3,
+  "appliedAt": "2026-06-21T01:53:09.980Z",
+  "fields": [
+    "id",
+    "classId",
+    "trackId",
+    "cohortId",
+    "tutorId",
+    "title",
+    "description",
+    "sessionDate",
+    "startTime",
+    "endTime",
+    "location",
+    "mode",
+    "createdAt",
+    "updatedAt",
+    "class",
+    "track",
+    "tutor",
+    "cohort"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "name": "PlacementPartner__cfaeb7b08764",
+  "modelName": "PlacementPartner",
+  "tableName": "placement_partners",
+  "schemaHash": "cfaeb7b08764d741184cd156284181c0440227c4c20948ce4c6ecd3a6638c1c0",
+  "batch": 3,
+  "appliedAt": "2026-06-21T01:53:09.903Z",
+  "fields": [
+    "id",
+    "companyName",
+    "industry",
+    "website",
+    "contactName",
+    "contactEmail",
+    "contactPhone",
+    "size",
+    "location",
+    "country",
+    "partnerSince",
+    "isActive",
+    "assignedInterns",
+    "lastAllocatedAt",
+    "notes",
+    "createdAt",
+    "updatedAt",
+    "placements"
+  ]
+}

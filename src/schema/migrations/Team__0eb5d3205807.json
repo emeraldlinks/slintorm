@@ -4,7 +4,7 @@
   "tableName": "team",
   "schemaHash": "0eb5d3205807fdff251dcdf3fb9e895b02127cb7c34c6b86dd6b71e635a60647",
   "batch": 1,
-  "appliedAt": "2026-06-20T14:18:19.505Z",
+  "appliedAt": "2026-06-21T03:04:35.100Z",
   "fields": [
     "id",
     "title",

@@ -1,0 +1,24 @@
+{
+  "name": "Message__fe4d02dbe8fe",
+  "modelName": "Message",
+  "tableName": "messages",
+  "schemaHash": "fe4d02dbe8fe99493e4e46259380a34eedadbf2821d7347a63e0067419591123",
+  "batch": 3,
+  "appliedAt": "2026-06-21T01:53:09.837Z",
+  "fields": [
+    "id",
+    "conversationId",
+    "senderId",
+    "recipientId",
+    "senderRole",
+    "recipientRole",
+    "content",
+    "attachmentUrl",
+    "attachmentType",
+    "isRead",
+    "createdAt",
+    "updatedAt",
+    "sender",
+    "recepient"
+  ]
+}

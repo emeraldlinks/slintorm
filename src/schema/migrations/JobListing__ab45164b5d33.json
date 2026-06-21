@@ -1,0 +1,26 @@
+{
+  "name": "JobListing__ab45164b5d33",
+  "modelName": "JobListing",
+  "tableName": "job_listings",
+  "schemaHash": "ab45164b5d3350d48c61db575847634ffdbe61280b42430ebeb3f04908042d9c",
+  "batch": 3,
+  "appliedAt": "2026-06-21T01:53:09.830Z",
+  "fields": [
+    "id",
+    "partnerId",
+    "trackId",
+    "title",
+    "description",
+    "type",
+    "location",
+    "isRemote",
+    "salaryRange",
+    "requirements",
+    "applicationUrl",
+    "status",
+    "postedAt",
+    "closesAt",
+    "createdAt",
+    "updatedAt"
+  ]
+}

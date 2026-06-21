@@ -1,0 +1,23 @@
+{
+  "name": "Assessment__d6d98d38acf0",
+  "modelName": "Assessment",
+  "tableName": "assessments",
+  "schemaHash": "d6d98d38acf0be9cf73249c382ba9ff372262f430639df87e33a963ef9f7803b",
+  "batch": 3,
+  "appliedAt": "2026-06-21T01:53:09.775Z",
+  "fields": [
+    "id",
+    "moduleId",
+    "title",
+    "description",
+    "type",
+    "maxScore",
+    "dueOffsetDays",
+    "isRequired",
+    "createdAt",
+    "updatedAt",
+    "module",
+    "submitted",
+    "enrollment"
+  ]
+}

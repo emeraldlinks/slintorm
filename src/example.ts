@@ -106,7 +106,7 @@ interface Todo {
   // @json;nullable
   meta?: Record<string, any>;
   // @enum:(low,medium,high)
-  priority?: "low" | "medium" | "high";
+  priority?: "low" | "medium" | "high"; 
 }
 
 /** Team table */

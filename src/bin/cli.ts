@@ -1032,6 +1032,8 @@ ${c.bold}Commands:${c.reset}
   ${c.cyan}rollback${c.reset}    Undo migrations back to a batch or migration name
   ${c.cyan}status${c.reset}      Show applied / pending migrations
   ${c.cyan}fresh${c.reset}       Drop all tables then re-run all migrations
+  ${c.cyan}drop-tracking${c.reset} Drop the internal migration tracking table
+
 
 ${c.bold}Config:${c.reset}
   Create ${c.white}slintorm.config.js${c.reset} in your project root:

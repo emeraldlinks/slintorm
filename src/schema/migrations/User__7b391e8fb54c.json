@@ -1,0 +1,25 @@
+{
+  "name": "User__7b391e8fb54c",
+  "modelName": "User",
+  "tableName": "users",
+  "schemaHash": "7b391e8fb54cd3c372747da4b0cd8f4752b47647286b40e278eca4651aba4a48",
+  "batch": 3,
+  "appliedAt": "2026-06-21T01:53:10.093Z",
+  "fields": [
+    "id",
+    "name",
+    "email",
+    "password",
+    "phone",
+    "role",
+    "status",
+    "avatarUrl",
+    "bio",
+    "city",
+    "country",
+    "createdAt",
+    "updatedAt",
+    "payments",
+    "enrollments"
+  ]
+}

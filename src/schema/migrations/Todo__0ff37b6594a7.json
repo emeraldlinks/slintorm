@@ -4,7 +4,7 @@
   "tableName": "todo",
   "schemaHash": "0ff37b6594a72cd4a64a6743ea3a464c721802fb69a6bc59dd237249d65524f0",
   "batch": 1,
-  "appliedAt": "2026-06-20T14:18:19.528Z",
+  "appliedAt": "2026-06-21T03:04:35.113Z",
   "fields": [
     "id",
     "title",

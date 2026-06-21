@@ -1,4 +1,441 @@
-{
+
+// AUTO-GENERATED SCHEMA - DO NOT EDIT
+// Schema Hash: 496321ec870927f8
+// Source Hash: fe27ff9c4cd11d11
+
+export interface User {
+  id?: number;
+  name: string;
+  email?: string;
+  password?: string;
+  phone?: string;
+  role?: string;
+  status?: string;
+  avatarUrl?: string;
+  bio?: string;
+  city?: string;
+  country?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  payments?: Payment[];
+  enrollments?: Enrollment[];
+}
+
+export interface Track {
+  id?: number;
+  name: string;
+  description: string;
+  slug: string;
+  durationWeeks?: number;
+  price?: number;
+  isActive?: boolean;
+  certifications?: Certification[];
+  createdAt?: string;
+  updatedAt?: string;
+  courseClass?: CourseClass;
+  cohorts?: Cohort[];
+  modules?: Module[];
+}
+
+export interface Cohort {
+  id?: number;
+  name: string;
+  trackId: number;
+  slug?: string;
+  status?: string;
+  startDate?: string;
+  endDate?: string;
+  maxStudents?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  track?: Track;
+  enrollments?: Enrollment[];
+  price?: number;
+}
+
+export interface Application {
+  id?: number;
+  trackId: number;
+  motivation: string;
+  goals: string;
+  priorExperience?: string;
+  status?: string;
+  userId: number;
+  user?: User;
+  reviewedBy?: number;
+  reviewNote?: string;
+  aptitudeScore?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Enrollment {
+  id?: number;
+  userId: number;
+  user?: User;
+  cohortId: number;
+  weeklyScore?: number;
+  overallScore?: number;
+  tier?: string;
+  status?: string;
+  completedAt?: string;
+  paidAt?: string;
+  paymentRef?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  cohort?: Cohort;
+  payments?: Payment[];
+}
+
+export interface Module {
+  id?: number;
+  trackId: number;
+  title: string;
+  description: string;
+  weekNumber: number;
+  durationHours: number;
+  learningObjectives?: string[];
+  resources?: {label : string ; url : string ; type ? : string; }[];
+  isPublished?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  track?: Track;
+}
+
+export interface Assessment {
+  id?: number;
+  moduleId: number;
+  title: string;
+  description?: string;
+  type?: string;
+  maxScore?: number;
+  dueOffsetDays?: number;
+  isRequired?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  module?: Module;
+  submitted?: boolean;
+  enrollment?: Enrollment;
+}
+
+export interface Submission {
+  id?: number;
+  enrollmentId: number;
+  assessmentId: number;
+  submittedAt?: string;
+  fileUrl?: string;
+  notes?: string;
+  score?: number;
+  gradedBy?: number;
+  gradedAt?: string;
+  feedback?: string;
+  type?: "quiz" | "project" | "assignment";
+  status?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  attachments?: Record <string ,any >[];
+}
+
+export interface Certification {
+  id?: number;
+  enrollmentId: number;
+  name: string;
+  platform: string;
+  type?: string;
+  badgeUrl?: string;
+  verificationUrl?: string;
+  certificationCode?: string;
+  verifiedAt?: string;
+  completedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  enrollment?: Enrollment;
+  trackId?: number;
+  track?: Track;
+}
+
+export interface Message {
+  id?: number;
+  conversationId?: string;
+  senderId: number;
+  recipientId: number;
+  senderRole?: string;
+  recipientRole?: string;
+  content: string;
+  attachmentUrl?: string;
+  attachmentType?: string;
+  isRead?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  sender?: User;
+  recepient?: User;
+}
+
+export interface PortfolioItem {
+  id?: number;
+  userId: number;
+  title: string;
+  description?: string;
+  fileUrl?: string;
+  fileType?: string;
+  visibility?: string;
+  status?: string;
+  tags?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Tutor {
+  id?: number;
+  userId: number;
+  specialisation?: string;
+  trackIds?: number[];
+  linkedinUrl?: string;
+  isActive?: boolean;
+  contractType?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface TutorAssignment {
+  id?: number;
+  tutorId: number;
+  cohortId: number;
+  weekStart?: number;
+  weekEnd?: number;
+  role?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  tutor?: Tutor;
+}
+
+export interface CourseClass {
+  id?: number;
+  trackId: number;
+  title: string;
+  description?: string;
+  room?: string;
+  conferenceLink?: string;
+  capacity?: number;
+  tutorId?: number;
+  cohortId?: number;
+  startDate?: string;
+  endDate?: string;
+  isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  track?: Track;
+  tutor?: Tutor;
+  cohort?: Cohort;
+  timetable?: Timetable[];
+}
+
+export interface Timetable {
+  id?: number;
+  classId: number;
+  trackId: number;
+  cohortId?: number;
+  tutorId?: number;
+  title: string;
+  description?: string;
+  sessionDate: string;
+  startTime: string;
+  endTime: string;
+  location?: string;
+  mode?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  class?: CourseClass;
+  track?: Track;
+  tutor?: Tutor;
+  cohort?: Cohort;
+}
+
+export interface PlacementPartner {
+  id?: number;
+  companyName: string;
+  industry?: string;
+  website?: string;
+  contactName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  size?: string;
+  location?: string;
+  country?: string;
+  partnerSince?: string;
+  isActive?: boolean;
+  assignedInterns?: number;
+  lastAllocatedAt?: string;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  placements?: Placement[];
+}
+
+export interface JobListing {
+  id?: number;
+  partnerId: number;
+  trackId?: number;
+  title: string;
+  description?: string;
+  type?: string;
+  location?: string;
+  isRemote?: boolean;
+  salaryRange?: string;
+  requirements?: string;
+  applicationUrl?: string;
+  status?: string;
+  postedAt?: string;
+  closesAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Placement {
+  id?: number;
+  userId: number;
+  user?: User;
+  partnerId?: number;
+  jobListingId?: number;
+  classId?: number;
+  enrollmentId?: number;
+  trackId?: number;
+  cohortId?: number;
+  cohort?: Cohort;
+  courseClass?: CourseClass;
+  companyName: string;
+  role: string;
+  type?: string;
+  level?: string;
+  isRemote?: boolean;
+  salaryRange?: string;
+  status?: string;
+  startDate?: string;
+  endDate?: string;
+  wasExtended?: boolean;
+  studentReport?: string;
+  partnerReport?: string;
+  durationWeeks?: number;
+  sourcedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  enrollment?: Enrollment;
+  partner?: PlacementPartner;
+}
+
+export interface ActivityLog {
+  id?: number;
+  userId?: number;
+  role?: string;
+  action: string;
+  path?: string;
+  method?: string;
+  details?: Record <string ,any > | string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Payment {
+  id?: number;
+  userId: number;
+  enrollmentId?: number;
+  cohortId?: number;
+  trackId?: number;
+  amount: number;
+  currency?: string;
+  method?: string;
+  status?: string;
+  reference?: string;
+  metadata?: Record <string ,any >;
+  createdAt?: string;
+  updatedAt?: string;
+  user?: User;
+  cohort?: Cohort;
+  enrollment?: Enrollment;
+  track?: Track;
+}
+
+export interface AlumniReport {
+  id?: number;
+  userId: number;
+  placementId?: number;
+  placement?: Placement;
+  reportedAt: string;
+  currentStatus?: string;
+  currentRole?: string;
+  currentCompany?: string;
+  monthlySalary?: number;
+  isRemote?: boolean;
+  satisfactionScore?: number;
+  programmeRating?: number;
+  testimonial?: string;
+  isPublic?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Announcement {
+  id?: number;
+  authorId: number;
+  author?: User;
+  cohortId?: number;
+  trackId?: number;
+  title: string;
+  body: string;
+  priority?: string;
+  publishedAt?: string;
+  expiresAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Attendance {
+  id?: number;
+  enrollmentId: number;
+  moduleId: number;
+  sessionDate: string;
+  attended?: boolean;
+  excused?: boolean;
+  note?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PPT {
+  id?: number;
+  companyName: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type ModelMap = {
+  User: User;
+  Track: Track;
+  Cohort: Cohort;
+  Application: Application;
+  Enrollment: Enrollment;
+  Module: Module;
+  Assessment: Assessment;
+  Submission: Submission;
+  Certification: Certification;
+  Message: Message;
+  PortfolioItem: PortfolioItem;
+  Tutor: Tutor;
+  TutorAssignment: TutorAssignment;
+  CourseClass: CourseClass;
+  Timetable: Timetable;
+  PlacementPartner: PlacementPartner;
+  JobListing: JobListing;
+  Placement: Placement;
+  ActivityLog: ActivityLog;
+  Payment: Payment;
+  AlumniReport: AlumniReport;
+  Announcement: Announcement;
+  Attendance: Attendance;
+  PPT: PPT;
+};
+
+export const schema = {
   "User": {
     "primaryKey": "id",
     "fields": {
@@ -124,377 +561,6 @@
       }
     ],
     "table": "users"
-  },
-  "Post": {
-    "primaryKey": "id",
-    "fields": {
-      "id": {
-        "type": "number | undefined",
-        "originalType": "number",
-        "optional": true,
-        "meta": {
-          "@index": true
-        }
-      },
-      "title": {
-        "type": "string",
-        "originalType": "string",
-        "optional": false,
-        "meta": {
-          "@length": "255",
-          "not null": true,
-          "comment": "Post title"
-        }
-      },
-      "body": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {
-          "@nullable": true,
-          "length": "1000"
-        }
-      },
-      "userId": {
-        "type": "number | undefined",
-        "originalType": "number",
-        "optional": true,
-        "meta": {
-          "@nullable": true,
-          "comment": "Author user ID"
-        }
-      },
-      "user": {
-        "type": "User | undefined",
-        "originalType": "User",
-        "optional": true,
-        "meta": {
-          "@relation manytoone": "User",
-          "foreignKey": "userId",
-          "onDelete": "SET NULL"
-        }
-      },
-      "meta": {
-        "type": "Record <string ,any > | undefined",
-        "originalType": "Record <string ,any >",
-        "optional": true,
-        "meta": {
-          "@json": true,
-          "nullable": true,
-          "comment": "Extra post data"
-        }
-      },
-      "createdAt": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {}
-      },
-      "updatedAt": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {}
-      },
-      "deletedAt": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {
-          "@softDelete": true
-        }
-      },
-      "status": {
-        "type": "\"draft\" | \"published\" | \"archived\" | undefined",
-        "originalType": "\"draft\" | \"published\" | \"archived\"",
-        "optional": true,
-        "meta": {
-          "@enum": "(draft,published,archived)"
-        }
-      }
-    },
-    "relations": [
-      {
-        "sourceModel": "Post",
-        "fieldName": "user",
-        "kind": "manytoone",
-        "targetModel": "User",
-        "foreignKey": "userId",
-        "meta": {
-          "@relation manytoone": "User",
-          "foreignKey": "userId",
-          "onDelete": "SET NULL"
-        }
-      }
-    ],
-    "table": "post"
-  },
-  "Todo": {
-    "primaryKey": "id",
-    "fields": {
-      "id": {
-        "type": "number | undefined",
-        "originalType": "number",
-        "optional": true,
-        "meta": {
-          "@index": true,
-          "auto": true,
-          "comment": "primary key"
-        }
-      },
-      "title": {
-        "type": "string",
-        "originalType": "string",
-        "optional": false,
-        "meta": {
-          "@length": "255",
-          "not null": true
-        }
-      },
-      "detail": {
-        "type": "string",
-        "originalType": "string",
-        "optional": false,
-        "meta": {
-          "@nullable": true,
-          "length": "1000"
-        }
-      },
-      "createdAt": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {}
-      },
-      "updatedAt": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {}
-      },
-      "deletedAt": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {
-          "@softDelete": true
-        }
-      },
-      "meta": {
-        "type": "Record <string ,any > | undefined",
-        "originalType": "Record <string ,any >",
-        "optional": true,
-        "meta": {
-          "@json": true,
-          "nullable": true
-        }
-      },
-      "priority": {
-        "type": "\"low\" | \"medium\" | \"high\" | undefined",
-        "originalType": "\"low\" | \"medium\" | \"high\"",
-        "optional": true,
-        "meta": {
-          "@enum": "(low,medium,high)"
-        }
-      }
-    },
-    "relations": [],
-    "table": "todo"
-  },
-  "Profile": {
-    "primaryKey": "id",
-    "fields": {
-      "id": {
-        "type": "number | undefined",
-        "originalType": "number",
-        "optional": true,
-        "meta": {
-          "@index": true,
-          "auto": true,
-          "comment": "primary key"
-        }
-      },
-      "user": {
-        "type": "User | undefined",
-        "originalType": "User",
-        "optional": true,
-        "meta": {
-          "@relation onetoone": "User",
-          "foreignKey": "userId"
-        }
-      },
-      "userId": {
-        "type": "number",
-        "originalType": "number",
-        "optional": false,
-        "meta": {}
-      },
-      "meta": {
-        "type": "Record <string ,any > | undefined",
-        "originalType": "Record <string ,any >",
-        "optional": true,
-        "meta": {
-          "@json": true,
-          "nullable": true,
-          "comment": "Extra profile data"
-        }
-      },
-      "createdAt": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {}
-      },
-      "updatedAt": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {}
-      },
-      "deletedAt": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {
-          "@softDelete": true
-        }
-      },
-      "gender": {
-        "type": "\"male\" | \"female\" | \"other\" | undefined",
-        "originalType": "\"male\" | \"female\" | \"other\"",
-        "optional": true,
-        "meta": {
-          "@enum": "(male,female,other)"
-        }
-      }
-    },
-    "relations": [
-      {
-        "sourceModel": "Profile",
-        "fieldName": "user",
-        "kind": "onetoone",
-        "targetModel": "User",
-        "foreignKey": "userId",
-        "meta": {
-          "@relation onetoone": "User",
-          "foreignKey": "userId"
-        }
-      }
-    ],
-    "table": "profile"
-  },
-  "Team": {
-    "primaryKey": "id",
-    "fields": {
-      "id": {
-        "type": "number | undefined",
-        "originalType": "number",
-        "optional": true,
-        "meta": {
-          "@index": true,
-          "auto": true
-        }
-      },
-      "title": {
-        "type": "string",
-        "originalType": "string",
-        "optional": false,
-        "meta": {
-          "@length": "255",
-          "not null": true
-        }
-      },
-      "detail": {
-        "type": "string",
-        "originalType": "string",
-        "optional": false,
-        "meta": {
-          "@nullable": true,
-          "length": "1000"
-        }
-      },
-      "open": {
-        "type": "boolean | undefined",
-        "originalType": "boolean",
-        "optional": true,
-        "meta": {
-          "@nullable": true
-        }
-      },
-      "tested": {
-        "type": "boolean | undefined",
-        "originalType": "boolean",
-        "optional": true,
-        "meta": {
-          "@nullable": true
-        }
-      },
-      "meta": {
-        "type": "Record <string ,any > | undefined",
-        "originalType": "Record <string ,any >",
-        "optional": true,
-        "meta": {
-          "@json": true,
-          "nullable": true
-        }
-      },
-      "createdAt": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {}
-      },
-      "updatedAt": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {}
-      },
-      "deletedAt": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {
-          "@softDelete": true
-        }
-      },
-      "status": {
-        "type": "\"active\" | \"archived\" | undefined",
-        "originalType": "\"active\" | \"archived\"",
-        "optional": true,
-        "meta": {
-          "@enum": "(active,archived)"
-        }
-      },
-      "members": {
-        "type": "User[] | undefined",
-        "originalType": "User[]",
-        "optional": true,
-        "meta": {
-          "@relation manytomany": "User",
-          "through": "team_members",
-          "foreignKey": "teamId",
-          "relatedKey": "userId"
-        }
-      }
-    },
-    "relations": [
-      {
-        "sourceModel": "Team",
-        "fieldName": "members",
-        "kind": "manytomany",
-        "targetModel": "User",
-        "foreignKey": "teamId",
-        "through": "team_members",
-        "meta": {
-          "@relation manytomany": "User",
-          "through": "team_members",
-          "foreignKey": "teamId",
-          "relatedKey": "userId"
-        }
-      }
-    ],
-    "table": "team"
   },
   "Track": {
     "primaryKey": "id",
@@ -3110,4 +3176,7 @@
     "relations": [],
     "table": "ppts"
   }
-}
+} as const;
+
+export type Schema = typeof schema;
+export type ModelName = keyof ModelMap;

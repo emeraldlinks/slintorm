@@ -1,0 +1,28 @@
+{
+  "name": "CourseClass__d162429c74a0",
+  "modelName": "CourseClass",
+  "tableName": "classes",
+  "schemaHash": "d162429c74a011741ab1c62dc99ffff0c93afe28ea2b9adbb3c8311c14870f5e",
+  "batch": 3,
+  "appliedAt": "2026-06-21T01:53:09.815Z",
+  "fields": [
+    "id",
+    "trackId",
+    "title",
+    "description",
+    "room",
+    "conferenceLink",
+    "capacity",
+    "tutorId",
+    "cohortId",
+    "startDate",
+    "endDate",
+    "isActive",
+    "createdAt",
+    "updatedAt",
+    "track",
+    "tutor",
+    "cohort",
+    "timetable"
+  ]
+}

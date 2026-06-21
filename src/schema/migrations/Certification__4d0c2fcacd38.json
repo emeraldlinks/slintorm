@@ -1,0 +1,25 @@
+{
+  "name": "Certification__4d0c2fcacd38",
+  "modelName": "Certification",
+  "tableName": "certifications",
+  "schemaHash": "4d0c2fcacd389d8b8baa357267a5a06b909541d6f42bb2a38c2343a3df870026",
+  "batch": 3,
+  "appliedAt": "2026-06-21T01:53:09.793Z",
+  "fields": [
+    "id",
+    "enrollmentId",
+    "name",
+    "platform",
+    "type",
+    "badgeUrl",
+    "verificationUrl",
+    "certificationCode",
+    "verifiedAt",
+    "completedAt",
+    "createdAt",
+    "updatedAt",
+    "enrollment",
+    "trackId",
+    "track"
+  ]
+}

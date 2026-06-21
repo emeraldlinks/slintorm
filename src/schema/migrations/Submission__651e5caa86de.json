@@ -1,0 +1,25 @@
+{
+  "name": "Submission__651e5caa86de",
+  "modelName": "Submission",
+  "tableName": "submissions",
+  "schemaHash": "651e5caa86de2092e1a00681125144140d087aa7fb4f77874bcf31a2c972e3b4",
+  "batch": 3,
+  "appliedAt": "2026-06-21T01:53:09.973Z",
+  "fields": [
+    "id",
+    "enrollmentId",
+    "assessmentId",
+    "submittedAt",
+    "fileUrl",
+    "notes",
+    "score",
+    "gradedBy",
+    "gradedAt",
+    "feedback",
+    "type",
+    "status",
+    "createdAt",
+    "updatedAt",
+    "attachments"
+  ]
+}

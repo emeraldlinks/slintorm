@@ -1,0 +1,19 @@
+{
+  "name": "Attendance__1d3e152cbf1b",
+  "modelName": "Attendance",
+  "tableName": "attendances",
+  "schemaHash": "1d3e152cbf1beb7e531da963fde0a5ee5de514bac5021e6d06c589293c34212c",
+  "batch": 3,
+  "appliedAt": "2026-06-21T01:53:09.784Z",
+  "fields": [
+    "id",
+    "enrollmentId",
+    "moduleId",
+    "sessionDate",
+    "attended",
+    "excused",
+    "note",
+    "createdAt",
+    "updatedAt"
+  ]
+}
