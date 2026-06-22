@@ -147,10 +147,12 @@ protected _pendingRelated: { path: string; column: string; value: any; op?: OpCo
    *   .where("status", "=", "active")
    *   .get();
    */
-  where<K extends keyof T>(column: K | string, op: OpComparison, value: any) {
+where<K extends keyof T>(column: K, op: OpComparison, value: T[K]): this;
+where(column: RelationPath<T>, op: OpComparison, value: any): this;
+where(column: string, op: OpComparison, value: any): this;
+where(column: string, op: OpComparison, value: any) {
   const col = column as string;
   if (col.includes(".")) {
-    // Dotted path: "module.id" means traverse relation "module", filter by "id"
     const lastDot = col.lastIndexOf(".");
     const relationPath = col.slice(0, lastDot);
     const fieldName = col.slice(lastDot + 1);
