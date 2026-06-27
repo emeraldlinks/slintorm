@@ -7,7 +7,7 @@
   "type": "module",
   "homepage": "https://github.com/emeraldlinks/slintorm",
   "bugs": {
-    "url": "https://github.com/emeraldlinks/slintormssues"
+    "url": "https://github.com/emeraldlinks/slintorm/issues"
   },
   "files": [
     "README.md",
@@ -20,7 +20,7 @@
       "types": "./dist/src/index.d.ts",
       "browser": "./dist/src/browser.js",
       "import": "./dist/src/index.js",
-      "require": "./dist/src/index.js",
+      "require": "./dist/src/index.cjs",
       "default": "./dist/src/index.js"
     },
     "./package.json": "./package.json"
@@ -38,24 +38,41 @@
     "test": "tsx src/example.ts",
     "cli": "tsx src/bin/cli.ts"
   },
-  "dependencies": {
-    "mongodb": "^6.20.0",
-    "mysql2": "^3.15.3",
-    "pg": "^8.16.3",
-    "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^24.13.2",
     "@types/pg": "^8.15.5",
-    "mongodb": "^6.20.0",
-    "mysql2": "^3.15.3",
-    "pg": "^8.16.3",
-    "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7",
     "ts-node": "^10.9.2",
     "tsc-alias": "^1.8.16",
     "tsx": "^4.22.4",
     "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "pg": "^8.0.0",
+    "mysql2": "^3.0.0",
+    "mongodb": "^6.0.0",
+    "sqlite3": "^5.0.0",
+    "sqlite": "^5.0.0",
+    "better-sqlite3": "^9.0.0"
+  },
+  "peerDependenciesMeta": {
+    "pg": {
+      "optional": true
+    },
+    "mysql2": {
+      "optional": true
+    },
+    "mongodb": {
+      "optional": true
+    },
+    "sqlite3": {
+      "optional": true
+    },
+    "sqlite": {
+      "optional": true
+    },
+    "better-sqlite3": {
+      "optional": true
+    }
   }
 }

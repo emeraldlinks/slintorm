@@ -1,5 +1,25 @@
+# Environment
+.env
+.env.*
+
+# Databases (local dev artifacts)
+*.db
+*.sqlite
+*.sqlite3
+
+# Node
 node_modules/
 dist/
-.cache
-.env
-tests
+build/
+
+# TypeScript build output
+*.js.map
+*.d.ts.map
+
+# Temp/scratch files
+tmp_*.ts
+verify-all.ts
+
+# OS
+.DS_Store
+Thumbs.db
