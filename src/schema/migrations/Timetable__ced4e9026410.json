@@ -4,7 +4,7 @@
   "tableName": "timetables",
   "schemaHash": "ced4e90264105bb871630f96b6c1c35a6e6a22bdf7cc918d199f121df6da8e85",
   "batch": 1,
-  "appliedAt": "2026-06-21T09:00:15.415Z",
+  "appliedAt": "2026-06-28T00:21:02.894Z",
   "fields": [
     "id",
     "classId",

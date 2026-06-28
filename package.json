@@ -1,11 +1,11 @@
 {
   "name": "slintorm",
-  "version": "1.1.4",
+  "version": "1.1.6",
   "description": "Minimal fully typed orm for typescript",
   "license": "MIT",
   "author": "Joseph Christopher",
   "type": "module",
-  "homepage": "https://github.com/emeraldlinks/slintorm",
+  "homepage": "https://slintorm.vercel.app",
   "bugs": {
     "url": "https://github.com/emeraldlinks/slintorm/issues"
   },

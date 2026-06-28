@@ -4,7 +4,7 @@
   "tableName": "tutor_assignments",
   "schemaHash": "427d3e47dbba8754e12e65d713e1ad89ad619c0f89ae551eb6fbf585969e2bd7",
   "batch": 1,
-  "appliedAt": "2026-06-21T09:00:15.438Z",
+  "appliedAt": "2026-06-28T00:21:02.918Z",
   "fields": [
     "id",
     "tutorId",

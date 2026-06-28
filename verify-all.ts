@@ -74,6 +74,7 @@ export interface TestTeam {
   const userRels = schema['TestUser'].relations;
   if (userRels.length > 0) {
     console.log(`  ✓ Relations parsed: ${userRels.length} relation(s) in TestUser`);
+   // @ts-ignore
     userRels.forEach((rel: RelationDef) => {
       console.log(`    - ${rel.fieldName}: ${rel.kind} with ${rel.targetModel}`);
     });

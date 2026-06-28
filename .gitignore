@@ -19,6 +19,7 @@ build/
 # Temp/scratch files
 tmp_*.ts
 verify-all.ts
+src/schema/
 
 # OS
 .DS_Store

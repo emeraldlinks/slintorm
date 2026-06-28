@@ -68,6 +68,7 @@ export class DBAdapter {
         const filename = this.config.databaseUrl || ":memory:";
         // Try better-sqlite3 first (sync, faster), fall back to sqlite3/sqlite
         try {
+          // @ts-ignore -- optional peer dep, not in devDependencies
           const mod = await import("better-sqlite3");
           const Database = await this.defaultExport<any>(mod);
           const db = new Database(filename);

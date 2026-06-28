@@ -1600,6 +1600,7 @@ export async function seedDatabase(db: any) {
 
 async function main() { 
   const db = await initializeDatabaseModule();
+  await seedDatabase(db)
 
   const enrollment = await db.Enrollment.query().first();
   console.log("enrollment:", enrollment?.id, "cohortId:", enrollment?.cohortId);

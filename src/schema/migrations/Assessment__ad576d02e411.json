@@ -3,8 +3,8 @@
   "modelName": "Assessment",
   "tableName": "assessments",
   "schemaHash": "ad576d02e411f58809cfb93dddf005d10be8c5a42bfdb8f84839b4c019ae9175",
-  "batch": 2,
-  "appliedAt": "2026-06-21T10:48:43.230Z",
+  "batch": 1,
+  "appliedAt": "2026-06-28T00:21:02.764Z",
   "fields": [
     "id",
     "moduleId",

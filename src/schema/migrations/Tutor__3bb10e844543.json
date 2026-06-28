@@ -4,7 +4,7 @@
   "tableName": "tutors",
   "schemaHash": "3bb10e844543379d1f425431b6a155162ececf66ad3877dad098fb5ef069e292",
   "batch": 1,
-  "appliedAt": "2026-06-21T09:00:15.430Z",
+  "appliedAt": "2026-06-28T00:21:02.910Z",
   "fields": [
     "id",
     "userId",

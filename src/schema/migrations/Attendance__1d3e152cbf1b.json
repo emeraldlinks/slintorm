@@ -4,7 +4,7 @@
   "tableName": "attendances",
   "schemaHash": "1d3e152cbf1beb7e531da963fde0a5ee5de514bac5021e6d06c589293c34212c",
   "batch": 1,
-  "appliedAt": "2026-06-21T09:00:15.301Z",
+  "appliedAt": "2026-06-28T00:21:02.770Z",
   "fields": [
     "id",
     "enrollmentId",

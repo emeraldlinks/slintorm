@@ -4,7 +4,7 @@
   "tableName": "announcements",
   "schemaHash": "12284b0fc371d21261f1ba2ffff7e030ead1efe4075b24eff2c94d36f89e6714",
   "batch": 1,
-  "appliedAt": "2026-06-21T09:00:15.281Z",
+  "appliedAt": "2026-06-28T00:21:02.742Z",
   "fields": [
     "id",
     "authorId",

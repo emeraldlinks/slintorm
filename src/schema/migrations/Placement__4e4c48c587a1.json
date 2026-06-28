@@ -4,7 +4,7 @@
   "tableName": "placements",
   "schemaHash": "4e4c48c587a16e2a730b9a248f43d3aeba1c74ba2b8d7a9a8a2e4badc2ea6fe0",
   "batch": 1,
-  "appliedAt": "2026-06-21T09:00:15.364Z",
+  "appliedAt": "2026-06-28T00:21:02.845Z",
   "fields": [
     "id",
     "userId",
