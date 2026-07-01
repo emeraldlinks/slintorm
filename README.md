@@ -33,6 +33,20 @@ SlintORM aims for the GORM sweet spot: **automatic migrations, a real query buil
 | Boilerplate                       | ✅ Single import, no generated client | ✅ Minimal | ❌ Requires client generation |
 | Learning curve                    | ✅ Very low | ✅ Low | ❌ Medium — schema DSL + client |
 | Raw SQL escape hatch              | ✅ `whereRaw`, `exec`, `batch`, `transaction` | ✅ | ⚠️ Available, more friction |
+| Plugin system                     | ✅ Lifecycle events | ❌ | ❌ |
+| Context propagation               | ✅ Custom request context | ❌ | ❌ |
+| Database resolver (multi-DB)      | ✅ Switch DB per query | ❌ | ❌ |
+| Prepared statement mode           | ✅ | ❌ | ❌ |
+| FirstOrInit                       | ✅ Fetch or init unsaved instance | ❌ | ❌ |
+| FindInBatches                     | ✅ Chunked processing with callback | ❌ | ❌ |
+| AfterFind hook                    | ✅ Transform rows post-query | ❌ | ❌ |
+| Group conditions (nested AND/OR)  | ✅ `andWhereGroup`/`orWhereGroup` | ❌ | ❌ |
+| Named SQL arguments               | ✅ `:name` placeholders | ❌ | ❌ |
+| Dry-run mode                      | ✅ Return SQL without executing | ❌ | ❌ |
+| Streaming rows                    | ✅ AsyncGenerator with batch size | ❌ | ❌ |
+| Multi-column IN                   | ✅ `(a,b) IN ((1,2),(3,4))` | ❌ | ❌ |
+| Enhanced counts (distinct/group)  | ✅ `countDistinct` / `countWithGroup` | ❌ | ❌ |
+| Optimizer / index hints           | ✅ `hint()`, `indexHint()`, `commentHint()` | ❌ | ❌ |
 | Ideal use case                    | Rapid prototyping → production, GORM-style workflows | Type-safe lightweight projects | Large, ecosystem-heavy apps |
 
 **Bottom line:** if you want migrations that just work, a query builder that can actually do joins and subqueries, and relationship loading without N+1 — without adopting a whole new schema language — SlintORM is built for you.
@@ -322,6 +336,11 @@ await user?.delete();
 await Users.insertMany([{ name: "Joe" }, { name: "Jane" }]);
 await Users.updateMany({ status: "inactive" }, { status: "banned" });
 await Users.deleteMany({ status: "banned" });
+
+// Process large result sets in chunks with FindInBatches
+await Users.findInBatches(null, 2, async (batch, batchNum) => {
+  console.log(`Batch ${batchNum}:`, batch);
+});
 ```
 
 ### Upsert & findOrCreate
@@ -333,6 +352,25 @@ const { record, created } = await Users.findOrCreate(
   { email: "joe@x.com" },
   { name: "Joe", email: "joe@x.com" }
 );
+
+// FirstOrInit — fetch first or return an unsaved instance (never writes to DB)
+const user = await Users.firstOrInit({ email: "new@test.com" }, { name: "New" });
+// user has .update()/.delete()/.refresh() but is not persisted until you call them
+```
+
+### Raw SQL expressions in values
+
+Use `SqlExpr.raw()` to embed arbitrary SQL expressions (`NOW()`, `CONCAT()`, subqueries, etc.) in insert/update values:
+
+```ts
+import { SqlExpr } from "slintorm";
+
+await Users.insert({
+  name: SqlExpr.raw("CONCAT(first_name, ' ', last_name)"),
+  createdAt: SqlExpr.raw("datetime('now')"),
+});
+
+await Users.update({ id: 1 }, { score: SqlExpr.raw("score + 1") });
 ```
 
 ### Soft delete
@@ -456,9 +494,56 @@ const { data, total, page, lastPage } = await db.User.query()
 const activeUsers = await db.User.query()
   .scope((qb) => qb.where("type", "=", "user"))
   .get();
+
+// group conditions — nested AND/OR groups for complex filters
+const filtered = await db.User.query()
+  .andWhereGroup((qb) =>
+    qb.where("status", "=", "active").orWhere("status", "=", "pending")
+  )
+  .orWhereGroup((qb) => qb.where("role", "=", "admin"))
+  .get();
+
+// named SQL arguments — use :name placeholders
+const named = await db.User.query()
+  .namedWhere("name = :name AND email = :email", {
+    name: "Joe", email: "joe@test.com",
+  })
+  .get();
+
+// multi-column IN — (col1, col2) IN ((v1,v2), (v3,v4))
+const multiIn = await db.Post.query()
+  .whereColumnsIn(
+    ["status", "type"],
+    [["draft", "blog"], ["published", "news"]],
+  )
+  .get();
+
+// enhanced counts
+const distinct = await db.User.query().countDistinct("status");
+const grouped = await db.User.query().countWithGroup("status");
+// grouped returns [{ status: "active", count: 5 }, ...]
+
+// optimizer / index / comment hints
+await db.User.query().hint("/*+ NO_INDEX */").get();
+await db.User.query().indexHint("idx_users_email").get();
+await db.User.query().commentHint("my query comment").get();
+
+// AfterFind hook — transform every row after fetch
+const transformed = await db.User.query()
+  .afterFind((rows) => rows.map((r) => ({ ...r, extraField: true })))
+  .get();
+
+// Dry-run — get SQL + params without executing
+const plan = await db.User.query().where("id", "=", 1).dryRun().get();
+// plan → { sql: "SELECT ... WHERE id = ?", params: [1] }
+
+// Rows streaming — async generator with configurable batch size
+for await (const batch of db.User.query().orderBy("id", "asc").stream(100)) {
+  for (const user of batch) { /* process */ }
+}
 ```
 
-See **`QUERY_BUILDER.md`** in this repo for the complete method-by-method reference (every `where*`, join, preload, aggregate, subquery, and soft-delete method with examples).
+See **`QUERY_BUILDER.md`** in this repo for the complete method-by-method reference (every `where*`, join, preload, aggregate, subquery, soft-delete, and advanced feature with examples).
 
 ---
 
@@ -522,6 +607,121 @@ Each applied migration writes a JSON record to `<dir>/schema/migrations/`, in ad
 
 ---
 
+## Plugin system
+
+SlintORM exposes lifecycle hooks so you can extend behaviour globally. Plugins fire on model CRUD and migration events — they are useful for **logging, metrics, auditing, tracing, and augmentation**.
+
+### Plugin interface
+
+```ts
+import { Plugin } from "slintorm";
+
+const auditPlugin: Plugin = {
+  name: "audit-log",             // unique name (duplicates rejected)
+  priority: 5,                   // lower = runs first (default 10)
+  install(orm) {                 // called once on registration
+    console.log("Audit plugin ready");
+  },
+  on(event, ctx) {               // called for each lifecycle event
+    console.log(`[${event}] ${ctx.model} →`, ctx.data ?? ctx.filter);
+  },
+};
+
+orm.use(auditPlugin);
+```
+
+Remove a plugin by name: `orm.removePlugin("audit-log")`.
+
+### Available events
+
+Every event payload includes `orm` (the full ORMManager) and `context` (the request-scoped data from `orm.withContext()`).
+
+| Event | When | Extra payload fields |
+|---|---|---|
+| `beforeInsert` | Before a row is inserted | `model`, `table`, `data` |
+| `afterInsert` | After successful insert | `model`, `table`, `data` |
+| `beforeUpdate` | Before an update runs | `model`, `table`, `data`, `filter` |
+| `afterUpdate` | After an update completes | `model`, `table`, `data`, `filter` |
+| `beforeDelete` | Before a delete runs | `model`, `table`, `filter` |
+| `afterDelete` | After a delete completes | `model`, `table`, `filter` |
+| `beforeMigrate` | Before migration runs | — |
+| `afterMigrate` | After migration completes | — |
+
+### Use cases
+
+- **Observe** — log queries, count operations, push metrics to Datadog/Prometheus
+- **Audit** — capture before/after snapshots of every update or delete
+- **Trace** — correlate DB operations with request IDs via `orm.withContext()` — the context object is available as `ctx.context` inside `on()`
+- **Extend** — `install(orm)` receives the full ORMManager, so you can monkey-patch it or add custom methods
+
+### Limitations
+
+- Events are **fire-and-observe** — return values from `on()` are ignored; plugins cannot cancel or modify operations
+- Currently only model CRUD + migration events exist (no per-query-builder events yet)
+- Plugins run **synchronously** in registration order — a slow `on()` handler blocks the operation
+- `insertMany`, `updateMany`, `deleteMany` trigger the same single-row events per item in the batch
+
+---
+
+## Context propagation
+
+Attach custom request-scoped context to the ORM instance — useful for logging, tracing, or tenant resolution:
+
+```ts
+// Set context (e.g. at the start of an HTTP request)
+orm.withContext({ requestId: "req-123", userId: "user-42" });
+
+// Retrieve context anywhere the ORM is accessible
+const ctx = orm.getContext(); // { requestId: "req-123", userId: "user-42" }
+
+// Clear when the request ends
+orm.clearContext();
+```
+
+The context object is passed to plugin event handlers as `ctx.ormContext`, letting you correlate queries to specific requests without threading parameters through every function call.
+
+---
+
+## Prepared Statement Mode
+
+Force the ORM to use prepared statements for all queries:
+
+```ts
+orm.preparedMode(true);   // Enable prepared statements
+orm.preparedMode(false);  // Disable (default — simple execution)
+const isPrepared = orm.isPreparedMode(); // boolean check
+```
+
+When enabled, the underlying driver's prepared statement API is used (e.g. `stmt.all()`, `stmt.run()`) instead of `db.prepare().all()` at each call. Disabled by default for simplicity.
+
+---
+
+## Database Resolver (multi-DB)
+
+Register and switch between multiple database connections on a single ORM instance:
+
+```ts
+// Register an additional database
+orm.addDatabase("analytics", {
+  driver: "postgres",
+  databaseUrl: process.env.ANALYTICS_DB,
+  logs: true,
+});
+
+// Execute a query on that database
+await orm.execOn("analytics", "SELECT COUNT(*) FROM events");
+
+// Retrieve a registered database config
+const config = orm.getDatabase("analytics");
+
+// Remove a database when no longer needed
+orm.removeDatabase("analytics");
+```
+
+Useful for read-replica routing, multi-tenant setups, or separating operational data from analytics without creating a second ORMManager.
+
+---
+
 ## Notes
 
 - `fs` and `path` are only loaded when schema files are read from disk.
@@ -529,6 +729,12 @@ Each applied migration writes a JSON record to `<dir>/schema/migrations/`, in ad
 - Use `autoInstallDrivers: false` if you prefer to install the driver manually.
 - All queries return mapped boolean fields, parsed JSON fields, and respect configured excludes automatically.
 - MongoDB support covers CRUD, filtering, and preloads via the same query builder API; DDL/migrations are limited to index creation (`@index`/`@unique`) since MongoDB is schemaless.
+- `SqlExpr.raw()` is an escape hatch for raw SQL in values — use it sparingly; driver-specific syntax may not be portable across databases.
+- `dryRun()` returns the SQL the ORM would execute, but does not run it — useful for debugging or logging.
+- `stream()` uses `limit/offset` internally; avoid mutations on the source table between batches in a streaming loop.
+- `AfterFind` hooks run for every row returned by the query builder methods on that chain; they do not affect `insert()`, `update()`, or `delete()`.
+- Plugins receive lifecycle events synchronously — avoid heavy synchronous work in `on()` handlers.
+- Database resolver connections (`addDatabase`) are separate connections opened on demand; they are not part of the ORM's migration lifecycle.
 
 ---
 
@@ -576,4 +782,4 @@ SlintORM fills the niche for **quick iteration, flexible queries, and minimal fr
 
 - **`QUERY_BUILDER.md`** — full query builder & `ModelAPI` reference, every method with usage examples.
 - **`llms.txt`** — condensed reference for AI coding assistants working in a SlintORM codebase.
-- **`example.ts`** — a complete, runnable walkthrough exercising most of the library in one file.
+- **`example.ts`** — a complete, runnable walkthrough exercising 33 feature sections of the library in one file.
