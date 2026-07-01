@@ -52,6 +52,8 @@ export type ModelAPI<T extends object> = {
   withOne<K extends keyof T & string>(relation: K): Promise<T[K] | null>;
   withMany<K extends keyof T & string>(relation: K): Promise<T[K][]>;
   preload<K extends keyof T & string>(relation: K): Promise<void>;
+  firstOrInit(filter: Partial<T>, defaults?: Partial<T>): Promise<EntityWithUpdate<T> | null>;
+  findInBatches(filter: Partial<T> | null, batchSize: number, callback: (records: T[], batchNumber: number) => void | Promise<void>): Promise<void>;
 };
 
 // ─── loadSchema ───────────────────────────────────────────────────────────────
@@ -595,6 +597,65 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         await this.insertMany([defaults]);
         const created = await this.get(filter);
         return { record: created as T, created: true };
+      },
+
+      async firstOrInit(filter: Partial<T>, defaults?: Partial<T>): Promise<EntityWithUpdate<T> | null> {
+        const self = this;
+        const existing = await self.get(filter);
+        if (existing) return existing;
+        const initRecord = { ...(defaults || {}), ...filter } as EntityWithUpdate<T>;
+        const pkField = modelSchema?.primaryKey || "id";
+        Object.defineProperties(initRecord, {
+          update: {
+            value: async (data: Partial<T>) => {
+              if ((initRecord as any)[pkField]) {
+                return self.update({ [pkField]: (initRecord as any)[pkField] } as Partial<T>, data);
+              }
+              const inserted = await self.insert({ ...initRecord, ...data } as T);
+              return inserted;
+            },
+            enumerable: false, writable: true,
+          },
+          delete: {
+            value: async () => {
+              if ((initRecord as any)[pkField]) return self.delete({ [pkField]: (initRecord as any)[pkField] } as Partial<T>);
+              return filter;
+            },
+            enumerable: false, writable: true,
+          },
+          refresh: {
+            value: async () => {
+              if ((initRecord as any)[pkField]) return self.get({ [pkField]: (initRecord as any)[pkField] } as Partial<T>);
+              return initRecord;
+            },
+            enumerable: false, writable: true,
+          },
+          toJSON: {
+            value: () => ({ ...initRecord } as T),
+            enumerable: false, writable: true,
+          },
+        });
+        return initRecord;
+      },
+
+      async findInBatches(filter: Partial<T> | null, batchSize: number, callback: (records: T[], batchNumber: number) => void | Promise<void>): Promise<void> {
+        let page = 1;
+        let hasMore = true;
+        while (hasMore) {
+          const qb = this.query();
+          if (filter && Object.keys(filter).length) {
+            for (const [k, v] of Object.entries(filter)) {
+              qb.where(k as any, "=", v as any);
+            }
+          }
+          qb.paginate(page, batchSize);
+          const rows = await qb.get();
+          if (rows.length > 0) {
+            await callback(rows, page);
+          }
+          hasMore = rows.length >= batchSize;
+          page++;
+        }
       },
 
       async restore(filter: Partial<T>) {

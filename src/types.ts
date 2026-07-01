@@ -46,3 +46,48 @@ interface FieldMeta {
   jsonDefault?: any;
   uniqueComposite?: string[][];
 }
+
+// ── SqlExpr: embed raw SQL expressions in field values ──────────────────
+export class SqlExpr {
+  constructor(
+    public sql: string,
+    public params: any[] = []
+  ) {}
+  static raw(sql: string, params: any[] = []) {
+    return new SqlExpr(sql, params);
+  }
+}
+
+// ── Named arguments (e.g. :name → ?) ───────────────────────────────────
+export type NamedArgs = Record<string, any>;
+
+// ── Plugin system ──────────────────────────────────────────────────────
+export type PluginEventType =
+  | "beforeQuery" | "afterQuery"
+  | "beforeInsert" | "afterInsert"
+  | "beforeUpdate" | "afterUpdate"
+  | "beforeDelete" | "afterDelete"
+  | "beforeMigrate" | "afterMigrate";
+
+export interface Plugin {
+  name: string;
+  priority?: number;
+  install(orm: any): void;
+  on?(event: PluginEventType, ctx: any): void | Promise<void>;
+}
+
+// ── Context propagation ────────────────────────────────────────────────
+export interface OrmContext {
+  requestId?: string;
+  userId?: string;
+  [key: string]: any;
+}
+
+// ── AfterFind hook ─────────────────────────────────────────────────────
+export type AfterFindHook<T> = (rows: T[]) => T[] | Promise<T[]>;
+
+// ── Dry-run mode ───────────────────────────────────────────────────────
+export type DryRunResult = { sql: string; params: any[] };
+
+// ── Composite primary key descriptor ───────────────────────────────────
+export type CompositeKey = string[];

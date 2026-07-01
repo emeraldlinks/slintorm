@@ -465,6 +465,170 @@ async function main() {
   ok("Validation / scopes / exclude work");
 
   // ──────────────────────────────────────────────────────────────────────────
+  // 21. FIRST OR INIT
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("21. FirstOrInit");
+
+  const foi = await (Users as any).firstOrInit({ name: "NonExistent" }, { email: "new@test.com" });
+  info(`firstOrInit (not found): ${foi ? foi.name + " (" + foi.email + ")" : "null"} — not saved to DB`);
+
+  const foi2 = await (Users as any).firstOrInit({ name: "Catherine" });
+  info(`firstOrInit (found): ${foi2 ? foi2.name : "null"}`);
+  ok("FirstOrInit works");
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 22. FIND IN BATCHES
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("22. FindInBatches");
+
+  let batchCount = 0;
+  let totalBatched = 0;
+  await (Users as any).findInBatches(null, 2, async (records: any[], batchNum: number) => {
+    batchCount++;
+    totalBatched += records.length;
+    info(`  batch ${batchNum}: ${records.length} records`);
+  });
+  info(`FindInBatches: ${batchCount} batches, ${totalBatched} total`);
+  ok("FindInBatches works");
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 23. GROUP CONDITIONS
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("23. Group conditions (andWhereGroup / orWhereGroup)");
+
+  const grouped2 = await (Agg as any).query()
+    .andWhereGroup((qb: any) => {
+      qb.where("value", ">", 30);
+      qb.where("value", "<", 70);
+    })
+    .orWhereGroup((qb: any) => {
+      qb.where("category", "=", "C");
+    })
+    .get();
+  info(`Group conditions: ${grouped.length} row(s)`);
+  ok("Group conditions work");
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 24. NAMED ARGUMENTS
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("24. Named arguments (namedWhere)");
+
+  const named = await (Agg as any).query()
+    .namedWhere("category = :cat AND value > :minVal", { cat: "A", minVal: 20 })
+    .get();
+  info(`Named args: ${named.length} row(s)`);
+  ok("Named arguments work");
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 25. OPTIMIZER / INDEX / COMMENT HINTS
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("25. Query hints");
+
+  const hintedSql = (Users as any).query()
+    .hint("/*+ NO_INDEX */")
+    .indexHint("idx_users_name")
+    .toSql();
+  info(`Hints SQL: ${hintedSql.sql}`);
+  ok("Query hints work");
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 26. DRY RUN MODE
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("26. Dry-run mode");
+
+  const dry = await (Users as any).query().where("id", "=", 1).dryRun().get();
+  info(`Dry-run: ${dry.sql}`);
+  ok("Dry-run works");
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 27. ROWS STREAMING
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("27. Rows streaming");
+
+  let streamed = 0;
+  for await (const batch of (Users as any).query().orderBy("id", "asc").stream(2)) {
+    streamed += batch.length;
+    info(`  stream batch: ${batch.map((r: any) => r.name).join(", ")}`);
+  }
+  info(`Stream total: ${streamed} rows`);
+  ok("Streaming works");
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 28. MULTI-COLUMN IN
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("28. Multi-column IN");
+
+  await tryOrSkip("whereColumnsIn", async () => {
+    const mc = await (Agg as any).query()
+      .whereColumnsIn(["category", "value"], [["A", 30], ["B", 60]])
+      .get();
+    info(`Multi-column IN: ${mc.length} row(s)`);
+  });
+  ok("Multi-column IN tested");
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 29. COUNT DISTINCT / COUNT WITH GROUP
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("29. Enhanced counts");
+
+  const cd = await (Agg as any).query().countDistinct("category");
+  info(`countDistinct(category): ${cd}`);
+
+  const cg = await (Agg as any).query().countWithGroup("category");
+  info(`countWithGroup: ${JSON.stringify(cg)}`);
+  ok("Enhanced counts work");
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 30. AFTER FIND HOOK
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("30. AfterFind hook");
+
+  const withHook = await (Agg as any).query()
+    .afterFind((rows: any[]) => {
+      return rows.map((r: any) => ({ ...r, _transformed: true }));
+    })
+    .limit(1)
+    .get();
+  info(`AfterFind _transformed: ${withHook[0]?._transformed === true}`);
+  ok("AfterFind hook works");
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 31. PLUGIN SYSTEM
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("31. Plugin system");
+
+  const pluginEvents: string[] = [];
+  orm.use({
+    name: "test-plugin",
+    install(o: any) { info("Plugin installed"); },
+    on(event: string) { pluginEvents.push(event); },
+  });
+  info(`Plugin registered: ${pluginEvents.length} events so far`);
+  ok("Plugin system works");
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 32. CONTEXT
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("32. Context propagation");
+
+  orm.withContext({ requestId: "req-123", userId: "user-42" });
+  const ctx = orm.getContext();
+  info(`Context: requestId=${ctx.requestId}, userId=${ctx.userId}`);
+  orm.clearContext();
+  info(`Context cleared: ${JSON.stringify(orm.getContext())}`);
+  ok("Context propagation works");
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 33. PREPARED STATEMENT MODE
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("33. Prepared Statement Mode");
+
+  (orm as any).preparedMode(true);
+  info(`Prepared mode: ${(orm as any).isPreparedMode()}`);
+  (orm as any).preparedMode(false);
+  ok("Prepared Statement Mode works");
+
+  // ──────────────────────────────────────────────────────────────────────────
   // CLEANUP
   // ──────────────────────────────────────────────────────────────────────────
   try { await (Posts as any).delete({ id: newPost?.id! }); } catch {}

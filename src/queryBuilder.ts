@@ -6,7 +6,7 @@
 // BUG FIX #3: whereRaw() now accepts an optional params array so
 //   parameterized subqueries don't silently lose their bound values.
 
-import type { ExecFn, OpComparison } from "./types.ts";
+import type { ExecFn, OpComparison, AfterFindHook } from "./types.ts";
 
 type RelationMeta = {
   fieldName: string;
@@ -97,6 +97,9 @@ export class QueryBuilder<T extends Record<string, any>> {
   protected _cacheKey: string | null = null;
   protected _cacheTTL: number | null = null;
   private static _resultCache = new Map<string, { data: any; expires: number }>();
+  protected _afterFindHooks: AfterFindHook<T>[] = [];
+  protected _hints: string[] = [];
+  protected _dryRun = false;
 
   protected table: string;
   protected exec: ExecFn;
@@ -217,6 +220,18 @@ export class QueryBuilder<T extends Record<string, any>> {
     return this;
   }
 
+  whereColumnsIn<K extends keyof T>(columns: K[], values: T[][]) {
+    if (!columns.length || !values.length) return this;
+    const ph = values.map(() => `(${columns.map(() => "?").join(", ")})`).join(", ");
+    const flat = values.flat();
+    this._where.push({
+      raw: `(${columns.map(String).join(", ")}) IN (${ph})`,
+      rawParams: flat,
+      kind: "and",
+    });
+    return this;
+  }
+
   // ── ORDER / LIMIT / OFFSET / PAGINATE ───────────────────────────────────────
   orderBy<K extends keyof T>(column: K, dir: "asc" | "desc" = "asc") {
     this._orderBy.push(`${String(column)} ${dir.toUpperCase()}`);
@@ -225,6 +240,45 @@ export class QueryBuilder<T extends Record<string, any>> {
 
   limit(n: number) { this._limit = n; return this; }
   offset(n: number) { this._offset = n; return this; }
+
+  hint(sql: string) {
+    this._hints.push(sql);
+    return this;
+  }
+  indexHint(...indexes: string[]) {
+    this._hints.push(`USE INDEX (${indexes.join(", ")})`);
+    return this;
+  }
+  commentHint(comment: string) {
+    this._hints.push(`/* ${comment} */`);
+    return this;
+  }
+  dryRun() {
+    this._dryRun = true;
+    return this;
+  }
+  toSql(): { sql: string; params: any[] } {
+    return this.buildSql();
+  }
+  async *stream(batchSize = 100): AsyncGenerator<T[], void, undefined> {
+    const originalLimit = this._limit;
+    const originalOffset = this._offset ?? 0;
+    let offset = originalOffset;
+    let hasMore = true;
+    while (hasMore) {
+      this._limit = batchSize;
+      this._offset = offset;
+      const { sql, params } = this.buildSql();
+      const res = await this.exec(sql, params);
+      const rows = (res.rows || []) as T[];
+      if (rows.length === 0) break;
+      yield rows;
+      offset += rows.length;
+      hasMore = rows.length >= batchSize;
+    }
+    this._limit = originalLimit;
+    this._offset = originalOffset;
+  }
 
   paginate(page: number, perPage: number) {
     this._limit = perPage;
@@ -489,6 +543,11 @@ export class QueryBuilder<T extends Record<string, any>> {
     if (this._limit != null) sql += " LIMIT " + this._limit;
     if (this._offset != null) sql += " OFFSET " + this._offset;
 
+    if (this._hints.length) {
+      const hintStr = this._hints.join(" ");
+      sql = sql.replace("SELECT", `SELECT ${hintStr}`);
+    }
+
     return { sql, params };
   }
 
@@ -592,6 +651,11 @@ export class QueryBuilder<T extends Record<string, any>> {
     return this;
   }
 
+  afterFind(hook: AfterFindHook<T>) {
+    this._afterFindHooks.push(hook);
+    return this;
+  }
+
   static clearCache() {
     QueryBuilder._resultCache.clear();
   }
@@ -606,6 +670,11 @@ export class QueryBuilder<T extends Record<string, any>> {
       if (cached && cached.expires > Date.now()) {
         return cached.data as T[];
       }
+    }
+
+    if (this._dryRun) {
+      const { sql, params } = this.buildSql();
+      return { sql, params } as any;
     }
 
     const { sql, params } = this.buildSql();
@@ -634,6 +703,13 @@ export class QueryBuilder<T extends Record<string, any>> {
         for (const col of this._exclude) if (!col.includes(".")) delete copy[col];
         return copy as T;
       });
+    }
+
+    // Apply afterFind hooks
+    if (this._afterFindHooks.length) {
+      for (const hook of this._afterFindHooks) {
+        rows = await hook(rows);
+      }
     }
 
     return rows;
@@ -909,6 +985,17 @@ export class QueryBuilder<T extends Record<string, any>> {
       }
     }
     return out;
+  }
+
+  async countDistinct(column: keyof T & string): Promise<number> {
+    await this._resolvePendingRelated();
+    const dialect = Dialects[this.orm?.dialect || "sqlite"];
+    const { sql: whereSql, params } = this._buildWhereSql(0);
+    let sql = `SELECT COUNT(DISTINCT ${dialect.quoteIdentifier(String(column))}) as count FROM ${dialect.quoteIdentifier(this.table)}`;
+    if (this._joins.length) sql += " " + this._joins.join(" ");
+    if (whereSql) sql += " WHERE " + whereSql;
+    const res = await this.exec(sql, params);
+    return parseInt(res.rows?.[0]?.count ?? "0", 10);
   }
 
   removeExcluded(obj: any, excludes: string[]): any {

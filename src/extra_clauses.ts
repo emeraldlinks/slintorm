@@ -93,6 +93,12 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
       sql = `(${sql})\nEXCEPT${exceptAll}\n(${sqls.join(`\nEXCEPT${exceptAll}\n`)})`;
     }
 
+    // ---- Optimizer / Index / Comment hints ----------------------------------
+    if ((this as any)._hints?.length) {
+      const hintStr = (this as any)._hints.join(" ");
+      sql = sql.replace(/^SELECT/i, `SELECT ${hintStr}`);
+    }
+
     // ---- FOR UPDATE / FOR SHARE (row locking) --------------------------------
     if (this._forUpdate) {
       let lockClause = " FOR UPDATE";
@@ -288,6 +294,87 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
     const { sql, params } = sub.buildSql();
     this._where.push({ raw: `NOT EXISTS(${sql})`, rawParams: params, kind: "and" });
     return this;
+  }
+
+  /**
+   * Add a grouped AND condition: WHERE ( ... )
+   * The callback receives a query builder where you add conditions,
+   * and those conditions are wrapped in parentheses.
+   */
+  andWhereGroup(fn: (qb: AdvancedQueryBuilder<T>) => void) {
+    const dialect = Dialects[this.orm?.dialect || "sqlite"];
+    const child = new AdvancedQueryBuilder<T>(
+      this.table, this.dir, this.exec, this.modelName, this.schema, this.orm
+    );
+    fn(child);
+    const { sql: groupSql, params: groupParams } = child._buildWhereSql(0);
+    if (groupSql) {
+      this._where.push({
+        raw: `(${groupSql})`,
+        rawParams: groupParams,
+        kind: "and",
+      });
+    }
+    return this;
+  }
+
+  /**
+   * Add a grouped OR condition: WHERE ... OR ( ... )
+   * The callback receives a query builder where you add conditions,
+   * and those conditions are wrapped in parentheses.
+   */
+  orWhereGroup(fn: (qb: AdvancedQueryBuilder<T>) => void) {
+    const dialect = Dialects[this.orm?.dialect || "sqlite"];
+    const child = new AdvancedQueryBuilder<T>(
+      this.table, this.dir, this.exec, this.modelName, this.schema, this.orm
+    );
+    fn(child);
+    const { sql: groupSql, params: groupParams } = child._buildWhereSql(0);
+    if (groupSql) {
+      this._where.push({
+        raw: `(${groupSql})`,
+        rawParams: groupParams,
+        kind: "or",
+      });
+    }
+    return this;
+  }
+
+  /**
+   * Replace named placeholders (:name, :email) with positional ? placeholders
+   * using the provided named params object.
+   * Example: .whereRaw("name = :name AND email = :email", { name: "Alice", email: "a@b.com" })
+   */
+  namedWhere(rawSql: string, namedParams: Record<string, any>): this {
+    const paramNames: string[] = [];
+    const resolvedSql = rawSql.replace(/:([a-zA-Z_]\w*)/g, (_, name) => {
+      paramNames.push(name);
+      return "?";
+    });
+    const params = paramNames.map((n) => namedParams[n]);
+    this._where.push({ raw: resolvedSql, rawParams: params, kind: "and" });
+    return this;
+  }
+
+  /**
+   * Count with DISTINCT and GROUP BY support.
+   * Returns an array of { count, groupKey } for each group.
+   */
+  async countWithGroup(groupColumn: keyof T & string): Promise<{ count: number; [key: string]: any }[]> {
+    await (this as any)._resolvePendingRelated();
+    const dialect = Dialects[this.orm?.dialect || "sqlite"];
+    const quotedCol = dialect.quoteIdentifier(String(groupColumn));
+    const { sql: whereSql, params } = this._buildWhereSql(0);
+    let sql = `SELECT ${quotedCol}, COUNT(*) as count FROM ${dialect.quoteIdentifier(this.table)}`;
+    if (this._joins.length) sql += " " + this._joins.join(" ");
+    if (whereSql) sql += " WHERE " + whereSql;
+    sql += ` GROUP BY ${quotedCol}`;
+    if (this._having) {
+      sql += " HAVING " + this._having.raw;
+      params.push(...this._having.params);
+    }
+    const res = await this.exec(sql, params);
+    return (res.rows || []).map((r: any) => ({ ...r, count: parseInt(r.count, 10) }));
   }
 
   /**

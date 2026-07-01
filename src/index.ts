@@ -13,6 +13,7 @@ import { createModelFactory, type ModelAPI } from "./model.js";
 import { Migrator, type SchemaModel } from "./migrator.js";
 import { wrapExec } from "./db-error.js";
 import type { DBDriver, ExecFn } from "./types.js";
+import type { Plugin, PluginEventType, OrmContext } from "./types.js";
 
 export type AnyModelMap = Record<string, object>;
 
@@ -123,6 +124,11 @@ export default class ORMManager<
   adapter: DBAdapter;
   readonly DB: ReadonlyDBStore<TModelMap> = {} as ReadonlyDBStore<TModelMap>;
   private _globalHooks: Map<string, ((event: GlobalHookEvent) => void | Promise<void>)[]> = new Map();
+  private _plugins: Plugin[] = [];
+  private _context: OrmContext = {};
+  private _preparedMode = false;
+  /** Named database connections for Database Resolver */
+  private _databases: Map<string, { exec: any; driver?: string }> = new Map();
 
   constructor(cfg: ORMManagerConfig<TModelMap> = {}) {
     this.cfg = cfg;
@@ -289,6 +295,87 @@ export default class ORMManager<
     for (const handler of handlers) {
       await handler(event);
     }
+    await this._emitPlugin(event.type as PluginEventType, event);
+  }
+
+  // ── Plugin system ──────────────────────────────────────────────
+  use(plugin: Plugin): this {
+    // Don't register duplicates
+    if (this._plugins.some((p) => p.name === plugin.name)) return this;
+    this._plugins.push(plugin);
+    // Sort by priority (lower number = higher priority)
+    this._plugins.sort((a, b) => (a.priority ?? 10) - (b.priority ?? 10));
+    plugin.install(this);
+    return this;
+  }
+
+  async _emitPlugin(event: PluginEventType, ctx: any = {}) {
+    for (const plugin of this._plugins) {
+      if (plugin.on) {
+        await plugin.on(event, { ...ctx, context: this._context, orm: this });
+      }
+    }
+  }
+
+  // ── Context propagation ────────────────────────────────────────
+  withContext(ctx: OrmContext): this {
+    this._context = { ...this._context, ...ctx };
+    return this;
+  }
+
+  getContext(): OrmContext {
+    return { ...this._context };
+  }
+
+  clearContext(): this {
+    this._context = {};
+    return this;
+  }
+
+  // ── Prepared Statement Mode ────────────────────────────────────
+  preparedMode(enabled: boolean): this {
+    this._preparedMode = enabled;
+    return this;
+  }
+
+  isPreparedMode(): boolean {
+    return this._preparedMode;
+  }
+
+  // ── Database Resolver (multiple named databases) ───────────────
+  /**
+   * Register a named database connection.
+   * @param name - logical database name (e.g. "archive", "analytics")
+   * @param config - driver and connection URL or custom exec function
+   */
+  addDatabase(name: string, config: { driver?: DBDriver; databaseUrl?: string; exec?: any; logs?: boolean }): this {
+    if (config.exec) {
+      this._databases.set(name, { exec: config.exec, driver: config.driver });
+    } else {
+      const { DBAdapter } = require("./dbAdapter.js");
+      const adapter = new DBAdapter({
+        driver: config.driver,
+        databaseUrl: config.databaseUrl,
+        logs: config.logs,
+      });
+      this._databases.set(name, { exec: adapter.exec.bind(adapter), driver: config.driver });
+    }
+    return this;
+  }
+
+  getDatabase(name: string): { exec: any; driver?: string } | undefined {
+    return this._databases.get(name);
+  }
+
+  removeDatabase(name: string): boolean {
+    return this._databases.delete(name);
+  }
+
+  /** Execute a query on a named database */
+  async execOn(dbName: string, sql: string, params: any[] = []): Promise<any> {
+    const db = this._databases.get(dbName);
+    if (!db) throw new Error(`Database "${dbName}" not found. Register it with addDatabase()`);
+    return db.exec(sql, params);
   }
 
   // ── Audit logging helper ──────────────────────────────────────────
