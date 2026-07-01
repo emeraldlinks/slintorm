@@ -24,3 +24,8 @@ src/schema/
 # OS
 .DS_Store
 Thumbs.db
+
+# Compiled JS
+*.js
+!jest.config.js
+!eslint.config.js
