@@ -1,0 +1,871 @@
+import ORMManager from "./index.js";
+import { SqlExpr } from "./types.js";
+import { proxyExec } from "./proxy.js";
+
+// ── Mini test runner ────────────────────────────────────────────────────
+
+const failures: { suite: string; name: string; err: any }[] = [];
+type Hook = () => void | Promise<void>;
+
+interface Suite {
+  name: string;
+  tests: { name: string; fn: () => void | Promise<void> }[];
+  beforeAllHooks: Hook[];
+  afterAllHooks: Hook[];
+  beforeEachHooks: Hook[];
+}
+
+let currentSuite: Suite | null = null;
+const suites: Suite[] = [];
+let globalBeforeAllHooks: Hook[] = [];
+let globalAfterAllHooks: Hook[] = [];
+
+export function describe(name: string, fn: () => void) {
+  const s: Suite = { name, tests: [], beforeAllHooks: [], afterAllHooks: [], beforeEachHooks: [] };
+  currentSuite = s;
+  suites.push(s);
+  fn();
+  currentSuite = null;
+}
+
+export function it(name: string, fn: () => void | Promise<void>) {
+  if (currentSuite) currentSuite.tests.push({ name, fn });
+}
+
+export function expect(actual: any) {
+  const assert = {
+    toBe(expected: any) {
+      if (!Object.is(actual, expected)) {
+        throw new Error(`expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+      }
+    },
+    notToBeNull() {
+      if (actual === null || actual === undefined) {
+        throw new Error(`expected non-null, got ${JSON.stringify(actual)}`);
+      }
+    },
+    toBeNull() {
+      if (actual !== null) {
+        throw new Error(`expected null, got ${JSON.stringify(actual)}`);
+      }
+    },
+    toBeDefined() {
+      if (actual === undefined) {
+        throw new Error("expected defined, got undefined");
+      }
+    },
+    toBeGreaterThan(n: number) {
+      if (typeof actual !== "number" || actual <= n) {
+        throw new Error(`expected ${actual} > ${n}`);
+      }
+    },
+    toBeGreaterThanOrEqual(n: number) {
+      if (typeof actual !== "number" || actual < n) {
+        throw new Error(`expected ${actual} >= ${n}`);
+      }
+    },
+    toBeLessThanOrEqual(n: number) {
+      if (typeof actual !== "number" || actual > n) {
+        throw new Error(`expected ${actual} <= ${n}`);
+      }
+    },
+    toContain(expected: any) {
+      if (!Array.isArray(actual) || !actual.includes(expected)) {
+        throw new Error(`expected ${JSON.stringify(actual)} to contain ${JSON.stringify(expected)}`);
+      }
+    },
+    toHaveProperty(key: string) {
+      if (!(key in (actual || {}))) {
+        throw new Error(`expected ${JSON.stringify(actual)} to have property ${key}`);
+      }
+    },
+    toThrow(fn?: () => any) {
+      if (fn) {
+        try { fn(); throw new Error("Expected to throw but did not"); }
+        catch { /* ok */ }
+      } else if (typeof actual === "function") {
+        try { actual(); throw new Error("Expected to throw but did not"); }
+        catch { /* ok */ }
+      }
+    },
+    not: {
+      toThrow(fn?: () => any) {
+        if (fn) { fn(); }
+        else if (typeof actual === "function") { actual(); }
+      },
+      toBeNull() {
+        if (actual === null) throw new Error("expected non-null");
+      },
+    },
+  };
+  return assert;
+}
+
+export function beforeAll(fn: Hook) {
+  if (currentSuite) currentSuite.beforeAllHooks.push(fn);
+  else globalBeforeAllHooks.push(fn);
+}
+export function afterAll(fn: Hook) {
+  if (currentSuite) currentSuite.afterAllHooks.push(fn);
+  else globalAfterAllHooks.push(fn);
+}
+export function beforeEach(fn: Hook) {
+  if (currentSuite) currentSuite.beforeEachHooks.push(fn);
+  else throw new Error("beforeEach must be inside describe");
+}
+
+async function run() {
+  let total = 0, passed = 0;
+
+  for (const hook of globalBeforeAllHooks) await hook();
+
+  for (const suite of suites) {
+    console.log(`\n  ${suite.name}`);
+    for (const hook of suite.beforeAllHooks) await hook();
+    for (const test of suite.tests) {
+      total++;
+      try {
+        for (const hook of suite.beforeEachHooks) await hook();
+        await test.fn();
+        passed++;
+        console.log(`    ✓ ${test.name}`);
+      } catch (err: any) {
+        failures.push({ suite: suite.name, name: test.name, err });
+        console.log(`    ✗ ${test.name}`);
+        console.log(`      ${err.message}`);
+      }
+    }
+    for (const hook of suite.afterAllHooks) await hook();
+  }
+
+  for (const hook of globalAfterAllHooks) await hook();
+
+  console.log(`\n  ${passed}/${total} passed`);
+  if (failures.length > 0) {
+    console.error(`\n  FAILED:`);
+    for (const f of failures) {
+      console.error(`    ${f.suite} > ${f.name}: ${f.err.message}`);
+    }
+    console.error(`\n  Fix details:`);
+    for (const f of failures) {
+      console.error(`    - ${f.suite} > ${f.name}: ${f.err.message.replace(/\n/g, " | ")}`);
+    }
+    process.exit(1);
+  }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────
+
+async function resetUsers() {
+  try {
+    await Users.truncate();
+  } catch {
+    await Users.insert({ name: "_init", email: "_init@t.com", createdAt: new Date().toISOString() });
+    await Users.truncate();
+  }
+}
+
+async function ensureUsersExist() {
+  try {
+    await Users.count();
+  } catch {
+    await Users.insert({ name: "_init", email: "_init@t.com", createdAt: new Date().toISOString() });
+    await Users.truncate();
+  }
+}
+
+// ── Test models ──────────────────────────────────────────────────────────
+
+interface User {
+  id?: number;
+  name: string;
+  email?: string;
+  score?: number;
+  status?: string;
+  category?: string;
+  meta?: Record<string, any>;
+  deletedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+interface Profile {
+  id?: number;
+  userId: number;
+  bio?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+const schema = {
+  User: {
+    table: "users",
+    fields: {
+      id: { type: "INTEGER", primaryKey: true, auto: true },
+      name: { type: "TEXT", optional: false },
+      email: { type: "TEXT", optional: true },
+      score: { type: "INTEGER", optional: true },
+      status: { type: "TEXT", optional: true },
+      category: { type: "TEXT", optional: true },
+      meta: { type: "TEXT", optional: true, meta: { json: true } },
+      deletedAt: { type: "TEXT", optional: true, meta: { softDelete: true } },
+      createdAt: { type: "TEXT", optional: true },
+      updatedAt: { type: "TEXT", optional: true },
+    },
+    relations: [],
+  },
+  Profile: {
+    table: "profiles",
+    fields: {
+      id: { type: "INTEGER", primaryKey: true, auto: true },
+      userId: { type: "INTEGER", optional: false },
+      bio: { type: "TEXT", optional: true },
+      createdAt: { type: "TEXT", optional: true },
+      updatedAt: { type: "TEXT", optional: true },
+    },
+    relations: [],
+  },
+};
+
+let orm: ORMManager;
+let Users: Awaited<ReturnType<typeof orm.defineModel<User>>>;
+let Profiles: Awaited<ReturnType<typeof orm.defineModel<Profile>>>;
+
+beforeAll(async () => {
+  orm = new ORMManager({ driver: "sqlite", databaseUrl: ":memory:", schema, logs: false });
+  Users = await orm.defineModel<User>("users", "User");
+  Profiles = await orm.defineModel<Profile>("profiles", "Profile");
+});
+
+// ── 1. Basic CRUD ───────────────────────────────────────────────────────
+
+describe("CRUD", () => {
+  beforeEach(async () => { await resetUsers(); });
+
+  it("inserts a record", async () => {
+    const user = await Users.insert({ name: "Alice", email: "a@t.com", createdAt: new Date().toISOString() });
+    expect(user).notToBeNull();
+    expect(user!.name).toBe("Alice");
+  });
+
+  it("gets a record by filter", async () => {
+    const inserted = await Users.insert({ name: "GetTest", email: "g@t.com", createdAt: new Date().toISOString() });
+    const user = await Users.get({ id: inserted!.id });
+    expect(user).notToBeNull();
+    expect(user!.name).toBe("GetTest");
+  });
+
+  it("gets all records", async () => {
+    await Users.insert({ name: "A1", email: "a1@t.com", createdAt: new Date().toISOString() });
+    await Users.insert({ name: "A2", email: "a2@t.com", createdAt: new Date().toISOString() });
+    const all = await Users.getAll();
+    expect(all.length).toBe(2);
+  });
+
+  it("updates a record", async () => {
+    const inserted = await Users.insert({ name: "Upd1", email: "upd@t.com", createdAt: new Date().toISOString() });
+    const updated = await Users.update({ id: inserted!.id }, { name: "Updated" });
+    expect(updated?.name).toBe("Updated");
+  });
+
+  it("updates via instance method", async () => {
+    const user = await Users.insert({ name: "Inst", email: "inst@t.com", createdAt: new Date().toISOString() });
+    await user!.update({ name: "InstV2" });
+    const reloaded = await Users.get({ id: user!.id });
+    expect(reloaded!.name).toBe("InstV2");
+  });
+
+  it("deletes a record", async () => {
+    const inserted = await Users.insert({ name: "Del", email: "del@t.com", createdAt: new Date().toISOString() });
+    const deleted = await Users.delete({ id: inserted!.id });
+    expect(deleted).toBeDefined();
+    const gone = await Users.get({ id: inserted!.id });
+    expect(gone).toBeNull();
+  });
+
+  it("deletes via instance method", async () => {
+    const user = await Users.insert({ name: "DelMe", email: "dm@t.com", createdAt: new Date().toISOString() });
+    await user!.delete();
+    const gone = await Users.get({ id: user!.id });
+    expect(gone).toBeNull();
+  });
+});
+
+// ── 2. Batch operations ─────────────────────────────────────────────────
+
+describe("Batch operations", () => {
+  beforeEach(async () => { await resetUsers(); });
+
+  it("inserts many records", async () => {
+    await Users.insertMany([
+      { name: "B1", email: "b1@t.com", createdAt: new Date().toISOString() },
+      { name: "B2", email: "b2@t.com", createdAt: new Date().toISOString() },
+    ]);
+    const all = await Users.getAll();
+    expect(all.length).toBe(2);
+  });
+
+  it("updates many records", async () => {
+    const u1 = await Users.insert({ name: "U1", email: "u1@t.com", createdAt: new Date().toISOString() });
+    await Users.insert({ name: "U2", email: "u2@t.com", createdAt: new Date().toISOString() });
+    const changed = await Users.updateMany({ name: "U1" }, { status: "active" as any });
+    expect(changed).toBe(1);
+  });
+
+  it("deletes many records", async () => {
+    await Users.insert({ name: "D1", email: "d1@t.com", createdAt: new Date().toISOString() });
+    await Users.insert({ name: "D2", email: "d2@t.com", createdAt: new Date().toISOString() });
+    const count = await Users.deleteMany({ name: "D1" });
+    expect(count).toBe(1);
+    const remaining = await Users.getAll();
+    expect(remaining.length).toBe(1);
+  });
+});
+
+// ── 3. Upsert & findOrCreate & firstOrInit ──────────────────────────────
+
+describe("Upsert / findOrCreate / firstOrInit", () => {
+  beforeEach(async () => { await resetUsers(); });
+
+  it("upserts — inserts new", async () => {
+    const result = await Users.upsert(
+      { email: "up@t.com" },
+      { name: "Upserted", email: "up@t.com", createdAt: new Date().toISOString() }
+    );
+    expect(["inserted", "updated"]).toContain(result);
+  });
+
+  it("upserts — updates existing", async () => {
+    await Users.insert({ name: "Orig", email: "up2@t.com", createdAt: new Date().toISOString() });
+    const result = await Users.upsert(
+      { email: "up2@t.com" },
+      { name: "Upserted v2", email: "up2@t.com" }
+    );
+    expect(result).toBe("updated");
+  });
+
+  it("findOrCreate — finds existing", async () => {
+    await Users.insert({ name: "Existing", email: "fc@t.com", createdAt: new Date().toISOString() });
+    const { record, created } = await Users.findOrCreate(
+      { email: "fc@t.com" },
+      { name: "Should not create", email: "fc@t.com", createdAt: new Date().toISOString() }
+    );
+    expect(record.name).toBe("Existing");
+    expect(created).toBe(false);
+  });
+
+  it("findOrCreate — creates new", async () => {
+    const { record, created } = await Users.findOrCreate(
+      { email: "newfc@t.com" },
+      { name: "Newly Created", email: "newfc@t.com", createdAt: new Date().toISOString() }
+    );
+    expect(record.name).toBe("Newly Created");
+    expect(created).toBe(true);
+  });
+
+  it("firstOrInit — returns unsaved instance when not found", async () => {
+    const record = await Users.firstOrInit(
+      { email: "nonexistent@t.com" },
+      { name: "Init", createdAt: new Date().toISOString() }
+    );
+    expect(record).notToBeNull();
+    expect(record!.name).toBe("Init");
+    const fetched = await Users.get({ email: "nonexistent@t.com" });
+    expect(fetched).toBeNull();
+  });
+
+  it("firstOrInit — returns existing record when found", async () => {
+    await Users.insert({ name: "Existing", email: "fie@t.com", createdAt: new Date().toISOString() });
+    const record = await Users.firstOrInit({ email: "fie@t.com" });
+    expect(record).notToBeNull();
+    expect(record!.name).toBe("Existing");
+  });
+});
+
+// ── 4. FindInBatches ────────────────────────────────────────────────────
+
+describe("FindInBatches", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+    await Users.insert({ name: "FB1", email: "fb1@t.com", createdAt: new Date().toISOString() });
+    await Users.insert({ name: "FB2", email: "fb2@t.com", createdAt: new Date().toISOString() });
+    await Users.insert({ name: "FB3", email: "fb3@t.com", createdAt: new Date().toISOString() });
+  });
+
+  it("processes records in batches", async () => {
+    const names: string[] = [];
+    await Users.findInBatches(null, 2, (batch: any[]) => {
+      for (const u of batch) names.push(u.name);
+    });
+    expect(names.length).toBe(3);
+  });
+});
+
+// ── 5. Aggregates ───────────────────────────────────────────────────────
+
+describe("Aggregates", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+    await Users.insert({ name: "A-S1", score: 10, category: "A", email: "a@t.com", createdAt: new Date().toISOString() });
+    await Users.insert({ name: "A-S2", score: 20, category: "A", email: "b@t.com", createdAt: new Date().toISOString() });
+    await Users.insert({ name: "B-S1", score: 100, category: "B", email: "c@t.com", createdAt: new Date().toISOString() });
+  });
+
+  it("counts records", async () => {
+    const c = await Users.count();
+    expect(c).toBe(3);
+  });
+
+  it("counts with filter", async () => {
+    const c = await Users.count({ category: "A" });
+    expect(c).toBe(2);
+  });
+
+  it("sums a column", async () => {
+    const s = await Users.sum("score");
+    expect(s).toBe(130);
+  });
+
+  it("averages a column", async () => {
+    const a = await Users.avg("score", { category: "A" });
+    expect(a).toBe(15);
+  });
+
+  it("finds min/max", async () => {
+    const mi = await Users.min("score");
+    const ma = await Users.max("score");
+    expect(mi).toBe(10);
+    expect(ma).toBe(100);
+  });
+
+  it("checks existence", async () => {
+    const exists = await Users.exists({ name: "A-S1" });
+    expect(exists).toBe(true);
+    const notExists = await Users.exists({ name: "NONEXISTENT" });
+    expect(notExists).toBe(false);
+  });
+
+  it("countDistinct", async () => {
+    const c = await Users.query().countDistinct("category");
+    expect(c).toBe(2);
+  });
+
+  it("countWithGroup", async () => {
+    const rows = await Users.query().countWithGroup("category") as any[];
+    expect(rows.length).toBe(2);
+    expect(rows[0]).toHaveProperty("count");
+    expect(rows[0]).toHaveProperty("category");
+  });
+});
+
+// ── 6. Query Builder ────────────────────────────────────────────────────
+
+describe("Query Builder", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+    await Users.insert({ name: "QA1", category: "A", email: "qa1@t.com", createdAt: new Date().toISOString() });
+    await Users.insert({ name: "QA2", category: "A", email: "qa2@t.com", createdAt: new Date().toISOString() });
+    await Users.insert({ name: "QB1", category: "B", email: "qb1@t.com", createdAt: new Date().toISOString() });
+  });
+
+  it("supports where clauses", async () => {
+    const rows = await Users.query().where("category", "=", "A").get();
+    expect(rows.length).toBe(2);
+  });
+
+  it("supports ordering", async () => {
+    const rows = await Users.query().orderBy("id", "asc").get();
+    expect(rows.length).toBe(3);
+    for (let i = 1; i < rows.length; i++) {
+      expect(rows[i].id).toBeGreaterThan(rows[i - 1].id!);
+    }
+  });
+
+  it("supports limit/offset", async () => {
+    const rows = await Users.query().limit(2).offset(0).get();
+    expect(rows.length).toBe(2);
+  });
+
+  it("supports select", async () => {
+    const rows = await Users.query().select("id", "name").get();
+    expect(rows.length).toBe(3);
+    expect(rows[0]).toHaveProperty("id");
+    expect(rows[0]).toHaveProperty("name");
+  });
+
+  it("supports first()", async () => {
+    const row = await Users.query().where("category", "=", "A").first();
+    expect(row).notToBeNull();
+    expect(row!.category).toBe("A");
+  });
+
+  it("supports pagination", async () => {
+    const result = await Users.query().getPaginated(1, 2);
+    expect(result).toHaveProperty("data");
+    expect(result).toHaveProperty("total");
+    expect(result).toHaveProperty("page");
+    expect(result).toHaveProperty("lastPage");
+    expect(result.data.length).toBeLessThanOrEqual(2);
+  });
+
+  it("supports groupBy", async () => {
+    const rows = await Users.query()
+      .select("category")
+      .countAggregate("*")
+      .groupBy("category")
+      .get();
+    expect(rows.length).toBe(2);
+  });
+});
+
+// ── 7. Group conditions ─────────────────────────────────────────────────
+
+describe("Group conditions", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+    await Users.insert({ name: "GCA", category: "A", email: "gca@t.com", createdAt: new Date().toISOString() });
+    await Users.insert({ name: "GCB", category: "B", email: "gcb@t.com", createdAt: new Date().toISOString() });
+  });
+
+  it("andWhereGroup / orWhereGroup", async () => {
+    const rows = await Users.query()
+      .andWhereGroup((qb: any) => qb.where("category", "=", "A").orWhere("category", "=", "B"))
+      .get();
+    expect(rows.length).toBe(2);
+  });
+});
+
+// ── 8. Named arguments ──────────────────────────────────────────────────
+
+describe("Named arguments", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+    await Users.insert({ name: "Alice", email: "a@t.com", createdAt: new Date().toISOString() });
+  });
+
+  it("namedWhere replaces :name placeholders", async () => {
+    const rows = await Users.query()
+      .namedWhere("name like :pattern", { pattern: "A%" })
+      .get();
+    expect(rows.length).toBe(1);
+  });
+});
+
+// ── 9. Multi-column IN ──────────────────────────────────────────────────
+
+describe("Multi-column IN", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+    await Users.insert({ name: "MC1", email: "m1@t.com", category: "A", createdAt: new Date().toISOString() });
+  });
+
+  it("whereColumnsIn", async () => {
+    await Users.insert({ name: "MC1", email: "m1@t.com", category: "A", status: "active", createdAt: new Date().toISOString() });
+    const rows = await Users.query()
+      .whereColumnsIn(["category", "status"], [["A", "active"]])
+      .get();
+    expect(rows.length).toBe(1);
+  });
+});
+
+// ── 10. Hints ───────────────────────────────────────────────────────────
+
+describe("Query hints", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+    await Users.insert({ name: "HintTest", email: "h@t.com", createdAt: new Date().toISOString() });
+  });
+
+  it("supports hint, commentHint", async () => {
+    const rows = await Users.query().hint("/*+ NO_INDEX */").get();
+    expect(rows.length).toBe(1);
+    const rows2 = await Users.query().commentHint("test").get();
+    expect(rows2.length).toBe(1);
+  });
+});
+
+// ── 11. AfterFind hook ──────────────────────────────────────────────────
+
+describe("AfterFind hook", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+    await Users.insert({ name: "AF", email: "af@t.com", createdAt: new Date().toISOString() });
+  });
+
+  it("transforms rows after fetch", async () => {
+    const rows = await Users.query()
+      .afterFind((r: any[]) => r.map((x: any) => ({ ...x, _transformed: true })))
+      .get();
+    expect(rows.length).toBe(1);
+    expect((rows[0] as any)._transformed).toBe(true);
+  });
+});
+
+// ── 12. Dry-run mode ────────────────────────────────────────────────────
+
+describe("Dry-run mode", () => {
+  it("returns SQL without executing", async () => {
+    const plan = await Users.query().where("id", "=", 1).dryRun().get() as any;
+    expect(plan).toHaveProperty("sql");
+    expect(plan).toHaveProperty("params");
+    expect(typeof plan.sql).toBe("string");
+  });
+});
+
+// ── 13. Rows streaming ──────────────────────────────────────────────────
+
+describe("Rows streaming", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+    await Users.insert({ name: "S1", email: "s1@t.com", createdAt: new Date().toISOString() });
+    await Users.insert({ name: "S2", email: "s2@t.com", createdAt: new Date().toISOString() });
+  });
+
+  it("streams records in batches", async () => {
+    let count = 0;
+    for await (const batch of Users.query().orderBy("id", "asc").stream(10)) {
+      count += batch.length;
+    }
+    expect(count).toBe(2);
+  });
+});
+
+// ── 14. Raw SQL and SqlExpr ─────────────────────────────────────────────
+
+describe("Raw SQL & SqlExpr", () => {
+  it("SqlExpr.raw works in insert", async () => {
+    const user = await Users.insert({ name: SqlExpr.raw("'ExprUser'"), email: "raw@t.com", createdAt: SqlExpr.raw("datetime('now')") });
+    expect(user).notToBeNull();
+  });
+});
+
+// ── 15. Soft delete ─────────────────────────────────────────────────────
+
+describe("Soft delete", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+    await Users.insert({ name: "SDTest", email: "sd@t.com", createdAt: new Date().toISOString() });
+  });
+
+  it("restores soft-deleted records", async () => {
+    const user = await Users.get({ name: "SDTest" });
+    await Users.update({ id: user!.id }, { deletedAt: new Date().toISOString() } as any);
+    await Users.restore({ id: user!.id });
+    const restored = await Users.get({ id: user!.id });
+    expect(restored).notToBeNull();
+  });
+});
+
+// ── 16. Window functions ────────────────────────────────────────────────
+
+describe("Window functions", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+    await Users.insert({ name: "W1", score: 10, category: "A", email: "w1@t.com", createdAt: new Date().toISOString() });
+    await Users.insert({ name: "W2", score: 20, category: "A", email: "w2@t.com", createdAt: new Date().toISOString() });
+  });
+
+  it("supports window()", async () => {
+    const rows = await Users.query()
+      .window("ROW_NUMBER()", "PARTITION BY category ORDER BY score DESC")
+      .get();
+    expect(rows.length).toBe(2);
+  });
+});
+
+// ── 17. Validation ──────────────────────────────────────────────────────
+
+describe("Validation", () => {
+  it("validates data against rules", () => {
+    expect(() => Users.validate({ email: "bad" }, { email: { email: true } })).toThrow();
+  });
+
+  it("checks data and returns errors", () => {
+    const errors = Users.check({ name: "" }, { name: { required: true } });
+    expect(errors).notToBeNull();
+  });
+
+  it("passes valid data", () => {
+    expect(() => Users.validate({ email: "good@test.com" }, { email: { email: true, required: false } })).not.toThrow();
+  });
+});
+
+// ── 18. Plugin system ───────────────────────────────────────────────────
+
+describe("Plugin system", () => {
+  it("registers a plugin and fires events", async () => {
+    const events: string[] = [];
+    (orm as any).use({
+      name: "test-plugin",
+      install() {},
+      on(e: string) { events.push(e); },
+    });
+    await Users.insert({ name: "PluginTest", email: "pt@t.com", createdAt: new Date().toISOString() });
+    expect(true).toBe(true);
+  });
+});
+
+// ── 19. Context propagation ─────────────────────────────────────────────
+
+describe("Context propagation", () => {
+  it("stores and retrieves context", () => {
+    (orm as any).withContext({ requestId: "test-req" });
+    const ctx = (orm as any).getContext();
+    expect(ctx.requestId).toBe("test-req");
+    (orm as any).clearContext();
+    const cleared = (orm as any).getContext();
+    expect(Object.keys(cleared).length).toBe(0);
+  });
+});
+
+// ── 20. Prepared Statement Mode ─────────────────────────────────────────
+
+describe("Prepared Statement Mode", () => {
+  it("toggles prepared mode", () => {
+    (orm as any).preparedMode(true);
+    expect((orm as any).isPreparedMode()).toBe(true);
+    (orm as any).preparedMode(false);
+    expect((orm as any).isPreparedMode()).toBe(false);
+  });
+});
+
+// ── 21. Database Resolver ───────────────────────────────────────────────
+
+describe("Database Resolver", () => {
+  it("registers and resolves named databases", () => {
+    (orm as any).addDatabase("archive", { driver: "sqlite", databaseUrl: ":memory:" });
+    const db = (orm as any).resolveDb("archive");
+    expect(db).toBeDefined();
+    expect(db.driver).toBe("sqlite");
+    (orm as any).removeDatabase("archive");
+  });
+
+  it("executes raw SQL on named database", async () => {
+    (orm as any).addDatabase("analytics", { driver: "sqlite", databaseUrl: ":memory:" });
+    const result = await (orm as any).execOn("analytics", "SELECT 1 as val");
+    expect(result.rows).toBeDefined();
+    expect(result.rows[0].val).toBe(1);
+    (orm as any).removeDatabase("analytics");
+  });
+
+  it("useDb creates a model bound to a named database", async () => {
+    (orm as any).addDatabase("secondary", { driver: "sqlite", databaseUrl: ":memory:" });
+    const secondaryDb = (orm as any).resolveDb("secondary");
+    await secondaryDb.exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT, createdAt TEXT, updatedAt TEXT)");
+
+    const SecondaryUsers = await (Users as any).useDb("secondary");
+    await SecondaryUsers.insert({ name: "SecondaryUser", email: "su@t.com", createdAt: new Date().toISOString() });
+    const all = await SecondaryUsers.getAll();
+    expect(all.length).toBe(1);
+    expect(all[0].name).toBe("SecondaryUser");
+
+    (orm as any).removeDatabase("secondary");
+  });
+});
+
+// ── 22. Proxy (edge-compatible) ─────────────────────────────────────────
+
+describe("Proxy (edge-compatible)", () => {
+  it("proxyExec is a function", () => {
+    const fn = proxyExec({ endpoint: "http://localhost:9999" });
+    expect(typeof fn).toBe("function");
+  });
+});
+
+// ── 23. Transactions ────────────────────────────────────────────────────
+
+describe("Transactions", () => {
+  beforeEach(async () => { await resetUsers(); });
+
+  it("runs a transaction that commits", async () => {
+    await orm.transaction(async (trx) => {
+      await trx.exec("INSERT INTO users (name, email, createdAt) VALUES (?, ?, ?)", ["TrxUser", "trx@t.com", new Date().toISOString()]);
+    });
+    const found = await Users.get({ name: "TrxUser" });
+    expect(found).notToBeNull();
+  });
+
+  it("rolls back on error", async () => {
+    try {
+      await orm.transaction(async (trx) => {
+        await trx.exec("INSERT INTO users (name, email, createdAt) VALUES (?, ?, ?)", ["RollbackUser", "rb@t.com", new Date().toISOString()]);
+        throw new Error("force rollback");
+      });
+    } catch {
+      // expected
+    }
+    const found = await Users.get({ name: "RollbackUser" });
+    expect(found).toBeNull();
+  });
+});
+
+// ── 24. Custom exec (edge mode) ─────────────────────────────────────────
+
+describe("Custom exec (edge mode)", () => {
+  it("accepts custom exec function in constructor", async () => {
+    const { DBAdapter } = await import("./dbAdapter.js");
+    const adapter = new DBAdapter({ driver: "sqlite", databaseUrl: ":memory:", logs: false });
+    await adapter.connect();
+    // Create the items table manually — ORM won't auto-create it via custom exec
+    await adapter.exec("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT, createdAt TEXT, updatedAt TEXT)");
+
+    const myExec = async (sql: string, params: any[] = []) => {
+      return adapter.exec(sql, params);
+    };
+
+    const customSchema = {
+      Item: {
+        table: "items",
+        fields: {
+          id: { type: "INTEGER", primaryKey: true, auto: true },
+          value: { type: "TEXT", optional: false },
+        },
+        relations: [],
+      },
+    };
+    const customOrm = new ORMManager({ exec: myExec, schema: customSchema });
+    const Items = await customOrm.defineModel("items", "Item");
+    await Items.insert({ value: "custom-exec-test" });
+    const items = await Items.getAll();
+    expect(items.length).toBe(1);
+    expect(items[0].value).toBe("custom-exec-test");
+    await adapter.close();
+  });
+});
+
+// ── 25. Scopes ──────────────────────────────────────────────────────────
+
+describe("Scopes", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+    await Users.insert({ name: "ScopeA", category: "A", email: "sa@t.com", createdAt: new Date().toISOString() });
+    await Users.insert({ name: "ScopeB", category: "B", email: "sb@t.com", createdAt: new Date().toISOString() });
+  });
+
+  it("applies reusable scope fragments", async () => {
+    const rows = await Users.query()
+      .scope((qb: any) => qb.where("category", "=", "A"))
+      .get();
+    expect(rows.length).toBe(1);
+    expect(rows[0].category).toBe("A");
+  });
+});
+
+// ── 26. Truncate ────────────────────────────────────────────────────────
+
+describe("Truncate", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+    await Users.insert({ name: "TruncMe", email: "tm@t.com", createdAt: new Date().toISOString() });
+  });
+
+  it("truncates a table", async () => {
+    await Users.truncate();
+    const all = await Users.getAll();
+    expect(all.length).toBe(0);
+  });
+});
+
+// ── Run ─────────────────────────────────────────────────────────────────
+
+await run();

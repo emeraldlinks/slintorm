@@ -1,7 +1,7 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: 50a592c81766ee43
-// Source Hash: 92005afa42aaed1e
+// Schema Hash: bdc3c2d7eb760ea5
+// Source Hash: 5da94993ea42faa0
 
 export interface User {
   id?: number;
@@ -907,13 +907,17 @@ export const schema = {
         "type": "string",
         "originalType": "string",
         "optional": false,
-        "meta": {}
+        "meta": {
+          "@polymorphicType": true
+        }
       },
       "commentableId": {
         "type": "number",
         "originalType": "number",
         "optional": false,
-        "meta": {}
+        "meta": {
+          "@polymorphicId": true
+        }
       },
       "createdAt": {
         "type": "string | undefined",

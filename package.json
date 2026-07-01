@@ -1,6 +1,6 @@
 {
   "name": "slintorm",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "description": "Minimal fully typed orm for typescript",
   "license": "MIT",
   "author": "Joseph Christopher",
@@ -36,6 +36,8 @@
     "build": "tsc && tsc-alias",
     "prepare": "npm run build",
     "test": "tsx src/example.ts",
+    "test:suite": "node --import tsx/esm src/slintorm.test.ts",
+    "test:types": "tsc --noEmit src/types.test.ts",
     "cli": "tsx src/bin/cli.ts"
   },
   "devDependencies": {
@@ -47,7 +49,9 @@
     "ts-node": "^10.9.2",
     "tsc-alias": "^1.8.16",
     "tsx": "^4.22.4",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "uvu": "^0.5.6",
+    "vitest": "^4.1.9"
   },
   "peerDependencies": {
     "better-sqlite3": "^9.0.0",

@@ -409,13 +409,17 @@
         "type": "string",
         "originalType": "string",
         "optional": false,
-        "meta": {}
+        "meta": {
+          "@polymorphicType": true
+        }
       },
       "commentableId": {
         "type": "number",
         "originalType": "number",
         "optional": false,
-        "meta": {}
+        "meta": {
+          "@polymorphicId": true
+        }
       },
       "createdAt": {
         "type": "string | undefined",

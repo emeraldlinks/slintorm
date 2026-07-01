@@ -1,0 +1,137 @@
+
+root@localhost:~/slintorm# npx tsc src/test.ts
+src/generator.ts:8:8 - error TS1192: Module '"fs"' has no default export.
+
+8 import fs from "fs";
+         ~~
+
+src/generator.ts:9:8 - error TS1259: Module '"node:path"' can only be default-imported using the 'esModuleInterop' flag
+
+9 import path from "node:path";
+         ~~~~
+
+  node_modules/@types/node/path.d.ts:191:5
+    191     export = path;
+            ~~~~~~~~~~~~~~
+    This module is declared with 'export =', and can only be used with a default import when using the 'esModuleInterop' flag.
+
+src/index.ts:359:30 - error TS2802: Type 'Map<string, (orm: any, log: (msg: string) => void) => Promise<void>>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+
+359     for (const [name, fn] of this._seeders) {
+                                 ~~~~~~~~~~~~~
+
+src/migration-history.ts:1:8 - error TS1192: Module '"node:fs"' has no default export.
+
+1 import fs from "node:fs";
+         ~~
+
+src/migration-history.ts:2:8 - error TS1259: Module '"node:path"' can only be default-imported using the 'esModuleInterop' flag
+
+2 import path from "node:path";
+         ~~~~
+
+  node_modules/@types/node/path.d.ts:191:5
+    191     export = path;
+            ~~~~~~~~~~~~~~
+    This module is declared with 'export =', and can only be used with a default import when using the 'esModuleInterop' flag.
+
+src/model.ts:226:39 - error TS2322: Type 'void | Awaited<T>' is not assignable to type 'T'.
+  'T' could be instantiated with an arbitrary type which could be unrelated to 'void | Awaited<T>'.
+
+226           if (modified !== undefined) item = modified;
+                                          ~~~~
+
+src/model.ts:303:39 - error TS2322: Type 'void | Partial<T>' is not assignable to type 'Partial<T>'.
+  Type 'void' is not assignable to type 'Partial<T>'.
+
+303           if (modified !== undefined) data = modified;
+                                          ~~~~
+
+src/queryBuilder.ts:374:27 - error TS2802: Type 'Set<unknown>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+
+374         matchingIds = [...new Set((res.rows || []).map((r: any) => Object.values(r)[0]))];
+                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+src/queryBuilder.ts:751:31 - error TS2802: Type 'Set<any>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+
+751         const targetIds = [...new Set(junction.map((j) => j[relatedKey]))];
+                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+src/queryBuilder.ts:776:31 - error TS2802: Type 'Set<any>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+
+776         const targetIds = [...new Set(junction.map((j) => j[relatedKey]))];
+                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+src/queryBuilder.ts:810:31 - error TS2802: Type 'Set<any>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+
+810         const parentIds = [...new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))];
+                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+src/queryBuilder.ts:821:30 - error TS2802: Type 'Set<any>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+
+821         const fkValues = [...new Set(parentRows.map((r) => r[foreignKey]).filter(Boolean))];
+                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+src/queryBuilder.ts:833:33 - error TS2802: Type 'Set<any>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+
+833           const parentIds = [...new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))];
+                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+src/queryBuilder.ts:842:32 - error TS2802: Type 'Set<any>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+
+842           const fkValues = [...new Set(parentRows.map((r) => r[foreignKey]).filter(Boolean))];
+                                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+src/queryBuilder.ts:854:31 - error TS2802: Type 'Set<any>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+
+854         const parentIds = [...new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))];
+                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+src/test.ts:529:19 - error TS1378: Top-level 'await' expressions are only allowed when the 'module' option is set to 'es2022', 'esnext', 'system', 'node16', 'node18', 'node20', 'nodenext', or 'preserve', and the 'target' option is set to 'es2017' or higher.
+
+529 export const DB = await initializeDatabaseModule();
+                      ~~~~~
+
+
+Found 16 errors in 6 files.
+
+Errors  Files
+     2  src/generator.ts:8
+     1  src/index.ts:359
+     2  src/migration-history.ts:1
+     2  src/model.ts:226
+     8  src/queryBuilder.ts:374
+     1  src/test.ts:529
+root@localhost:~/slintorm# git diff
+diff --git a/package-lock.json b/package-lock.json
+index 889950c..352becf 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,35 +1,54 @@
+ {
+   "name": "slintorm",
+-  "version": "1.0.21",
++  "version": "1.1.6",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "slintorm",
+-      "version": "1.0.21",
++      "version": "1.1.6",
+       "license": "MIT",
+-      "dependencies": {
+-        "mongodb": "^6.20.0",
+-        "mysql2": "^3.15.3",
+-        "pg": "^8.16.3",
+-        "sqlite": "^5.1.1",
+-        "sqlite3": "^5.1.7"
+-      },
+       "bin": {
+-        "slintorm": "dist/bin/cli.js"
++        "slintorm": "dist/src/bin/cli.js"
+       },
+       "devDependencies": {
+         "@types/node": "^24.13.2",
+         "@types/pg": "^8.15.5",
+--More--

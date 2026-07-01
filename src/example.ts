@@ -79,7 +79,9 @@ interface AggTest {
 interface Comment {
   id?: number;
   body: string;
+  // @polymorphicType
   commentableType: string;
+  // @polymorphicId
   commentableId: number;
   createdAt?: string;
 }
@@ -334,7 +336,8 @@ async function main() {
 
   const comment = await (Comments as any).get({ id: 1 });
   if (comment) {
-    const parent = await (Comments as any).morphTo("commentableType", "commentableId");
+    // Fields auto-detected from // @polymorphicType / @polymorphicId annotations
+    const parent = await (Comments as any).morphTo();
     info(`morphTo comment #1 → ${parent ? (parent.title || parent.name) : "null"}`);
   }
   ok("Polymorphic morphTo works");

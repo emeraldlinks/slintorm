@@ -1,0 +1,670 @@
+# SlintORM
+
+Minimal fully-typed ORM for TypeScript with SQLite / PostgreSQL / MySQL / MongoDB support, edge/serverless runtime support, schema generation from TypeScript interfaces, and a multi-hop relation resolver.
+
+## Key Files
+
+| Path | Purpose |
+|---|---|
+| `src/index.ts` | Main entry point — `ORMManager` class, `createORM()` functional API, config types, global hooks, plugin system, context propagation, DB resolver, audit logging, seeders |
+| `src/types.ts` | Core type definitions — `ExecFn`, `SQLExecResult`, `SqlExpr`, `DBDriver`, `OpComparison`, `RelationKind`, `RelationDef`, `Plugin`, `OrmContext`, `NamedArgs`, `DryRunResult` |
+| `src/model.ts` | `ModelAPI<T>` type, `createModelFactory()`, `loadSchema()` — full CRUD/aggregate/bulk/find/validation/morph implementation |
+| `src/queryBuilder.ts` | `QueryBuilder<T>` — SQL query builder with WHERE/ORDER/LIMIT/OFFSET/JOIN/PRELOAD/STREAM/CACHE, relation resolver via `whereRelated()`/`relatedTo()`, preload engine with N+1 prevention |
+| `src/extra_clauses.ts` | `AdvancedQueryBuilder<T>` — CTE/WITH, UNION/INTERSECT/EXCEPT, row locking (FOR UPDATE/FOR SHARE), GROUP BY/HAVING, window functions, full-text search, subqueries, andWhereGroup/orWhereGroup, namedWhere, countWithGroup, lateral joins |
+| `src/extensions.ts` | `ExtendedQueryBuilder<T>` (top-level QB), `SoftDeleteQueryBuilder<T>` (withTrashed/onlyTrashed), scopes, `Validator<T>` + `ValidationError` |
+| `src/dbAdapter.ts` | `DBAdapter` — lazy driver connection with fallback chain (node:sqlite → better-sqlite3 → sqlite3 for SQLite; mysql2; pg; mongodb), read replicas, prepared statement cache, custom exec bypass |
+| `src/migrator.ts` | `Migrator` — schema migration engine: `ensureTable()` CREATE/ALTER TABLE, column type mapping, nullability inference, defaults, indexes, uniques, FKs, comments, polymorphic columns, column rename, drop orphan columns |
+| `src/generator.ts` | Schema generator — tokenizes TypeScript source files, parses `interface`/`type` declarations, extracts field metadata from `//` comments (`@index`, `@unique`, `@nullable`, `@default`, `@polymorphicType`, `@polymorphicId`, etc.), relation directives (`@relation onetomany:User;foreignKey:userId`), writes `schema/generated.json` + `schema/generated.ts` |
+| `src/db-error.ts` | `ORMError` + `parseConstraintError()` + `wrapExec()` — converts driver-specific constraint errors (UNIQUE, NOT NULL, FK, CHECK) into structured, actionable errors across SQLite/Postgres/MySQL |
+| `src/migration-history.ts` | Migration tracking (`_slint_migrations` table + filesystem records), schema hash-based change detection, snapshot/restore, `runMigrations()` |
+| `src/http-driver.ts` | Edge-safe HTTP exec drivers — `neonExec()`, `tursoExec()`, `planetscaleExec()`, generic `createExec()`, `http` namespace |
+| `src/proxy.ts` | `proxyExec()` (edge client) + `createProxyServer()` (Node server) — tunnel SQL over HTTP for V8-isolate runtimes |
+| `src/browser.ts` | Edge-safe entrypoint — re-exports from index.js, model.js, http-driver.js, proxy.js, extensions.js, db-error.js |
+| `src/utils.ts` | `tsTypeToSqlType()` — maps TS primitive types to SQL column types |
+| `src/example.ts` | Runnable walkthrough covering all 34 feature sections |
+| `src/slintorm.test.ts` | 57-runtime-test suite covering all features |
+| `src/types.test.ts` | Compile-time type-safety tests (validated via `tsc --noEmit`) |
+| `SERVERLESS.md` | Edge/serverless deployment guide (`/root/slintorm/SERVERLESS.md`) |
+
+## Architecture
+
+```
+┌──────────────┐     ┌─────────────────┐     ┌────────────────────┐
+│  User code   │────▶│  ORMManager     │────▶│  DBAdapter         │
+│  (ModelAPI)  │     │  - transaction  │     │  - connect()        │
+│              │     │  - migrate()    │     │  - exec()           │
+│              │     │  - defineModel()│     │  - getTableInfo()   │
+│              │     │  - hooks/plugin │     │  - close()          │
+│              │     │  - context      │     └────────┬────────────┘
+│              │     │  - DB resolver  │              │
+│              │     └─────────────────┘              ▼
+│              │                            ┌────────────────────┐
+│              │     ┌─────────────────┐    │  Driver fallback:  │
+│              │────▶│  QueryBuilder   │    │  node:sqlite       │
+│              │     │  → buildSql()   │    │  better-sqlite3    │
+│              │     │  → get()        │    │  sqlite3           │
+│              │     │  → first()      │    │  mysql2            │
+│              │     │  → preload()    │    │  pg                │
+│              │     │  → stream()     │    │  mongodb           │
+│              │     └─────────────────┘    └────────────────────┘
+│              │
+│              │     ┌─────────────────┐
+│              │────▶│  Migrator       │
+│              │     │  ensureTable()  │
+│              │     │  diffSchema()   │
+│              └─────┴─────────────────┘
+```
+
+### Inheritance chain for QueryBuilder
+```
+QueryBuilder<T>                          (src/queryBuilder.ts)  — basic SQL
+  └─ AdvancedQueryBuilder<T>             (src/extra_clauses.ts) — CTE, UNION, locks, window, fulltext, etc.
+       └─ SoftDeleteQueryBuilder<T>      (src/extensions.ts)   — withTrashed/onlyTrashed
+            └─ ExtendedQueryBuilder<T>   (src/extensions.ts)   — scopes, top-level interface
+```
+
+### ModelAPI exposure surface
+`defineModel()` returns `ModelAPI<T>` — a plain object with methods (not a class instance). Entity records returned by `get()`/`insert()`/`update()` have non-enumerable instance methods (`update()`, `delete()`, `refresh()`, `toJSON()`) attached via `Object.defineProperties`.
+
+### Edge/serverless support
+When running in V8-isolate runtimes (Vercel Edge, Cloudflare Workers, Deno Deploy):
+- No TCP sockets → use `exec` option with HTTP-based `ExecFn`
+- No filesystem → pass `schema` directly (generated at build time)
+- No `node:fs`/`node:path` → `loadSchema()` and `migrate()` are deferred behind dynamic imports that fail gracefully
+- Import from `slintorm/browser` or simply pass `exec` in the constructor
+
+## Core Types
+
+```typescript
+type DBDriver = "sqlite" | "postgres" | "mysql" | "mongodb" | undefined;
+
+type ExecFn = (sqlOrOp: string, params?: any[]) => Promise<SQLExecResult>;
+// SQLExecResult = { rows: any[]; changes?: number | null; lastID?: number | null }
+
+type OpComparison = "=" | "!=" | "<" | "<=" | ">" | ">=" | "LIKE" | "ILIKE" | "IN" | "NOT IN";
+
+type RelationKind = "onetomany" | "manytoone" | "onetoone" | "manytomany";
+
+interface RelationDef {
+  sourceModel: string;
+  fieldName: string;
+  kind: string;
+  targetModel: string;
+  foreignKey: string;
+  through?: string;
+  meta: Record<string, any>;
+}
+
+interface ModelAPI<T extends object> {
+  insert(item: T): Promise<EntityWithUpdate<T> | null>;
+  update(filter: Partial<T>, partial: Partial<T>): Promise<EntityWithUpdate<T> | null>;
+  delete(filter: Partial<T>): Promise<T | Partial<T>>;
+  get(filter: Partial<T>): Promise<EntityWithUpdate<T> | null>;
+  getAll(): Promise<T[]>;
+  query(): ExtendedQueryBuilder<T>;
+  count(filter?: Partial<T>): Promise<number>;
+  sum/avg/min/max(column: keyof T, filter?: Partial<T>): Promise<number>;
+  exists(filter: Partial<T>): Promise<boolean>;
+  truncate(): Promise<void>;
+  insertMany(items: T[]): Promise<number>;
+  updateMany(filter: Partial<T>, data: Partial<T>): Promise<number>;
+  deleteMany(filter: Partial<T>): Promise<number>;
+  upsert(filter: Partial<T>, data: T): Promise<"inserted" | "updated">;
+  findOrCreate(filter: Partial<T>, defaults: T): Promise<{ record: T; created: boolean }>;
+  firstOrInit(filter: Partial<T>, defaults?: Partial<T>): Promise<EntityWithUpdate<T> | null>;
+  findInBatches(filter, batchSize, callback): Promise<void>;
+  restore(filter: Partial<T>): Promise<void>;
+  validate(data: Partial<T>, rules: FieldRules<T>): void;
+  check(data: Partial<T>, rules: FieldRules<T>): Record<string, string> | null;
+  withOne<K>(relation): Promise<T[K] | null>;
+  withMany<K>(relation): Promise<T[K][]>;
+  preload<K>(relation): Promise<void>;
+  morphTo(typeField, idField): Promise<any>;
+  morphMany(typeField, idField, morphType): Promise<any[]>;
+  useDb(name: string): Promise<ModelAPI<T>>;
+}
+
+interface ORMManagerConfig<TModelMap> {
+  driver?: DBDriver;
+  databaseUrl?: string;
+  dir?: string;
+  logs?: boolean;
+  schema?: Record<string, SchemaModel>;       // Required for edge/serverless
+  modelMap?: TModelMap;                        // For fully-typed DB store
+  replicas?: string[];                         // Read replica URLs (round-robin)
+  poolSize?: number;                           // PG/MySQL connection pool
+  exec?: ExecFn;                               // Custom exec (edge mode)
+}
+```
+
+## ORMManager Class API
+
+```typescript
+class ORMManager<TModelMap extends AnyModelMap = AnyModelMap> {
+  cfg: ORMManagerConfig<TModelMap>;
+  adapter: DBAdapter;
+  readonly DB: ReadonlyDBStore<TModelMap>;
+
+  constructor(cfg: ORMManagerConfig<TModelMap>);
+
+  async migrate(): Promise<void>;
+  // Node-only. For edge: pass schema + never call migrate().
+
+  async defineModel<M>(table, modelName?, hooks?): Promise<ModelAPI<M>>;
+  // Also registers M on this.DB for typed access.
+
+  async transaction<T>(callback): Promise<T>;
+  // callback receives { exec, savepoint(name?), rollbackTo(name) }
+  // Auto BEGIN/COMMIT/ROLLBACK. Supports savepoints.
+
+  async batch(statements: { sql, params? }[]): Promise<void>;
+  // Multiple statements in a single transaction.
+
+  async execRaw(sql: string, params?: any[]): Promise<SQLExecResult>;
+
+  on(event: GlobalHookEvent["type"], handler): this;   // Register global hook
+  off(event, handler): this;                             // Remove global hook
+
+  use(plugin: Plugin): this;
+  // Plugin = { name, install(orm), on?(event, ctx), priority? }
+
+  withContext(ctx: OrmContext): this;
+  getContext(): OrmContext;
+  clearContext(): this;
+
+  preparedMode(enabled: boolean): this;
+  isPreparedMode(): boolean;
+
+  addDatabase(name, config: { driver?, databaseUrl?, exec?, logs? }): this;
+  getDatabase(name);
+  removeDatabase(name): boolean;
+  resolveDb(name);
+  async execOn(dbName, sql, params?);
+
+  async enableAuditLogging(options?): Promise<void>;
+  // Creates _audit_logs table + auto-record all CUD operations.
+
+  seeder(name, fn): this;
+  async runSeed(name);
+  async runAllSeeds();
+}
+```
+
+## Usage Patterns
+
+### Basic initialization (Node — filesystem schema)
+```typescript
+import ORMManager from "slintorm";
+import type { ModelAPI } from "slintorm/model";
+
+interface User { id?: number; name: string; email?: string; }
+
+const orm = new ORMManager({ driver: "sqlite", databaseUrl: ":memory:", dir: "src" });
+await orm.migrate();                          // generates + migrates schema from src/*.ts
+const Users = await orm.defineModel<User>("users", "User");
+```
+
+### Edge/serverless initialization (pre-built schema)
+```typescript
+import ORMManager from "slintorm";
+import schema from "./src/schema/generated.json" assert { type: "json" };
+
+const orm = new ORMManager({ schema, exec: myHttpExecFn });
+const Users = await orm.defineModel<User>("users", "User");
+```
+
+### Typed DB store via modelMap
+```typescript
+interface Models { User: User; Post: Post; }
+const orm = new ORMManager<Models>({ ... });
+orm.DB.User.get({ id: 1 });        // fully typed
+orm.DB.Post.query().where(...);     // fully typed
+```
+
+### CRUD
+```typescript
+const user = await Users.insert({ name: "Alice", email: "a@test.com" });
+const found = await Users.get({ id: user!.id });
+const updated = await Users.update({ id: 1 }, { name: "Alice Updated" });
+const deleted = await Users.delete({ id: 2 });
+const all = await Users.getAll();
+```
+
+### Entity instance methods
+Records returned by `get()`, `insert()`, `update()` have hidden methods:
+```typescript
+const user = await Users.get({ id: 1 });
+await user!.update({ name: "New Name" });       // update by PK
+await user!.delete();                            // delete by PK
+const fresh = await user!.refresh();              // re-fetch
+const json = user!.toJSON();                      // plain object (no methods)
+```
+
+### Query builder
+```typescript
+const rows = await Users.query()
+  .where("status", "=", "active")
+  .where("score", ">", 100)
+  .orWhere("name", "LIKE", "%test%")
+  .orderBy("id", "desc")
+  .limit(10)
+  .offset(20)
+  .select("id", "name")
+  .get();
+
+const one = await Users.query().where("id", "=", 1).first();
+```
+
+### Joins
+```typescript
+const rows = await Users.query()
+  .select("users.name", "posts.title")
+  .join("posts", "users.id", "=", "posts.userId")
+  .get();
+```
+
+### Preloading relations (N+1 safe)
+```typescript
+const users = await Users.query()
+  .preload("posts")                                    // onetomany
+  .preload("profile")                                  // onetoone
+  .preload("team.members")                             // nested preload
+  .preload("posts", (qb) => qb.where("status", "=", "published"))  // filtered
+  .get();
+```
+
+### throughRelation — chain-query via relation paths
+```typescript
+const rows = await Users.query()
+  .throughRelation("posts.comments")      // User → Post → Comment
+  .where("body", "LIKE", "%great%")
+  .get();
+```
+
+### whereRelated — filter by related table column
+```typescript
+const rows = await Users.query()
+  .whereRelated("posts.title", "LIKE", "%Hello%")
+  .get();
+```
+
+### Window functions
+```typescript
+const ranked = await Users.query()
+  .window("ROW_NUMBER()", "PARTITION BY category ORDER BY score DESC")
+  .get();
+```
+
+### CTE (WITH clause)
+```typescript
+const inner = Users.query().select("id", "name").where("score", ">", 50);
+const qb = Users.query().with("high_scorers", inner);
+qb.table = "high_scorers";
+const result = await qb.get();
+```
+
+### Group conditions
+```typescript
+const rows = await Users.query()
+  .andWhereGroup(qb => {
+    qb.where("status", "=", "active");
+    qb.where("score", ">", 100);
+  })
+  .orWhereGroup(qb => {
+    qb.where("role", "=", "admin");
+  })
+  .get();
+```
+
+### Named arguments
+```typescript
+const rows = await Users.query()
+  .namedWhere("name = :name AND score > :min", { name: "Alice", min: 50 })
+  .get();
+```
+
+### Full-text search
+```typescript
+const results = await Posts.query()
+  .fulltextSearch("body", "typescript ORM")
+  .get();
+// PostgreSQL: to_tsvector/plainto_tsquery
+// MySQL: MATCH AGAINST IN BOOLEAN MODE
+// SQLite: LIKE %...%
+```
+
+### Streaming (async generator)
+```typescript
+for await (const batch of Users.query().orderBy("id", "asc").stream(100)) {
+  for (const user of batch) {
+    // process user
+  }
+}
+```
+
+### Aggregates
+```typescript
+const count = await Users.count();
+const sum = await Users.sum("score", { status: "active" });
+const avg = await Users.avg("score");
+const min = await Users.min("score");
+const max = await Users.max("score");
+const exists = await Users.exists({ email: "a@b.com" });
+
+// QB-level aggregates
+const rows = await Users.query()
+  .select("category")
+  .sum("score")
+  .avg("score")
+  .countAggregate("*")
+  .groupBy("category")
+  .having("SUM(score) > ?", [100])
+  .get();
+```
+
+### Pagination
+```typescript
+const result = await Users.query().orderBy("id", "asc").getPaginated(page=2, perPage=20);
+// { data: User[], total: number, page: number, lastPage: number }
+```
+
+### Upsert / findOrCreate / firstOrInit
+```typescript
+const action = await Users.upsert({ email: "a@b.com" }, { name: "A", ... });
+// Returns "inserted" | "updated"
+
+const { record, created } = await Users.findOrCreate({ email: "a@b.com" }, { name: "A", ... });
+
+const record = await Users.firstOrInit({ email: "new@b.com" }, { name: "Init" });
+// Returns unsaved entity with update/delete/refresh/toJSON methods.
+// Calling record.update() inserts it if PK is missing, or updates if PK present.
+```
+
+### Soft delete
+```typescript
+await Users.restore({ id: 1 });  // Sets deletedAt = null
+
+// Query builder filters automatically unless:
+const all = await Users.query().withTrashed().get();   // includes deleted
+const only = await Users.query().onlyTrashed().get();   // only deleted
+```
+
+### Dry run
+```typescript
+const plan = await Users.query().where("id", "=", 1).dryRun().get();
+// { sql: "SELECT * FROM users WHERE id = ?", params: [1] }
+```
+
+### AfterFind hook
+```typescript
+const rows = await Users.query()
+  .afterFind(rows => rows.map(r => ({ ...r, _computed: true })))
+  .get();
+```
+
+### Hints
+```typescript
+const rows = await Users.query()
+  .hint("/*+ NO_INDEX */")
+  .indexHint("idx_users_name")
+  .commentHint("my comment")
+  .get();
+```
+
+### Scopes
+```typescript
+const active = await Users.query()
+  .scope(qb => qb.where("status", "=", "active"))
+  .get();
+```
+
+### Validation
+```typescript
+Users.validate({ email: "bad" }, { email: { required: true, email: true } });
+// throws ValidationError
+
+const errors = Users.check({ name: "" }, { name: { required: true, minLength: 2 } });
+// Returns null or { fieldName: "message" }
+```
+
+### Polymorphic associations
+
+Annotate the type and id fields with `// @polymorphicType` / `// @polymorphicId` so `morphTo()` and `morphMany()` auto-detect them — no need to pass field names.
+
+```typescript
+interface Comment {
+  id?: number;
+  body: string;
+  // @polymorphicType
+  commentableType: string;   // "Post" | "User"
+  // @polymorphicId
+  commentableId: number;
+}
+
+// morphTo — resolve parent (fields auto-detected from annotations)
+const comment = await Comments.get({ id: 1 });
+const parent = await comment.morphTo();
+// parent = { id: 1, title: "...", ... }
+
+// morphMany — find all comments for a given parent type
+const postComments = await Comments.morphMany("Post");
+```
+
+### Transactions
+```typescript
+await orm.transaction(async (trx) => {
+  await trx.exec("INSERT INTO users (name) VALUES (?)", ["Alice"]);
+  await trx.savepoint("sp1");
+  await trx.exec("INSERT INTO profiles (userId, bio) VALUES (?, ?)", [1, "bio"]);
+  // Roll back to savepoint if needed:
+  // await trx.rollbackTo("sp1");
+});
+```
+
+### Batch (multiple statements in one transaction)
+```typescript
+await orm.batch([
+  { sql: "INSERT INTO users (name) VALUES (?)", params: ["A"] },
+  { sql: "INSERT INTO users (name) VALUES (?)", params: ["B"] },
+]);
+```
+
+### Database Resolver (multi-DB)
+```typescript
+orm.addDatabase("archive", { driver: "sqlite", databaseUrl: "./archive.db", logs: false });
+const result = await orm.execOn("archive", "SELECT * FROM old_posts");
+const ArchivePosts = await Posts.useDb("archive");
+```
+
+### Plugin system
+```typescript
+orm.use({
+  name: "audit",
+  priority: 1,  // lower runs first
+  install(o) { console.log("Plugin installed"); },
+  on(event, ctx) {
+    if (event === "afterInsert") {
+      console.log("Inserted:", ctx.data);
+    }
+  },
+});
+```
+
+### Context propagation
+```typescript
+orm.withContext({ requestId: "req-123", userId: "user-42" });
+// Context flows through to plugin events
+const ctx = orm.getContext();
+orm.clearContext();
+```
+
+### Prepared statement mode
+```typescript
+orm.preparedMode(true);
+// SQLite driver caches prepared statements
+orm.preparedMode(false);
+```
+
+### Audit logging
+```typescript
+await orm.enableAuditLogging({ tableName: "_my_audit", excludeModels: ["_audit_logs"] });
+// All CUD operations are automatically recorded
+```
+
+### Seeding
+```typescript
+orm.seeder("demo", async (o, log) => {
+  log("Seeding...");
+  await o.DB.User.insert({ name: "Seed", email: "s@t.com" });
+});
+await orm.runSeed("demo");
+await orm.runAllSeeds();
+```
+
+## Schema Generation
+
+### Interface metadata via `//` comments
+
+The generator reads `//` line comments (NOT `/** */` block comments) that immediately precede a field. A single `@` prefix starts the annotation; subsequent tags are separated by `;`. Key-value pairs use `:`.
+
+```typescript
+interface User {
+  id?: number;
+  name: string;
+  // @email;unique
+  email?: string;
+  // @min:0;max:100
+  score?: number;
+  // @default:active
+  status?: string;
+  // @json
+  meta?: Record<string, any>;
+  // @relation onetomany:Post;foreignKey:userId
+  posts?: Post[];
+  // @relation manytoone:User;foreignKey:userId
+  user?: User;
+  // @relation onetoone:Profile;foreignKey:userId
+  profile?: Profile;
+  // @relation manytomany:Team;through:team_members;foreignKey:userId;relatedKey:teamId
+  teams?: Team[];
+  // @softDelete
+  deletedAt?: string;
+  // @version
+  version?: number;
+  // @index
+  createdAt?: string;
+  // @unique;length:255
+  slug?: string;
+  // @default:CURRENT_TIMESTAMP
+  createdAt?: string;
+  // @rename:old_field_name
+  newField?: string;
+  // @nullable
+  optionalBio?: string;
+  // @polymorphicType
+  commentableType: string;
+  // @polymorphicId
+  commentableId: number;
+}
+```
+
+### Generate schema
+```bash
+npx slintorm generate
+npx slintorm migrate
+npx slintorm seed demo
+```
+
+### Generating schema for edge deployment
+```bash
+# During build step:
+npx slintorm generate
+
+# Then import in edge function:
+import schema from "./src/schema/generated.json" assert { type: "json" };
+```
+
+## Edge / Serverless Drivers
+
+### HTTP exec drivers (direct provider API)
+```typescript
+import { neonExec, tursoExec, planetscaleExec, http } from "slintorm/http";
+
+const orm = new ORMManager({
+  exec: neonExec({ endpoint: "https://your-neon-project.db.neo.tech/sql" }),
+  schema,
+});
+
+// Namespace:
+const exec = http.neon({ endpoint: "..." });
+```
+
+### Proxy client + server
+```typescript
+// Edge side:
+import { proxyExec } from "slintorm/proxy";
+const orm = new ORMManager({
+  exec: proxyExec({ endpoint: "https://your-proxy.com/query" }),
+  schema,
+});
+
+// Server side (Node.js):
+import { createProxyServer } from "slintorm/proxy";
+createProxyServer({
+  port: 3001,
+  resolveDb: async ({ sql, params, headers }) => ({
+    name: "main",
+    driver: "postgres",
+    databaseUrl: process.env.DATABASE_URL!,
+  }),
+  onQuery: ({ sql, durationMs }) => console.log(`${durationMs}ms: ${sql}`),
+  onError: ({ error }) => console.error(error),
+});
+```
+
+## Constraint Error Handling
+
+All constraint errors (UNIQUE, NOT NULL, FOREIGN KEY, CHECK) are wrapped into structured `ORMError` instances with:
+- `.ormCode` — machine-readable error code
+- `.table` / `.column` — affected table and column (parsed from driver messages)
+- `.value` — the offending value
+- `.sql` / `.params` — the query that caused it
+- `.original` — the original driver error
+
+```typescript
+try {
+  await Users.insert({ name: "Alice", email: "dup@test.com" });
+  await Users.insert({ name: "Bob", email: "dup@test.com" });
+} catch (err) {
+  if (err instanceof ORMError && err.ormCode === "UNIQUE_VIOLATION") {
+    console.log(`${err.column} = ${err.value} already exists in ${err.table}`);
+  }
+}
+```
+
+## Important Implementation Details
+
+1. **ESM only** — `"type": "module"` in package.json, all imports use `.js` extensions
+2. **Optional peer dependencies** — pg, mysql2, sqlite3, better-sqlite3, mongodb are all optional; only the driver you use needs to be installed
+3. **Dynamic driver loading** — drivers are loaded via `import()` at connect time, tree-shakeable
+4. **Custom exec bypasses TCP entirely** — when `exec` is passed in config, `DBAdapter` never calls `connect()`, and `wrapExec` is skipped
+5. **Schema auto-creates table on first use** — `defineModel()` creates the ModelAPI immediately, but the table is not created until the first `insert()`/`insertMany()` call (which calls `ensure()`)
+6. **The ORM always adds `createdAt` and `updatedAt`** — The migrator's `ensureTimestamps()` automatically adds these to every table unless they already exist in the schema
+7. **`truncate()` uses `DELETE FROM`** — not `DROP TABLE`; resets auto-increment counters may vary by driver
+8. **`upsert()` for SQLite falls back to get+update** — SQLite didn't get `ON CONFLICT DO UPDATE` until 3.24.0; the code uses the generic get/update path for SQLite
+9. **Relation path resolver is BFS** — `relatedTo()` and `whereRelated()` use breadth-first search through the schema's relation graph
+10. **Preload engine batches queries** — No N+1: for each relation, one query fetches all related rows for all parent rows at once
+11. **`dryRun()` returns `{ sql, params }`** but since `get()` is typed to return `T[]`, TypeScript won't know about this — cast to `any` or use `toSql()`
+12. **Stream interleaves requests** — The `stream()` async generator does NOT buffer the entire result set; it fetches batch by batch
+13. **Schema generator rejects certain field names** — Keywords like `?`, `:`, `;`, `{`, `}`, `[`, `]`, `<`, `>`, quoted keys, numeric keys all produce clear warnings with the interface name
+14. **Bug #1 fixed**: entity.refresh()/update()/delete() close over PK value, not the original filter — so calling entity.update({ name: "new" }) followed by entity.refresh() works
+
+## Scripts
+
+```bash
+npm run test          # Original example walkthrough (tsx src/example.ts)
+npm run test:suite    # 57-test runtime suite
+npm run test:types    # Compile-time type safety check (tsc --noEmit)
+npm run build         # tsc + tsc-alias
+npm run cli           # tsx src/bin/cli.ts
+```

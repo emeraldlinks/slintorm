@@ -5,6 +5,7 @@ import { tsTypeToSqlType } from "./utils.js";
 // ==== INTERFACES ====
 export interface FieldInfo {
   type: string;
+  optional?: boolean;
   meta: Record<string, string | number | boolean | null>;
 }
 
@@ -224,6 +225,7 @@ export class Migrator {
       // A column is nullable when ANY of these are true:
       //   • @nullable / nullable meta is present
       //   • The TS type includes "undefined" (optional field marked with ?)
+      //   • FieldInfo.optional is true (schema-based definition)
       //   • It is an enum without an explicit default
       //       (avoids NOT NULL failures on existing rows during migration)
       //   • It has @softDelete
@@ -235,6 +237,7 @@ export class Migrator {
 
       const isNullableMeta   = this.hasM(meta, "nullable");
       const isOptionalType   = typeStr.includes("undefined");
+      const isOptionalField  = !!(info as any).optional;
       const isSoftDelete     = this.hasM(meta, "softDelete");
       const isEnumNoDefault  = !!enumVal && this.m(meta, "default") === undefined;
       const isUnique         = this.hasM(meta, "unique");
@@ -251,7 +254,7 @@ export class Migrator {
       } else if (isExplicitNotNull) {
         isNullable = false;
       } else {
-        isNullable = isNullableMeta || isOptionalType || isSoftDelete || isEnumNoDefault;
+        isNullable = isNullableMeta || isOptionalType || isOptionalField || isSoftDelete || isEnumNoDefault;
       }
 
       const nullFrag = isNullable ? "" : "NOT NULL";

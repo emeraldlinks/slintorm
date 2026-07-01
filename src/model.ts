@@ -216,6 +216,18 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       if (emitGlobal) await emitGlobal({ type, model: name, table: tableName, data, filter });
     };
 
+    function detectPolyFields() {
+      const fields = modelSchema?.fields || {};
+      let typeF: string | null = null;
+      let idF: string | null = null;
+      for (const [n, fdef] of Object.entries(fields)) {
+        const meta = (fdef as any).meta || {};
+        if (meta.polymorphicType) typeF = n;
+        if (meta.polymorphicId) idF = n;
+      }
+      return { typeF, idF };
+    }
+
     return {
       async insert(item: T) {
         await ensure(item);
@@ -664,12 +676,14 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       },
 
       // ── Polymorphic associations ──────────────────────────────────
-      morphTo<K extends keyof T & string>(typeField: K, idField: K): Promise<any> {
+      // Fields auto-detected from // @polymorphicType / @polymorphicId annotations
+      morphTo(typeField?: string, idField?: string): Promise<any> {
         return (async () => {
           const row = await this.query().first();
           if (!row) return null;
-          const morphType = (row as any)[typeField];
-          const morphId = (row as any)[idField];
+          const { typeF, idF } = detectPolyFields();
+          const morphType = (row as any)[typeField || typeF || "commentableType"];
+          const morphId = (row as any)[idField || idF || "commentableId"];
           if (!morphType || !morphId) return null;
           let schemaEntry = Object.values(schemas).find(
             (s: any) => s.table === morphType.toLowerCase() || s.table === morphType
@@ -683,15 +697,16 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         })();
       },
 
-      morphMany<K extends keyof T & string>(typeField: K, idField: K, morphType: string): Promise<any[]> {
+      morphMany(morphValue: string, typeField?: string): Promise<any[]> {
         return (async () => {
-          const idVal = (idField as any);
+          const { typeF } = detectPolyFields();
+          const resolvedType = typeField || typeF || "commentableType";
           let schemaEntry = Object.values(schemas).find(
-            (s: any) => s.table === morphType.toLowerCase() || s.table === morphType
+            (s: any) => s.table === morphValue.toLowerCase() || s.table === morphValue
           );
-          if (!schemaEntry) schemaEntry = schemas[morphType];
-          const targetTable = (schemaEntry as any)?.table || morphType;
-          const res = await adapter.exec(`SELECT * FROM "${targetTable}" WHERE "${String(typeField)}" = ?`, [idVal]);
+          if (!schemaEntry) schemaEntry = schemas[morphValue];
+          const targetTable = (schemaEntry as any)?.table || morphValue;
+          const res = await adapter.exec(`SELECT * FROM "${targetTable}" WHERE "${String(resolvedType)}" = ?`, [morphValue]);
           return res.rows || [];
         })();
       },
