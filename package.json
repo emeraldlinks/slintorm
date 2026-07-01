@@ -38,22 +38,24 @@
     "test": "tsx src/example.ts",
     "cli": "tsx src/bin/cli.ts"
   },
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^24.13.2",
     "@types/pg": "^8.15.5",
+    "@types/sqlite3": "^3.1.11",
+    "mongodb": "^7.4.0",
+    "mysql2": "^3.22.5",
     "ts-node": "^10.9.2",
     "tsc-alias": "^1.8.16",
     "tsx": "^4.22.4",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "pg": "^8.0.0",
-    "mysql2": "^3.0.0",
+    "better-sqlite3": "^9.0.0",
     "mongodb": "^6.0.0",
-    "sqlite3": "^5.0.0",
+    "mysql2": "^3.0.0",
+    "pg": "^8.0.0",
     "sqlite": "^5.0.0",
-    "better-sqlite3": "^9.0.0"
+    "sqlite3": "^5.0.0"
   },
   "peerDependenciesMeta": {
     "pg": {

@@ -26,6 +26,10 @@ export type ORMManagerConfig<TModelMap extends AnyModelMap = AnyModelMap> = {
    *  build step, import the generated JSON, and pass it here. */
   schema?: Record<string, SchemaModel>;
   modelMap?: TModelMap;
+  /** Read replica connection URLs (round-robin) */
+  replicas?: string[];
+  /** Connection pool size for PostgreSQL/MySQL */
+  poolSize?: number;
 };
 
 export type ModelHooks<T extends object> = {
@@ -62,6 +66,8 @@ export async function createORM<TModelMap extends AnyModelMap = AnyModelMap>(
     logs: cfg.logs,
     schema: cfg.schema,
     modelMap: cfg.modelMap,
+    replicas: cfg.replicas,
+    poolSize: cfg.poolSize,
   });
 
   const sqlDriver = resolveDriver(adapter.driver);
@@ -81,7 +87,9 @@ export async function createORM<TModelMap extends AnyModelMap = AnyModelMap>(
     }
   }
 
-  const defineModel = await createModelFactory(adapter, cfg.schema);
+  const defineModel = await createModelFactory(adapter, cfg.schema, async (event: any) => {
+    // No global hooks available in functional API
+  });
   return { adapter, defineModel };
 }
 
@@ -100,12 +108,21 @@ export type ReadonlyDBStore<TModelMap extends AnyModelMap = AnyModelMap> =
   Readonly<DBStore<TModelMap>>;
 
 // ─── ORMManager (class API) ───────────────────────────────────────────────────
+export type GlobalHookEvent = {
+  type: "beforeInsert" | "afterInsert" | "beforeUpdate" | "afterUpdate" | "beforeDelete" | "afterDelete";
+  model: string;
+  table: string;
+  data?: any;
+  filter?: any;
+};
+
 export default class ORMManager<
   TModelMap extends AnyModelMap = AnyModelMap
 > {
   cfg: ORMManagerConfig<TModelMap>;
   adapter: DBAdapter;
   readonly DB: ReadonlyDBStore<TModelMap> = {} as ReadonlyDBStore<TModelMap>;
+  private _globalHooks: Map<string, ((event: GlobalHookEvent) => void | Promise<void>)[]> = new Map();
 
   constructor(cfg: ORMManagerConfig<TModelMap> = {}) {
     this.cfg = cfg;
@@ -116,6 +133,8 @@ export default class ORMManager<
       logs: this.cfg.logs,
       schema: this.cfg.schema,
       modelMap: this.cfg.modelMap,
+      replicas: this.cfg.replicas,
+      poolSize: this.cfg.poolSize,
     });
 
     const sqlDriver = resolveDriver(this.adapter.driver);
@@ -190,9 +209,11 @@ export default class ORMManager<
     modelName?: string,
     hooks?: ModelHooks<T>
   ): Promise<ModelAPI<T>> {
+    const self = this;
     const defineModel = await createModelFactory(
       this.adapter,
-      this.cfg.schema
+      this.cfg.schema,
+      async (event: any) => self._emitGlobal(event)
     );
     const model = defineModel<T>(table, modelName, hooks);
 
@@ -205,11 +226,23 @@ export default class ORMManager<
   }
 
   async transaction<T>(
-    callback: (trx: { exec: ExecFn }) => Promise<T>
+    callback: (trx: { exec: ExecFn; savepoint: (name: string) => Promise<void>; rollbackTo: (name: string) => Promise<void> }) => Promise<T>
   ): Promise<T> {
     const driver = this.adapter.driver;
     if (driver !== "mongodb") await this.adapter.exec("BEGIN", []);
-    const trx = { exec: this.adapter.exec };
+    let spCounter = 0;
+    const trx = {
+      exec: this.adapter.exec.bind(this.adapter),
+      savepoint: async (name?: string) => {
+        if (driver === "mongodb") return;
+        const sp = name || `sp_${++spCounter}`;
+        await this.adapter.exec(`SAVEPOINT ${sp}`, []);
+      },
+      rollbackTo: async (name: string) => {
+        if (driver === "mongodb") return;
+        await this.adapter.exec(`ROLLBACK TO SAVEPOINT ${name}`, []);
+      },
+    };
     try {
       const result = await callback(trx);
       if (driver !== "mongodb") await this.adapter.exec("COMMIT", []);
@@ -226,5 +259,106 @@ export default class ORMManager<
         await trx.exec(stmt.sql, stmt.params ?? []);
       }
     });
+  }
+
+  // ── Execute raw SQL with params ────────────────────────────────────
+  async execRaw(sql: string, params: any[] = []): Promise<any> {
+    return this.adapter.exec(sql, params);
+  }
+
+  // ── Global event system ────────────────────────────────────────────
+  on(event: GlobalHookEvent["type"], handler: (event: GlobalHookEvent) => void | Promise<void>) {
+    const handlers = this._globalHooks.get(event) || [];
+    handlers.push(handler);
+    this._globalHooks.set(event, handlers);
+    return this;
+  }
+
+  off(event: GlobalHookEvent["type"], handler: (event: GlobalHookEvent) => void | Promise<void>) {
+    const handlers = this._globalHooks.get(event);
+    if (!handlers) return this;
+    const idx = handlers.indexOf(handler);
+    if (idx >= 0) handlers.splice(idx, 1);
+    if (!handlers.length) this._globalHooks.delete(event);
+    return this;
+  }
+
+  async _emitGlobal(event: GlobalHookEvent) {
+    const handlers = this._globalHooks.get(event.type);
+    if (!handlers?.length) return;
+    for (const handler of handlers) {
+      await handler(event);
+    }
+  }
+
+  // ── Audit logging helper ──────────────────────────────────────────
+  /**
+   * Enable automatic audit logging. Creates (or uses) a table named `_audit_logs`
+   * and records all create/update/delete operations.
+   */
+  async enableAuditLogging(options: { tableName?: string; excludeModels?: string[] } = {}) {
+    const tableName = options.tableName || "_audit_logs";
+    const exclude = new Set(options.excludeModels || ["_audit_logs"]);
+
+    await this.adapter.exec(
+      `CREATE TABLE IF NOT EXISTS "${tableName}" (
+        "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "model" TEXT NOT NULL,
+        "action" TEXT NOT NULL,
+        "recordId" TEXT,
+        "oldData" TEXT,
+        "newData" TEXT,
+        "changedAt" TEXT NOT NULL
+      )`, []
+    );
+
+    this.on("afterInsert", async (event) => {
+      if (exclude.has(event.model)) return;
+      await this.adapter.exec(
+        `INSERT INTO "${tableName}" ("model", "action", "recordId", "newData", "changedAt") VALUES (?, ?, ?, ?, ?)`,
+        [event.model, "INSERT", String(event.data?.id ?? ""), JSON.stringify(event.data), new Date().toISOString()]
+      );
+    });
+
+    this.on("afterUpdate", async (event) => {
+      if (exclude.has(event.model)) return;
+      await this.adapter.exec(
+        `INSERT INTO "${tableName}" ("model", "action", "recordId", "newData", "oldData", "changedAt") VALUES (?, ?, ?, ?, ?, ?)`,
+        [event.model, "UPDATE", String(event.data?.id ?? JSON.stringify(event.filter)), JSON.stringify(event.data), JSON.stringify(event.filter), new Date().toISOString()]
+      );
+    });
+
+    this.on("afterDelete", async (event) => {
+      if (exclude.has(event.model)) return;
+      await this.adapter.exec(
+        `INSERT INTO "${tableName}" ("model", "action", "recordId", "oldData", "changedAt") VALUES (?, ?, ?, ?, ?)`,
+        [event.model, "DELETE", String(event.data?.id ?? JSON.stringify(event.filter)), JSON.stringify(event.data), new Date().toISOString()]
+      );
+    });
+  }
+
+  // ── Seeding helpers ───────────────────────────────────────────────
+  /**
+   * Register a seed function that can be invoked via `npx slintorm seed`.
+   * seedFn receives the ORM instance and an optional logger.
+   */
+  private _seeders: Map<string, (orm: any, log: (msg: string) => void) => Promise<void>> = new Map();
+
+  seeder(name: string, fn: (orm: any, log: (msg: string) => void) => Promise<void>) {
+    this._seeders.set(name, fn);
+    return this;
+  }
+
+  async runSeed(name: string) {
+    const fn = this._seeders.get(name);
+    if (!fn) throw new Error(`Seeder "${name}" not found`);
+    await fn(this, (msg: string) => console.log(`[seed:${name}] ${msg}`));
+  }
+
+  async runAllSeeds() {
+    for (const [name, fn] of Array.from(this._seeders)) {
+      console.log(`Running seeder: ${name}...`);
+      await fn(this, (msg: string) => console.log(`[seed:${name}] ${msg}`));
+    }
   }
 }

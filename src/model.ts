@@ -101,7 +101,7 @@ async function loadSchema(adapterDir: string) {
 
 let cachedSchema: Record<string, any> | null = null;
 
-export async function createModelFactory(adapter: DBAdapter, schema?: Record<string, any>) {
+export async function createModelFactory(adapter: DBAdapter, schema?: Record<string, any>, emitGlobal?: (event: any) => Promise<void>) {
   const schemas =
     schema ??
     adapter.schema ??
@@ -133,6 +133,9 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         : undefined;
 
     const modelSchema = schemas[name] || { fields: {}, relations: [] as RelationDef[] };
+    const versionField = Object.entries(modelSchema?.fields || {}).find(
+      ([, f]: any) => f.meta?.version || f.meta?.["@version"]
+    )?.[0];
 
     function inferFieldType(value: unknown) {
       if (value === null || value === undefined) return "string";
@@ -206,16 +209,21 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       return parseFloat(res.rows?.[0]?.__val ?? "0");
     }
 
+    const emit = async (type: string, data?: any, filter?: any) => {
+      if (emitGlobal) await emitGlobal({ type, model: name, table: tableName, data, filter });
+    };
+
     return {
       async insert(item: T) {
         await ensure(item);
+        await emit("beforeInsert", item);
         const now = new Date().toISOString();
         if ((item as any).createdAt === undefined) (item as any).createdAt = now;
         if ((item as any).updatedAt === undefined) (item as any).updatedAt = now;
 
         if (hooks?.onCreateBefore) {
           const modified = await hooks.onCreateBefore(item);
-          if (modified !== undefined) item = modified;
+          if (modified !== undefined) item = modified as T;
         }
 
         let insertedId: number | undefined;
@@ -278,6 +286,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           try { inserted = await this.get({ email: (item as any).email } as any); } catch {}
         }
         if (hooks?.onCreateAfter && inserted) await hooks.onCreateAfter(inserted);
+        await emit("afterInsert", inserted);
         return inserted;
       },
 
@@ -287,28 +296,49 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         if (!data || !Object.keys(data).length) throw new Error("Update data cannot be empty");
 
         const before = await this.get(where);
+        await emit("beforeUpdate", data, where);
 
         if (hooks?.onUpdateBefore) {
           const modified = await hooks.onUpdateBefore(before, data);
-          if (modified !== undefined) data = modified;
+          if (modified !== undefined) data = modified as Partial<T>;
         }
 
         if (driver === "mongodb") {
           await adapter.exec(JSON.stringify({ collection: tableName, action: "update", filter: where, data }));
         } else {
           const isPg = driver === "postgres";
-          const setCols = Object.keys(data);
+          let setCols = Object.keys(data);
           const whereCols = Object.keys(where);
+
+          // Optimistic locking: auto-increment version field
+          let versionClause = "";
+          if (versionField) {
+            const currentVersion = (before as any)?.[versionField] ?? (where as any)[versionField];
+            if (currentVersion !== undefined) {
+              versionClause = isPg
+                ? ` AND "${versionField}" = $${setCols.length + whereCols.length + 1}`
+                : ` AND ${versionField} = ?`;
+              if (!setCols.includes(versionField)) {
+                (data as any)[versionField] = Number(currentVersion) + 1;
+              }
+            }
+          }
+
           const setClause = setCols.map((c, i) => isPg ? `"${c}" = $${i + 1}` : `${c} = ?`).join(", ");
           const whereClause = whereCols.map((c, i) => isPg ? `"${c}" = $${setCols.length + i + 1}` : `${c} = ?`).join(" AND ");
+          const params = [...setCols.map((c) => data[c as keyof T]), ...whereCols.map((c) => where[c as keyof T])];
+          if (versionClause) {
+            params.push((before as any)?.[versionField as string]);
+          }
           await adapter.exec(
-            `UPDATE ${isPg ? `"${tableName}"` : tableName} SET ${setClause} WHERE ${whereClause}`,
-            [...setCols.map((c) => data[c as keyof T]), ...whereCols.map((c) => where[c as keyof T])]
+            `UPDATE ${isPg ? `"${tableName}"` : tableName} SET ${setClause} WHERE ${whereClause}${versionClause}`,
+            params
           );
         }
 
         const after = await this.get(where);
         if (hooks?.onUpdateAfter) await hooks.onUpdateAfter(before, after || data);
+        await emit("afterUpdate", after, where);
         return after;
       },
 
@@ -316,6 +346,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         if (!Object.keys(filter).length) throw new Error("Delete filter cannot be empty");
         const needsRecord = !!(hooks?.onDeleteBefore || hooks?.onDeleteAfter);
         const toDelete = needsRecord ? await this.get(filter) : null;
+        await emit("beforeDelete", null, filter);
         if (hooks?.onDeleteBefore) await hooks.onDeleteBefore(toDelete || filter);
         if (driver === "mongodb") {
           await adapter.exec(JSON.stringify({ collection: tableName, action: "delete", filter }));
@@ -324,6 +355,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           await adapter.exec(`DELETE FROM ${tableName} WHERE ${clause}`, params);
         }
         if (hooks?.onDeleteAfter) await hooks.onDeleteAfter(toDelete || filter);
+        await emit("afterDelete", toDelete, filter);
         return toDelete || filter;
       },
 
@@ -567,6 +599,39 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
       async restore(filter: Partial<T>) {
         await this.updateMany(filter, { deletedAt: null } as any);
+      },
+
+      // ── Polymorphic associations ──────────────────────────────────
+      morphTo<K extends keyof T & string>(typeField: K, idField: K): Promise<any> {
+        return (async () => {
+          const row = await this.query().first();
+          if (!row) return null;
+          const morphType = (row as any)[typeField];
+          const morphId = (row as any)[idField];
+          if (!morphType || !morphId) return null;
+          let schemaEntry = Object.values(schemas).find(
+            (s: any) => s.table === morphType.toLowerCase() || s.table === morphType
+          );
+          if (!schemaEntry) schemaEntry = schemas[morphType];
+          if (!schemaEntry) return null;
+          const targetTable = (schemaEntry as any).table || morphType;
+          const res = await adapter.exec(`SELECT * FROM "${targetTable}" WHERE "id" = ?`, [morphId]);
+          if (!res.rows?.length) return null;
+          return res.rows[0];
+        })();
+      },
+
+      morphMany<K extends keyof T & string>(typeField: K, idField: K, morphType: string): Promise<any[]> {
+        return (async () => {
+          const idVal = (idField as any);
+          let schemaEntry = Object.values(schemas).find(
+            (s: any) => s.table === morphType.toLowerCase() || s.table === morphType
+          );
+          if (!schemaEntry) schemaEntry = schemas[morphType];
+          const targetTable = (schemaEntry as any)?.table || morphType;
+          const res = await adapter.exec(`SELECT * FROM "${targetTable}" WHERE "${String(typeField)}" = ?`, [idVal]);
+          return res.rows || [];
+        })();
       },
 
       validate(data: Partial<T>, rules: FieldRules<T>) { new Validator<T>(rules).validate(data); },

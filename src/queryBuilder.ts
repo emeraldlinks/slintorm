@@ -90,9 +90,13 @@ export class QueryBuilder<T extends Record<string, any>> {
   protected _offset: number | null = null;
   protected _joins: string[] = [];
   protected _preloads: string[] = [];
+  protected _filteredPreloads: Map<string, WhereClause[]> = new Map();
   protected _exclude: string[] = [];
   protected _pendingRelated: { path: string; column: string; value: any; op?: OpComparison }[] = [];
   private _preloadCache = new Map<string, any[]>();
+  protected _cacheKey: string | null = null;
+  protected _cacheTTL: number | null = null;
+  private static _resultCache = new Map<string, { data: any; expires: number }>();
 
   protected table: string;
   protected exec: ExecFn;
@@ -124,6 +128,19 @@ export class QueryBuilder<T extends Record<string, any>> {
   select<K extends keyof T>(...cols: K[]) {
     this._selects = cols as (keyof T | string)[];
     return this;
+  }
+
+  /** Type-safe pick: select specific columns and return only those in the result */
+  async pick<K extends keyof T>(...cols: K[]): Promise<Pick<T, K>[]> {
+    this.select(...cols);
+    return this.get() as Promise<Pick<T, K>[]>;
+  }
+
+  /** Get a single column's values as a flat array */
+  async pluck<K extends keyof T>(col: K): Promise<T[K][]> {
+    this.select(col);
+    const rows = await this.get();
+    return rows.map(r => r[col as string]) as T[K][];
   }
 
   // ── WHERE helpers ───────────────────────────────────────────────────────────
@@ -234,7 +251,14 @@ export class QueryBuilder<T extends Record<string, any>> {
     return this;
   }
 
-  preload<K extends PreloadPath<T>>(relation: K) {
+  preload<K extends PreloadPath<T>>(relation: K, filter?: (qb: QueryBuilder<T>) => void) {
+    if (filter) {
+      const nestedKey = relation as string;
+      if (!this._filteredPreloads) this._filteredPreloads = new Map();
+      const fakeQB = new QueryBuilder<T>(this.table, this.dir, this.exec, this.modelName, this.schema, this.orm);
+      filter(fakeQB);
+      this._filteredPreloads.set(nestedKey, fakeQB._where.slice());
+    }
     this._preloads.push(relation as string);
     return this;
   }
@@ -248,7 +272,7 @@ export class QueryBuilder<T extends Record<string, any>> {
     return this;
   }
 
-  private _countParams(): number {
+  protected _countParams(): number {
     return this._where.reduce((acc, w) => {
       if (w.kind === "in" || w.kind === "notin") return acc + (w.value?.length ?? 0);
       if (w.kind === "between") return acc + 2;
@@ -347,7 +371,7 @@ export class QueryBuilder<T extends Record<string, any>> {
           ? `SELECT ${dialect.quoteIdentifier(step.currentPK)} FROM ${dialect.quoteIdentifier(step.currentTable)} WHERE ${dialect.quoteIdentifier(step.foreignKey)} IN (${ph})`
           : `SELECT ${dialect.quoteIdentifier(step.foreignKey)} FROM ${dialect.quoteIdentifier(step.targetTable)} WHERE ${dialect.quoteIdentifier(step.targetPK)} IN (${ph})`;
         const res = await this.exec(sql, matchingIds);
-        matchingIds = [...new Set((res.rows || []).map((r: any) => Object.values(r)[0]))];
+        matchingIds = Array.from(new Set((res.rows || []).map((r: any) => Object.values(r)[0])));
         if (!matchingIds.length) { this._where.push({ raw: "1 = 0", rawParams: [], kind: "and" }); break; }
       }
 
@@ -562,12 +586,39 @@ export class QueryBuilder<T extends Record<string, any>> {
     return { data, total, page, lastPage: Math.ceil(total / perPage) || 1 };
   }
 
+  cache(key: string, ttlSeconds: number = 300) {
+    this._cacheKey = key;
+    this._cacheTTL = ttlSeconds;
+    return this;
+  }
+
+  static clearCache() {
+    QueryBuilder._resultCache.clear();
+  }
+
   // ── get ───────────────────────────────────────────────────────────────────────
   async get(): Promise<T[]> {
     await this._resolvePendingRelated();
+
+    // Check result cache
+    if (this._cacheKey) {
+      const cached = QueryBuilder._resultCache.get(this._cacheKey);
+      if (cached && cached.expires > Date.now()) {
+        return cached.data as T[];
+      }
+    }
+
     const { sql, params } = this.buildSql();
     const res = await this.exec(sql, params);
     let rows = (res.rows || []) as T[];
+
+    // Store in cache
+    if (this._cacheKey) {
+      QueryBuilder._resultCache.set(this._cacheKey, {
+        data: rows,
+        expires: Date.now() + (this._cacheTTL ?? 300) * 1000,
+      });
+    }
 
     if (this._preloads.length) {
       this._preloadCache.clear();
@@ -658,16 +709,62 @@ export class QueryBuilder<T extends Record<string, any>> {
 
     const hasValues = (arr: any[]) => Array.isArray(arr) && arr.length > 0;
 
+    const buildWhereClauseForPreload = (fieldName: string, targetTable: string): { sql: string; params: any[] } => {
+      const filterWheres = this._filteredPreloads?.get(fieldName);
+      if (!filterWheres?.length) return { sql: "", params: [] };
+      const origWhere = this._where;
+      this._where = filterWheres;
+      const result = this._buildWhereSql(0);
+      let sql = result.sql;
+      for (const w of filterWheres) {
+        if (w.column && !w.column.includes(".")) {
+          sql = sql.replace(new RegExp(`\\b${w.column}\\b`, "g"), `${targetTable}.${w.column}`);
+        }
+      }
+      this._where = origWhere;
+      return { sql: sql ? ` AND (${sql})` : "", params: result.params };
+    };
+
     const mongoFetch = async (targetTable: string, filter: Record<string, any>) =>
       (await this.exec(JSON.stringify({ collection: targetTable, action: "find", filter }), [])).rows || [];
 
-    const sqlFetch = async (targetTable: string, colName: string, ids: any[]) => {
-      const cacheKey = `${targetTable}:${colName}:${[...ids].sort().join(",")}`;
+    const sqlFetch = async (targetTable: string, colName: string, ids: any[], fieldName?: string) => {
+      const fc = fieldName ? buildWhereClauseForPreload(fieldName, targetTable) : { sql: "", params: [] };
+      const cacheKey = `${targetTable}:${colName}:${[...ids].sort().join(",")}:${fc.sql}`;
       if (this._preloadCache.has(cacheKey)) return this._preloadCache.get(cacheKey)!;
       const ph = ids.map((_, i) => dialect.formatPlaceholder(i)).join(", ");
-      const result = (await this.exec(`SELECT * FROM ${dialect.quoteIdentifier(targetTable)} WHERE ${dialect.quoteIdentifier(colName)} IN (${ph})`, ids)).rows || [];
+      const sql = `SELECT * FROM ${dialect.quoteIdentifier(targetTable)} WHERE ${dialect.quoteIdentifier(colName)} IN (${ph})${fc.sql}`;
+      const params = ids.concat(fc.params);
+      const result = (await this.exec(sql, params)).rows || [];
       this._preloadCache.set(cacheKey, result);
       return result;
+    };
+
+    const manyToManyJoinFetchWithFilter = async (
+      through: string, targetTable: string, targetPK: string,
+      foreignKey: string, relatedKey: string, parentIds: any[],
+      fieldName?: string
+    ) => {
+      const fc = fieldName ? buildWhereClauseForPreload(fieldName, targetTable) : { sql: "", params: [] };
+      if (isMongo) {
+        const junction = await mongoFetch(through, { [foreignKey]: { $in: parentIds } });
+        const targetIds = Array.from(new Set(junction.map((j) => j[relatedKey])));
+        if (!hasValues(targetIds)) return { junctionRows: [], relatedRows: [] };
+        return { junctionRows: junction, relatedRows: await mongoFetch(targetTable, { [targetPK]: { $in: targetIds }, ...(fc.sql ? {} : {}) }) };
+      }
+      const ph = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(", ");
+      const sql =
+        `SELECT ${dialect.quoteIdentifier(targetTable)}.*, ` +
+        `${dialect.quoteIdentifier(through)}.${dialect.quoteIdentifier(foreignKey)} AS __pivot_fk ` +
+        `FROM ${dialect.quoteIdentifier(targetTable)} ` +
+        `INNER JOIN ${dialect.quoteIdentifier(through)} ` +
+        `ON ${dialect.quoteIdentifier(through)}.${dialect.quoteIdentifier(relatedKey)} = ` +
+        `${dialect.quoteIdentifier(targetTable)}.${dialect.quoteIdentifier(targetPK)} ` +
+        `WHERE ${dialect.quoteIdentifier(through)}.${dialect.quoteIdentifier(foreignKey)} IN (${ph})${fc.sql}`;
+      const rows = (await this.exec(sql, parentIds.concat(fc.params))).rows || [];
+      const junctionRows = rows.map((r: any) => ({ [foreignKey]: r.__pivot_fk, [relatedKey]: r[targetPK] }));
+      const relatedRows = rows.map((r: any) => { const c = { ...r }; delete c.__pivot_fk; return c; });
+      return { junctionRows, relatedRows };
     };
 
     const manyToManyJoinFetch = async (
@@ -676,7 +773,7 @@ export class QueryBuilder<T extends Record<string, any>> {
     ) => {
       if (isMongo) {
         const junction = await mongoFetch(through, { [foreignKey]: { $in: parentIds } });
-        const targetIds = [...new Set(junction.map((j) => j[relatedKey]))];
+        const targetIds = Array.from(new Set(junction.map((j) => j[relatedKey])));
         if (!hasValues(targetIds)) return { junctionRows: [], relatedRows: [] };
         return { junctionRows: junction, relatedRows: await mongoFetch(targetTable, { [targetPK]: { $in: targetIds } }) };
       }
@@ -707,24 +804,25 @@ export class QueryBuilder<T extends Record<string, any>> {
       const foreignKey = relation.foreignKey as string;
       const relatedKey = relation.relatedKey as string;
       let relatedRows: any[] = [];
+      const filterClause = buildWhereClauseForPreload(relation.fieldName, targetSchema.table);
 
       if (kind === "onetomany") {
-        const parentIds = [...new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))];
+        const parentIds = Array.from(new Set(parentRows.map((r) => r[rootPK]).filter(Boolean)));
         if (!hasValues(parentIds)) { parentRows.forEach((r) => (r[relation.fieldName] = [])); return []; }
         relatedRows = isMongo
           ? await mongoFetch(targetSchema.table, { [foreignKey]: { $in: parentIds } })
-          : await sqlFetch(targetSchema.table, foreignKey, parentIds);
+          : await sqlFetch(targetSchema.table, foreignKey, parentIds, relation.fieldName);
         relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
         const map = new Map<any, any[]>();
         relatedRows.forEach((r) => { const k = r[foreignKey]; if (!map.has(k)) map.set(k, []); map.get(k)!.push(r); });
         parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[rootPK]) || []));
 
       } else if (kind === "manytoone") {
-        const fkValues = [...new Set(parentRows.map((r) => r[foreignKey]).filter(Boolean))];
+        const fkValues = Array.from(new Set(parentRows.map((r) => r[foreignKey]).filter(Boolean)));
         if (!hasValues(fkValues)) { parentRows.forEach((r) => (r[relation.fieldName] = null)); return []; }
         relatedRows = isMongo
           ? await mongoFetch(targetSchema.table, { [targetPK]: { $in: fkValues } })
-          : await sqlFetch(targetSchema.table, targetPK, fkValues);
+          : await sqlFetch(targetSchema.table, targetPK, fkValues, relation.fieldName);
         relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
         const map = new Map(relatedRows.map((r) => [r[targetPK] as PropertyKey, r]));
         parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[foreignKey]) || null));
@@ -732,20 +830,20 @@ export class QueryBuilder<T extends Record<string, any>> {
       } else if (kind === "onetoone") {
         const parentHasFK = parentRows.some((r) => Object.prototype.hasOwnProperty.call(r, foreignKey));
         if (!parentHasFK) {
-          const parentIds = [...new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))];
+          const parentIds = Array.from(new Set(parentRows.map((r) => r[rootPK]).filter(Boolean)));
           if (!hasValues(parentIds)) { parentRows.forEach((r) => (r[relation.fieldName] = null)); return []; }
           relatedRows = isMongo
             ? await mongoFetch(targetSchema.table, { [foreignKey]: { $in: parentIds } })
-            : await sqlFetch(targetSchema.table, foreignKey, parentIds);
+            : await sqlFetch(targetSchema.table, foreignKey, parentIds, relation.fieldName);
           relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
           const map = new Map(relatedRows.map((r) => [r[foreignKey] as PropertyKey, r]));
           parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[rootPK]) || null));
         } else {
-          const fkValues = [...new Set(parentRows.map((r) => r[foreignKey]).filter(Boolean))];
+          const fkValues = Array.from(new Set(parentRows.map((r) => r[foreignKey]).filter(Boolean)));
           if (!hasValues(fkValues)) { parentRows.forEach((r) => (r[relation.fieldName] = null)); return []; }
           relatedRows = isMongo
             ? await mongoFetch(targetSchema.table, { [targetPK]: { $in: fkValues } })
-            : await sqlFetch(targetSchema.table, targetPK, fkValues);
+            : await sqlFetch(targetSchema.table, targetPK, fkValues, relation.fieldName);
           relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
           const map = new Map(relatedRows.map((r) => [r[targetPK] as PropertyKey, r]));
           parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[foreignKey]) || null));
@@ -753,9 +851,9 @@ export class QueryBuilder<T extends Record<string, any>> {
 
       } else if (kind === "manytomany") {
         if (!through || !foreignKey || !relatedKey) return [];
-        const parentIds = [...new Set(parentRows.map((r) => r[rootPK]).filter(Boolean))];
+        const parentIds = Array.from(new Set(parentRows.map((r) => r[rootPK]).filter(Boolean)));
         if (!hasValues(parentIds)) { parentRows.forEach((r) => (r[relation.fieldName] = [])); return []; }
-        const { junctionRows, relatedRows: fetchedRows } = await manyToManyJoinFetch(through, targetSchema.table, targetPK, foreignKey, relatedKey, parentIds);
+        const { junctionRows, relatedRows: fetchedRows } = await manyToManyJoinFetchWithFilter(through, targetSchema.table, targetPK, foreignKey, relatedKey, parentIds, relation.fieldName);
         if (!hasValues(fetchedRows)) { parentRows.forEach((r) => (r[relation.fieldName] = [])); return []; }
         relatedRows = fetchedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
         const targetMap = new Map(relatedRows.map((r) => [r[targetPK] as PropertyKey, r]));

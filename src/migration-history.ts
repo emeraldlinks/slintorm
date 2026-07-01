@@ -1,5 +1,5 @@
-import fs from "node:fs";
-import path from "node:path";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { createHash } from "node:crypto";
 
 import { Migrator, type SchemaModel } from "./migrator.js";

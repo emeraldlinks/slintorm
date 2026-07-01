@@ -23,12 +23,18 @@ export class DBAdapter {
   private stmtCache: Map<string, any> = new Map();
   private stmtCacheMax = 200;
 
+  // Read replicas
+  private replicaPools: { sqlite?: any; mysql?: any[]; pg?: any[] } = {};
+  private replicaIndex = 0;
+
   private config: {
     driver?: DBDriver;
     databaseUrl?: string;
     databaseName?: string;
     dir?: string;
     logs?: boolean;
+    replicas?: string[];  // connection URLs for read replicas
+    poolSize?: number;    // connection pool size (PG/MySQL)
     [key: string]: any;
   } = {};
 
@@ -66,7 +72,45 @@ export class DBAdapter {
     switch (this.driver) {
       case "sqlite": {
         const filename = this.config.databaseUrl || ":memory:";
-        // Try better-sqlite3 first (sync, faster), fall back to sqlite3/sqlite
+
+        // Fallback chain:
+        //   1. node:sqlite (Node 22.5+) — built-in, zero deps
+        //   2. better-sqlite3 — sync, fast
+        //   3. sqlite3 + sqlite — async wrapper
+        //   4. Helpful install error
+
+        let sqliteErr: any;
+
+        // --- 1. Try node:sqlite (Node 22.5+) ---
+        try {
+          // @ts-ignore — node:sqlite is available from Node 22.5+
+          const { DatabaseSync } = await import("node:sqlite");
+          const db = new DatabaseSync(filename);
+          db.exec("PRAGMA journal_mode = WAL");
+          db.exec("PRAGMA foreign_keys = ON");
+
+          const toSqlParam = (v: any) => typeof v === "boolean" ? Number(v) : v;
+          this.sqliteDb = {
+            _db: db,
+            async all(sql: string, params: any[]) {
+              const stmt = db.prepare(sql);
+              const rows = stmt.all(...params.map(toSqlParam));
+              return rows;
+            },
+            async run(sql: string, params: any[]) {
+              const stmt = db.prepare(sql);
+              const r = stmt.run(...params.map(toSqlParam));
+              return { changes: r.changes, lastID: Number(r.lastInsertRowid) };
+            },
+            async close() { db.close(); },
+            _isNodeSqlite: true,
+          };
+          break;
+        } catch (e) {
+          sqliteErr = e;
+        }
+
+        // --- 2. Try better-sqlite3 ---
         try {
           // @ts-ignore -- optional peer dep, not in devDependencies
           const mod = await import("better-sqlite3");
@@ -75,7 +119,6 @@ export class DBAdapter {
           db.pragma("journal_mode = WAL");
           db.pragma("foreign_keys = ON");
 
-          // Wrap sync better-sqlite3 API in an async interface
           this.sqliteDb = {
             _db: db,
             async all(sql: string, params: any[]) {
@@ -88,21 +131,36 @@ export class DBAdapter {
             async close() { db.close(); },
             _isBetterSqlite: true,
           };
+          break;
         } catch {
-          // Fall back to async sqlite3/sqlite wrapper
-          try {
-            const sqlite3Mod = await import("sqlite3");
-            const sqlite3 = await this.defaultExport<any>(sqlite3Mod);
-            const sqliteMod = await import("sqlite");
-            const sqlite = sqliteMod as any;
-            this.sqliteDb = await sqlite.open({ filename, driver: sqlite3.Database });
-          } catch (err) {
-            throw new Error(
-              `No SQLite driver found. Install one:\n  npm install better-sqlite3\n  # or\n  npm install sqlite3 sqlite\n\nOriginal error: ${(err as any)?.message ?? err}`
-            );
-          }
+          // fall through
         }
-        break;
+
+        // --- 3. Try sqlite3 + sqlite (async wrapper) ---
+        try {
+          // @ts-ignore -- optional peer deps, not in devDependencies
+          const sqlite3Mod = await import("sqlite3");
+          const sqlite3 = await this.defaultExport<any>(sqlite3Mod);
+          // @ts-ignore -- optional peer dep
+          const sqliteMod = await import("sqlite");
+          const sqlite = sqliteMod as any;
+          this.sqliteDb = await sqlite.open({ filename, driver: sqlite3.Database });
+          break;
+        } catch {
+          // fall through
+        }
+
+        // --- 4. Nothing worked — clear error ---
+        throw new Error(
+          `No SQLite driver found.\n\n` +
+          `  Your Node version: ${process.version}\n` +
+          `  (node:sqlite requires Node 22.5+)\n\n` +
+          `Install one of:\n` +
+          `  npm install better-sqlite3    (recommended)\n` +
+          `  npm install sqlite3 sqlite     (async wrapper)\n` +
+          `  # Or upgrade to Node 22.5+ to use the built-in driver.\n` +
+          `\nOriginal error: ${(sqliteErr as any)?.message ?? sqliteErr}`
+        );
       }
 
       case "mysql": {
@@ -253,6 +311,54 @@ export class DBAdapter {
         break;
     }
     this.connected = false;
+  }
+
+  async connectReplicas() {
+    const replicaUrls = this.config.replicas;
+    if (!replicaUrls?.length) return;
+    for (const url of replicaUrls) {
+      try {
+        if (this.driver === "postgres") {
+          const mod = await import("pg");
+          const pg = await this.defaultExport<any>(mod);
+          const client = new (pg.Client ?? pg)({ connectionString: url });
+          await client.connect();
+          if (!this.replicaPools.pg) this.replicaPools.pg = [];
+          this.replicaPools.pg.push(client);
+        } else if (this.driver === "mysql") {
+          const mod = await import("mysql2/promise");
+          const mysql = await this.defaultExport<any>(mod);
+          const conn = await mysql.createConnection({ uri: url });
+          if (!this.replicaPools.mysql) this.replicaPools.mysql = [];
+          this.replicaPools.mysql.push(conn);
+        }
+      } catch {}
+    }
+  }
+
+  async execRead(sqlOrOp: string, params: any[] = []): Promise<SQLExecResult> {
+    await this.connect();
+    const replicas = this.driver === "postgres" ? this.replicaPools.pg
+      : this.driver === "mysql" ? this.replicaPools.mysql
+      : null;
+    if (!replicas?.length) return this.exec(sqlOrOp, params);
+
+    this.replicaIndex = (this.replicaIndex + 1) % replicas.length;
+    const replica = replicas[this.replicaIndex];
+
+    if (this.logs) console.log("EXEC (read replica):", sqlOrOp, params);
+    try {
+      if (this.driver === "postgres") {
+        const res = await replica.query(sqlOrOp, params);
+        return { rows: res.rows, changes: res.rowCount ?? 0 };
+      } else if (this.driver === "mysql") {
+        const [result] = await replica.execute(sqlOrOp, params);
+        return { rows: Array.isArray(result) ? result : [] };
+      }
+    } catch {
+      return this.exec(sqlOrOp, params);
+    }
+    return this.exec(sqlOrOp, params);
   }
 
   async getTableInfo(table: string) {

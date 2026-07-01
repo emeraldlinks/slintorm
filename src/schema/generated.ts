@@ -1,7 +1,7 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: 7858a0a7f6b4520c
-// Source Hash: f7ef27fb2aa5c682
+// Schema Hash: 50a592c81766ee43
+// Source Hash: 6f6c2d5f6bd88322
 
 export interface User {
   id?: number;
@@ -19,6 +19,62 @@ export interface User {
   updatedAt?: string;
   payments?: Payment[];
   enrollments?: Enrollment[];
+}
+
+export interface Post {
+  id?: number;
+  title: string;
+  body?: string;
+  userId?: number;
+  user?: User;
+  createdAt?: string;
+  updatedAt?: string;
+  deletedAt?: string;
+}
+
+export interface Todo {
+  id?: number;
+  title: string;
+  detail: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Profile {
+  id?: number;
+  userId: number;
+  bio?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Team {
+  id?: number;
+  title: string;
+  detail?: string;
+  open?: boolean;
+  tested?: boolean;
+  members?: User[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AggTest {
+  id?: number;
+  name: string;
+  value: number;
+  category: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Comment {
+  id?: number;
+  body: string;
+  commentableType: string;
+  commentableId: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Track {
@@ -409,6 +465,12 @@ export interface PPT {
 
 export type ModelMap = {
   User: User;
+  Post: Post;
+  Todo: Todo;
+  Profile: Profile;
+  Team: Team;
+  AggTest: AggTest;
+  Comment: Comment;
   Track: Track;
   Cohort: Cohort;
   Application: Application;
@@ -560,6 +622,317 @@ export const schema = {
       }
     ],
     "table": "users"
+  },
+  "Post": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
+      "title": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {}
+      },
+      "body": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "userId": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
+      "user": {
+        "type": "User | undefined",
+        "originalType": "User",
+        "optional": true,
+        "meta": {
+          "@relation manytoone": "User",
+          "foreignKey": "userId"
+        }
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "deletedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      }
+    },
+    "relations": [
+      {
+        "sourceModel": "Post",
+        "fieldName": "user",
+        "kind": "manytoone",
+        "targetModel": "User",
+        "foreignKey": "userId",
+        "meta": {
+          "@relation manytoone": "User",
+          "foreignKey": "userId"
+        }
+      }
+    ],
+    "table": "posts"
+  },
+  "Todo": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
+      "title": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {}
+      },
+      "detail": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      }
+    },
+    "relations": [],
+    "table": "todos"
+  },
+  "Profile": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
+      "userId": {
+        "type": "number",
+        "originalType": "number",
+        "optional": false,
+        "meta": {}
+      },
+      "bio": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      }
+    },
+    "relations": [],
+    "table": "profiles"
+  },
+  "Team": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
+      "title": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {}
+      },
+      "detail": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "open": {
+        "type": "boolean | undefined",
+        "originalType": "boolean",
+        "optional": true,
+        "meta": {}
+      },
+      "tested": {
+        "type": "boolean | undefined",
+        "originalType": "boolean",
+        "optional": true,
+        "meta": {}
+      },
+      "members": {
+        "type": "User[] | undefined",
+        "originalType": "User[]",
+        "optional": true,
+        "meta": {
+          "@relation manytomany": "User",
+          "through": "team_members",
+          "foreignKey": "teamId",
+          "relatedKey": "userId"
+        }
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      }
+    },
+    "relations": [
+      {
+        "sourceModel": "Team",
+        "fieldName": "members",
+        "kind": "manytomany",
+        "targetModel": "User",
+        "foreignKey": "teamId",
+        "through": "team_members",
+        "meta": {
+          "@relation manytomany": "User",
+          "through": "team_members",
+          "foreignKey": "teamId",
+          "relatedKey": "userId"
+        }
+      }
+    ],
+    "table": "teams"
+  },
+  "AggTest": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
+      "name": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {}
+      },
+      "value": {
+        "type": "number",
+        "originalType": "number",
+        "optional": false,
+        "meta": {}
+      },
+      "category": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      }
+    },
+    "relations": [],
+    "table": "agg_tests"
+  },
+  "Comment": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
+      "body": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {}
+      },
+      "commentableType": {
+        "type": "string",
+        "originalType": "string",
+        "optional": false,
+        "meta": {}
+      },
+      "commentableId": {
+        "type": "number",
+        "originalType": "number",
+        "optional": false,
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "index": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      }
+    },
+    "relations": [],
+    "table": "comments"
   },
   "Track": {
     "primaryKey": "id",

@@ -344,10 +344,22 @@ export class Migrator {
         );
       }
 
-      // ---- INDEX -----------------------------------------------------
-      if (this.hasM(meta, "index")) {
+      // ---- INDEX (single-column) ------------------------------------
+      // Supports @index, @index:unique, @index:where:condition
+      const indexVal = this.m(meta, "index");
+      if (indexVal) {
+        const indexStr = String(indexVal);
+        let uniquePrefix = "";
+        let whereClause = "";
+        if (indexStr.includes("unique") || indexStr.includes(":unique")) {
+          uniquePrefix = "UNIQUE ";
+        }
+        const whereMatch = indexStr.match(/where:(.+)/i);
+        if (whereMatch) {
+          whereClause = ` WHERE ${whereMatch[1]}`;
+        }
         indexSql.push(
-          `CREATE INDEX IF NOT EXISTS idx_${table}_${col} ON "${table}"("${col}")`
+          `CREATE ${uniquePrefix}INDEX IF NOT EXISTS idx_${table}_${col} ON "${table}"("${col}")${whereClause}`
         );
       }
 
@@ -362,6 +374,13 @@ export class Migrator {
             `ALTER TABLE "${table}" ADD CONSTRAINT unq_${table}_${col} UNIQUE ("${col}")`
           );
         }
+      }
+
+      // ---- Polymorphic fields (type + ID) ---------------------------
+      const polyType = this.m(meta, "polymorphicType");
+      const polyId = this.m(meta, "polymorphicId");
+      if (polyType && polyId) {
+        // These fields are handled by the relation system
       }
 
       // ---- INLINE FK (from field-level meta, not the relations array) -
@@ -425,6 +444,21 @@ export class Migrator {
         }
       }
 
+      // ---- Column rename via @rename:oldName --------------------------
+      for (const [col, info] of Object.entries(schema)) {
+        const renameVal = this.m(info?.meta, "rename");
+        if (renameVal) {
+          const oldName = String(renameVal).toLowerCase();
+          if (existingCols.includes(oldName) && !existingCols.includes(col.toLowerCase())) {
+            try {
+              await this.exec(`ALTER TABLE "${table}" RENAME COLUMN "${oldName}" TO "${col}"`);
+            } catch {
+              // Fallback: some databases don't support RENAME COLUMN
+            }
+          }
+        }
+      }
+
       // Add missing columns — never touch existing ones
       for (const colDef of colsSql) {
         const m = colDef.match(/^"([^"]+)"/);
@@ -458,12 +492,42 @@ export class Migrator {
       try { await this.exec(c); } catch {}
     }
 
-    // ---- INDEXES ----------------------------------------------------
+    // ---- INDEXES (single-column) ------------------------------------
     const existingIndexes = await this.getExistingIndexes(table);
     for (const idx of indexSql) {
       const idxName = (idx.match(/(?:idx_|unq_)[^\s]+/)?.[0] || "").toLowerCase();
       if (!idxName || existingIndexes.includes(idxName)) continue;
       try { await this.exec(idx); } catch {}
+    }
+
+    // ---- Multi-column indexes (from @index:(col1,col2) meta) -------
+    const compositeIndexes: { cols: string[]; unique: boolean; where?: string }[] = [];
+    for (const [col, info] of Object.entries(schema)) {
+      const indexVal = this.m(info?.meta, "index");
+      if (!indexVal) continue;
+      const indexStr = String(indexVal);
+      const parenMatch = indexStr.match(/^\((.+)\)$/);
+      if (!parenMatch) continue;
+      // This field defines a composite index: the field itself + other columns
+      const otherCols = parenMatch[1].split(",").map(c => c.trim()).filter(Boolean);
+      const allCols = [col, ...otherCols.filter(c => c !== col)];
+      const unique = indexStr.includes("unique") || indexStr.includes(":unique");
+      const whereMatch = indexStr.match(/where:(.+)/i);
+      compositeIndexes.push({
+        cols: allCols,
+        unique,
+        where: whereMatch ? whereMatch[1] : undefined,
+      });
+    }
+    for (const ci of compositeIndexes) {
+      const idxName = `idx_${table}_${ci.cols.join("_")}`.toLowerCase();
+      if (existingIndexes.includes(idxName)) continue;
+      const uniquePrefix = ci.unique ? "UNIQUE " : "";
+      const whereClause = ci.where ? ` WHERE ${ci.where}` : "";
+      const cols = ci.cols.map(c => `"${c}"`).join(", ");
+      try {
+        await this.exec(`CREATE ${uniquePrefix}INDEX IF NOT EXISTS "${idxName}" ON "${table}"(${cols})${whereClause}`);
+      } catch {}
     }
 
     // ---- FK CONSTRAINTS FROM THE RELATIONS ARRAY --------------------
@@ -575,6 +639,65 @@ export class Migrator {
       }
     } catch {}
     return `"${typeName}"`;
+  }
+
+  // ----------------------------------------------------------------
+  // diffSchema — dry-run: returns the SQL statements that would be
+  // executed without applying them.
+  // ----------------------------------------------------------------
+
+  async diffSchema(table: string, schema: Record<string, FieldInfo>, relations?: Relation[], dryRun = false): Promise<string[]> {
+    const statements: string[] = [];
+    const tableLower = table.toLowerCase();
+    const exists = await this.tableExists(tableLower);
+
+    if (!exists) {
+      // Create table
+      const colsSql: string[] = [];
+      const inlineConstraints: string[] = [];
+      for (const [col, info] of Object.entries(schema)) {
+        if (!info?.type) continue;
+        if (this.isRelationPlaceholder(info)) continue;
+        const colDef = await this._buildColumnDef(tableLower, col, info, false);
+        if (colDef) colsSql.push(colDef);
+      }
+      if (colsSql.length) {
+        statements.push(`CREATE TABLE IF NOT EXISTS "${tableLower}" (\n${colsSql.concat(inlineConstraints).join(",\n")}\n);`);
+      }
+    } else {
+      const existingCols = await this.getExistingColumns(tableLower);
+      for (const [col, info] of Object.entries(schema)) {
+        if (!info?.type) continue;
+        if (this.isRelationPlaceholder(info)) continue;
+        const colName = col.toLowerCase();
+        if (!existingCols.includes(colName)) {
+          const colDef = await this._buildColumnDef(tableLower, col, info, true);
+          if (colDef) statements.push(`ALTER TABLE "${tableLower}" ADD COLUMN ${colDef};`);
+        }
+      }
+    }
+
+    if (!dryRun) return [];
+    return statements;
+  }
+
+  private async _buildColumnDef(table: string, col: string, info: FieldInfo, forAlter: boolean): Promise<string | null> {
+    const meta = info.meta || {};
+    let sqlType = "";
+    const enumVal = this.m(meta, "enum");
+    const isJson = this.hasM(meta, "json");
+    if (enumVal) {
+      const enumValues = this.parseEnumValues(String(enumVal));
+      sqlType = this.driver === "postgres" ? `"${table}_${col}_enum"` : "VARCHAR(255)";
+    } else if (isJson) {
+      sqlType = this.driver === "postgres" ? "JSONB" : this.driver === "sqlite" ? "TEXT" : "JSON";
+    } else if (info.type === "Date" || (info.type === "string" && col.toLowerCase().endsWith("at"))) {
+      sqlType = this.driver === "sqlite" ? "TEXT" : this.driver === "postgres" ? "TIMESTAMPTZ" : "DATETIME";
+    } else {
+      sqlType = tsTypeToSqlType(info.type);
+    }
+    if (!sqlType) return null;
+    return `"${col}" ${sqlType}`;
   }
 
   // ----------------------------------------------------------------

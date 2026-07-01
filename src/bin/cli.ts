@@ -245,6 +245,35 @@ async function buildExec(cfg: ORMConfig): Promise<ExecFn> {
   info(`Connecting to ${driver} database (${url})…`);
 
   if (driver === "sqlite") {
+    // Fallback chain: node:sqlite (Node 22.5+) → better-sqlite3 → sqlite3+sqlite
+    let sqliteErr: any;
+
+    // --- 1. Try node:sqlite (Node 22.5+) ---
+    try {
+      // @ts-ignore — node:sqlite available from Node 22.5+
+      const { DatabaseSync } = await import("node:sqlite");
+      const db = new DatabaseSync(url);
+      db.exec("PRAGMA journal_mode = WAL");
+      db.exec("PRAGMA foreign_keys = ON");
+      ok("Connected (node:sqlite)");
+
+      const toSqlParam = (v: any) => typeof v === "boolean" ? Number(v) : v;
+      return async (sql: string, params: any[] = []) => {
+        const sanitized = params.map(toSqlParam);
+        if (/^\s*(select|pragma)/i.test(sql)) {
+          const stmt = db.prepare(sql);
+          const rows = stmt.all(...sanitized);
+          return { rows };
+        }
+        const stmt = db.prepare(sql);
+        const r = stmt.run(...sanitized);
+        return { rows: [], changes: Number(r.changes), lastID: Number(r.lastInsertRowid) };
+      };
+    } catch (e) {
+      sqliteErr = e;
+    }
+
+    // --- 2. Try better-sqlite3 ---
     try {
       const Database = (await import("better-sqlite3" as any)).default;
       const db = new Database(url);
@@ -261,6 +290,11 @@ async function buildExec(cfg: ORMConfig): Promise<ExecFn> {
         return { rows: [], changes: r.changes, lastID: r.lastInsertRowid as number };
       };
     } catch {
+      // fall through
+    }
+
+    // --- 3. Try sqlite3 + sqlite ---
+    try {
       const sqlite3 = (await import("sqlite3" as any)).default;
       const { open }  = await import("sqlite" as any);
       const db = await open({ filename: url, driver: sqlite3.Database });
@@ -274,7 +308,21 @@ async function buildExec(cfg: ORMConfig): Promise<ExecFn> {
         const r = await db.run(sql, params);
         return { rows: [], changes: r.changes, lastID: r.lastID };
       };
+    } catch {
+      // fall through
     }
+
+    // --- 4. Nothing worked — clear error ---
+    throw new Error(
+      `No SQLite driver found.\n\n` +
+      `  Your Node version: ${process.version}\n` +
+      `  (node:sqlite requires Node 22.5+)\n\n` +
+      `Install one of:\n` +
+      `  npm install better-sqlite3    (recommended)\n` +
+      `  npm install sqlite3 sqlite     (async wrapper)\n` +
+      `  # Or upgrade to Node 22.5+ to use the built-in driver.\n` +
+      `\nOriginal error: ${(sqliteErr as any)?.message ?? sqliteErr}`
+    );
   }
 
   if (driver === "postgres") {
@@ -612,6 +660,108 @@ function schemaToPlan(schema: Record<string, any>): MigrationUnit[] {
       schemaHash,
     };
   }).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// ─── Schema diff (dry-run) ─────────────────────────────────────────────────
+async function cmdDiff(cfg: ORMConfig) {
+  head("Schema diff (dry-run)…");
+
+  const exec   = await buildExec(cfg);
+  const driver = cfg.driver ?? "sqlite";
+
+  if (driver === "mongodb") {
+    warn("Diff is not applicable to MongoDB (schemaless).");
+    return;
+  }
+
+  const schema = await loadLiveSchema(cfg.dir ?? "src");
+  if (!schema) {
+    fail("No generated schema found. Run `npx slintorm generate` first.");
+    process.exit(1);
+    return;
+  }
+
+  const fullSchema = withSyntheticPivots(schema);
+  const plan = schemaToPlan(fullSchema);
+  const migrator = new Migrator(exec, driver as any);
+  let totalStatements = 0;
+
+  for (const unit of plan) {
+    const modelDef = fullSchema[unit.modelName];
+    if (!modelDef) continue;
+    const stmts = await migrator.diffSchema(unit.tableName, modelDef.fields, modelDef.relations ?? [], true);
+    if (stmts.length) {
+      console.log(`\n  ${c.cyan}${unit.tableName}${c.reset}`);
+      for (const stmt of stmts) {
+        console.log(`    ${c.dim}${stmt}${c.reset}`);
+        totalStatements++;
+      }
+    }
+  }
+
+  if (!totalStatements) {
+    ok("No changes detected — schema is up to date.");
+  } else {
+    info(`${totalStatements} SQL statement${totalStatements === 1 ? "" : "s"} would be executed.`);
+  }
+}
+
+// ─── Seed command ────────────────────────────────────────────────────────────
+async function cmdSeed(cfg: ORMConfig, args: string[]) {
+  head("Running seeds…");
+
+  const exec   = await buildExec(cfg);
+  const driver = cfg.driver ?? "sqlite";
+
+  // Load seed files from <dir>/seed/ or seeds/
+  const seedDirCandidates = [
+    path.join(process.cwd(), cfg.dir ?? "src", "seed"),
+    path.join(process.cwd(), cfg.dir ?? "src", "seeds"),
+    path.join(process.cwd(), "seed"),
+    path.join(process.cwd(), "seeds"),
+  ];
+
+  let seedDir = seedDirCandidates.find(d => fs.existsSync(d));
+  if (!seedDir) {
+    warn("No seed directory found. Create a `seed` or `seeds` folder in your project.");
+    return;
+  }
+
+  const seedFiles = fs.readdirSync(seedDir)
+    .filter(f => f.endsWith(".ts") || f.endsWith(".js"))
+    .sort();
+
+  if (!seedFiles.length) {
+    warn(`No seed files found in ${seedDir}.`);
+    return;
+  }
+
+  const targetSeed = args[0];
+  const toRun = targetSeed
+    ? seedFiles.filter(f => f.includes(targetSeed))
+    : seedFiles;
+
+  if (!toRun.length) {
+    fail(`No seed file matching "${targetSeed}" found.`);
+    return;
+  }
+
+  for (const file of toRun) {
+    const filePath = path.join(seedDir, file);
+    info(`Running seed: ${file}`);
+    try {
+      const mod = await import(pathToFileURL(filePath).href);
+      const seedFn = mod.default || mod.seed;
+      if (typeof seedFn === "function") {
+        await seedFn(exec, (msg: string) => console.log(`  ${c.dim}${msg}${c.reset}`));
+        ok(`Seed ${file} completed.`);
+      } else {
+        warn(`Seed file ${file} has no default export or seed function.`);
+      }
+    } catch (e: any) {
+      fail(`Seed ${file} failed: ${e.message}`);
+    }
+  }
 }
 
 // ─── Commands ────────────────────────────────────────────────────────────────
@@ -1033,6 +1183,8 @@ ${c.bold}Commands:${c.reset}
   ${c.cyan}status${c.reset}      Show applied / pending migrations
   ${c.cyan}fresh${c.reset}       Drop all tables then re-run all migrations
   ${c.cyan}drop-tracking${c.reset} Drop the internal migration tracking table
+  ${c.cyan}diff${c.reset}        Show schema diff without applying changes (dry-run)
+  ${c.cyan}seed${c.reset}        Run database seeders from seed/ directory
 
 
 ${c.bold}Config:${c.reset}
@@ -1079,6 +1231,8 @@ async function main() {
     case "status":        await cmdStatus(cfg);         break;
     case "fresh":         await cmdFresh(cfg);          break;
     case "drop-tracking": await cmdDropTracking(cfg);   break;
+    case "diff":          await cmdDiff(cfg);           break;
+    case "seed":          await cmdSeed(cfg, args);     break;
     default:
       fail(`Unknown command: ${c.bold}${command}${c.reset}`);
       console.log(`Run ${c.cyan}npx slintorm --help${c.reset} to see available commands.\n`);

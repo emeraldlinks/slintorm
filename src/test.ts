@@ -526,6 +526,7 @@ export async function initializeDatabaseModule() {
   return db.DB;
 }
 
+// @ts-ignore — top-level await requires "module": "ESNext" (set in tsconfig.json)
 export const DB = await initializeDatabaseModule();
 
 /** =========================

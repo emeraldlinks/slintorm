@@ -5,8 +5,8 @@
  *   import generateSchema from './generator';
  *   await generateSchema("src");
  */ 
-import fs from "fs";
-import path from "node:path";
+import * as fs from "fs";
+import * as path from "node:path";
 import { createHash } from "crypto";
 
 interface FieldMetadata extends Record<string, any> {}
