@@ -31,6 +31,10 @@ export type ORMManagerConfig<TModelMap extends AnyModelMap = AnyModelMap> = {
   replicas?: string[];
   /** Connection pool size for PostgreSQL/MySQL */
   poolSize?: number;
+  /** Custom exec function — bypasses TCP-based driver connection.
+   *  Use in edge/serverless to tunnel SQL through HTTP via proxyExec()
+   *  from "slintorm/proxy" or any other fetch-based ExecFn. */
+  exec?: ExecFn;
 };
 
 export type ModelHooks<T extends object> = {
@@ -69,10 +73,11 @@ export async function createORM<TModelMap extends AnyModelMap = AnyModelMap>(
     modelMap: cfg.modelMap,
     replicas: cfg.replicas,
     poolSize: cfg.poolSize,
+    exec: cfg.exec,
   });
 
   const sqlDriver = resolveDriver(adapter.driver);
-  if (sqlDriver) {
+  if (sqlDriver && !cfg.exec) {
     adapter.exec = wrapExec(adapter.exec.bind(adapter), sqlDriver);
   }
 
@@ -128,7 +133,7 @@ export default class ORMManager<
   private _context: OrmContext = {};
   private _preparedMode = false;
   /** Named database connections for Database Resolver */
-  private _databases: Map<string, { exec: any; driver?: string }> = new Map();
+  private _databases: Map<string, { exec: any; driver?: string; adapter?: DBAdapter }> = new Map();
 
   constructor(cfg: ORMManagerConfig<TModelMap> = {}) {
     this.cfg = cfg;
@@ -141,10 +146,11 @@ export default class ORMManager<
       modelMap: this.cfg.modelMap,
       replicas: this.cfg.replicas,
       poolSize: this.cfg.poolSize,
+      exec: this.cfg.exec,
     });
 
     const sqlDriver = resolveDriver(this.adapter.driver);
-    if (sqlDriver) {
+    if (sqlDriver && !this.cfg.exec) {
       this.adapter.exec = wrapExec(
         this.adapter.exec.bind(this.adapter),
         sqlDriver
@@ -219,7 +225,8 @@ export default class ORMManager<
     const defineModel = await createModelFactory(
       this.adapter,
       this.cfg.schema,
-      async (event: any) => self._emitGlobal(event)
+      async (event: any) => self._emitGlobal(event),
+      (name: string) => self._databases.get(name)
     );
     const model = defineModel<T>(table, modelName, hooks);
 
@@ -352,23 +359,30 @@ export default class ORMManager<
     if (config.exec) {
       this._databases.set(name, { exec: config.exec, driver: config.driver });
     } else {
-      const { DBAdapter } = require("./dbAdapter.js");
       const adapter = new DBAdapter({
         driver: config.driver,
         databaseUrl: config.databaseUrl,
         logs: config.logs,
       });
-      this._databases.set(name, { exec: adapter.exec.bind(adapter), driver: config.driver });
+      this._databases.set(name, {
+        exec: adapter.exec.bind(adapter),
+        driver: config.driver,
+        adapter,
+      });
     }
     return this;
   }
 
-  getDatabase(name: string): { exec: any; driver?: string } | undefined {
+  getDatabase(name: string): { exec: any; driver?: string; adapter?: DBAdapter } | undefined {
     return this._databases.get(name);
   }
 
   removeDatabase(name: string): boolean {
     return this._databases.delete(name);
+  }
+
+  resolveDb(name: string): { exec: any; driver?: string; adapter?: DBAdapter } | undefined {
+    return this._databases.get(name);
   }
 
   /** Execute a query on a named database */

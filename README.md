@@ -234,6 +234,25 @@ const orm = new ORMManager({
 
 This example uses SQLite — switch to PostgreSQL, MySQL, or MongoDB by changing `driver` and `databaseUrl`.
 
+### Edge / serverless initialization
+
+In V8-isolate runtimes (Vercel Edge, Cloudflare Workers), pass a pre-built `schema` and a custom `exec` function that uses `fetch()` instead of TCP:
+
+```ts
+import ORMManager from 'slintorm/browser';
+import { proxyExec } from 'slintorm/proxy';
+import schema from './schema/generated.json' assert { type: 'json' };
+
+const orm = new ORMManager({
+  exec: proxyExec({ endpoint: 'https://db-proxy.myapp.com/query' }),
+  schema,
+});
+
+const Users = await orm.defineModel<User>('users', 'User');
+```
+
+See the [Edge & Serverless](#edge--serverless) section for detailed setup.
+
 ---
 
 ## Fully typed `db` via `ModelMap`
@@ -718,7 +737,104 @@ const config = orm.getDatabase("analytics");
 orm.removeDatabase("analytics");
 ```
 
-Useful for read-replica routing, multi-tenant setups, or separating operational data from analytics without creating a second ORMManager.
+### Full ORM queries on a named database
+
+Use `model.useDb(name)` to get a fully typed ModelAPI bound to a different database — all CRUD operations and query builder features work:
+
+```ts
+// Register the secondary database first
+orm.addDatabase("archive", { driver: "sqlite", databaseUrl: "./archive.db" });
+
+// Create a model bound to the "archive" database
+const ArchiveUsers = await orm.DB.User.useDb("archive");
+
+// All model operations work on the secondary database
+await ArchiveUsers.insert({ name: "Archived Joe", email: "joe@archive.com" });
+const user = await ArchiveUsers.get({ email: "joe@archive.com" });
+await ArchiveUsers.query().where("status", "=", "active").get();
+```
+
+The model's schema is shared — only the database connection changes. This allows multi-tenant setups, read-replica queries, and clean separation of operational vs. analytics data — all through the same model definition and query builder API.
+
+`useDb` requires the secondary database to have a full `DBAdapter` (i.e. it must have been registered with a `driver` + `databaseUrl`, not a raw `exec` function). Each call creates a new model instance; caching is left to the caller.
+
+---
+
+## Edge & Serverless
+
+V8-isolate runtimes (Vercel Edge, Cloudflare Workers, Netlify Edge) have no `net` module — they can't open TCP connections. SlintORM works around this by letting you swap the transport layer.
+
+### Option 1: HTTP proxy (recommended)
+
+Run a lightweight proxy server on any Node.js host. Your edge function sends SQL via `fetch()`, the proxy executes it against the real database.
+
+**Client (edge function):**
+
+```ts
+import ORMManager from 'slintorm/browser';
+import { proxyExec } from 'slintorm/proxy';
+import schema from './schema/generated.json' assert { type: 'json' };
+
+const orm = new ORMManager({
+  exec: proxyExec({ endpoint: 'https://db-proxy.myapp.com/query' }),
+  schema,
+  logs: false,
+});
+
+// Full ORM — all CRUD + query builder work via the proxy
+const Users = await orm.defineModel('users', 'User');
+const active = await Users.query().where('status', '=', 'active').get();
+```
+
+**Server (Node.js — deploy on Fly, Railway, Render, etc.):**
+
+```ts
+import { createProxyServer } from 'slintorm/proxy';
+
+const server = await createProxyServer({
+  port: 3001,
+  resolveDb: (ctx) => ({
+    name: 'primary',
+    driver: 'postgres',
+    databaseUrl: process.env.DATABASE_URL,
+  }),
+  onQuery: ({ sql, db, durationMs }) =>
+    console.log(`[${db}] ${durationMs}ms — ${sql.slice(0, 80)}`),
+});
+```
+
+The proxy server lazily connects to the database on first use, caches connections, and handles CORS and errors. Authenticate your edge functions via headers or tokens in the `resolveDb` callback.
+
+### Option 2: Provider-specific HTTP drivers
+
+For providers that offer SQL-over-HTTP directly (no proxy needed):
+
+```ts
+import ORMManager from 'slintorm/browser';
+import { neonExec } from 'slintorm/http-driver'; // or tursoExec, planetscaleExec
+
+const orm = new ORMManager({
+  exec: neonExec({
+    endpoint: 'https://your-project.us-east-2.aws.neon.tech/sql',
+    headers: { Authorization: 'Bearer ' + process.env.NEON_API_KEY },
+  }),
+  schema,
+});
+```
+
+Available from `slintorm/http-driver`:
+
+| Export | Database | Provider |
+|---|---|---|
+| `neonExec(config)` | Postgres over HTTP | [Neon](https://neon.tech) |
+| `tursoExec(config)` | SQLite over HTTP | [Turso](https://turso.tech) |
+| `planetscaleExec(config)` | MySQL over HTTP | [PlanetScale](https://planetscale.com) |
+
+### What changes in edge mode
+
+- Pass `schema` directly — no `migrate()` call (run `npx slintorm generate` at build time, import the JSON)
+- Import from `slintorm/browser` for a bundle that never pulls in `node:fs`
+- No SQLite in edge (no native addons) — use Turso or the proxy instead
 
 ---
 
@@ -735,6 +851,8 @@ Useful for read-replica routing, multi-tenant setups, or separating operational 
 - `AfterFind` hooks run for every row returned by the query builder methods on that chain; they do not affect `insert()`, `update()`, or `delete()`.
 - Plugins receive lifecycle events synchronously — avoid heavy synchronous work in `on()` handlers.
 - Database resolver connections (`addDatabase`) are separate connections opened on demand; they are not part of the ORM's migration lifecycle.
+- The `exec` config option bypasses TCP-based driver connection entirely — use it with `proxyExec()` (or `neonExec`/`tursoExec`/`planetscaleExec`) in edge runtimes that lack `net` module.
+- When using `exec`, pass `schema` directly and skip `migrate()` — schema is known at build time.
 
 ---
 
@@ -782,4 +900,6 @@ SlintORM fills the niche for **quick iteration, flexible queries, and minimal fr
 
 - **`QUERY_BUILDER.md`** — full query builder & `ModelAPI` reference, every method with usage examples.
 - **`llms.txt`** — condensed reference for AI coding assistants working in a SlintORM codebase.
-- **`example.ts`** — a complete, runnable walkthrough exercising 33 feature sections of the library in one file.
+- **`example.ts`** — a complete, runnable walkthrough exercising 34 feature sections of the library in one file.
+- **`src/proxy.ts`** — proxy client + server for running queries from edge runtimes (Vercel Edge, Cloudflare Workers).
+- **`src/http-driver.ts`** — provider-specific HTTP drivers for Neon, Turso, and PlanetScale.

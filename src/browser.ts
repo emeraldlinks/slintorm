@@ -30,3 +30,8 @@ export {
 export { type ModelAPI } from "./model.js";
 export { ORMError } from "./db-error.js";
 export { ValidationError } from "./extensions.js";
+
+// Edge-compatible drivers — fetch-based, no TCP required
+export { http } from "./http-driver.js";
+export { neonExec, tursoExec, planetscaleExec } from "./http-driver.js";
+export { proxyExec } from "./proxy.js";

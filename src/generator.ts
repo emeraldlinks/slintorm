@@ -489,6 +489,7 @@ class InterfaceTokenParser {
       if (peeked && BREAKING_KEYWORDS.has(peeked.type)) {
         console.error(
           `\n[schema-generator] ⚠️  UNSUPPORTED FIELD NAME at line ${peeked.line}:${peeked.column}\n` +
+          `  Interface: ${name}\n` +
           `  Token type : "${peeked.type}"  (value: ${JSON.stringify(peeked.value)})\n` +
           `  This token cannot be used as a field name by the schema generator.\n` +
           `  The field has been skipped and will NOT appear in the generated schema.\n\n` +

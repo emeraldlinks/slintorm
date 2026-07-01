@@ -54,6 +54,7 @@ export type ModelAPI<T extends object> = {
   preload<K extends keyof T & string>(relation: K): Promise<void>;
   firstOrInit(filter: Partial<T>, defaults?: Partial<T>): Promise<EntityWithUpdate<T> | null>;
   findInBatches(filter: Partial<T> | null, batchSize: number, callback: (records: T[], batchNumber: number) => void | Promise<void>): Promise<void>;
+  useDb(name: string): Promise<ModelAPI<T>>;
 };
 
 // ─── loadSchema ───────────────────────────────────────────────────────────────
@@ -103,7 +104,7 @@ async function loadSchema(adapterDir: string) {
 
 let cachedSchema: Record<string, any> | null = null;
 
-export async function createModelFactory(adapter: DBAdapter, schema?: Record<string, any>, emitGlobal?: (event: any) => Promise<void>) {
+export async function createModelFactory(adapter: DBAdapter, schema?: Record<string, any>, emitGlobal?: (event: any) => Promise<void>, resolveNamedDb?: (name: string) => { adapter?: DBAdapter; exec: any; driver?: string } | undefined) {
   const schemas =
     schema ??
     adapter.schema ??
@@ -710,6 +711,16 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       },
       async preload<K extends keyof T & string>(_relation: K) {
         await this.query().preload(_relation as any).get();
+      },
+
+      async useDb(dbName: string): Promise<ModelAPI<T>> {
+        if (!resolveNamedDb) throw new Error("No database resolver available");
+        const entry = resolveNamedDb(dbName);
+        if (!entry) throw new Error(`Database "${dbName}" not found. Register it with addDatabase().`);
+        const otherAdapter = entry.adapter;
+        if (!otherAdapter) throw new Error(`Database "${dbName}" has no full DBAdapter (may use custom exec)`);
+        const factory = await createModelFactory(otherAdapter, schemas, emitGlobal, resolveNamedDb);
+        return factory<T>(tableName, name || modelName, hooks);
       },
     } as ModelAPI<T>;
   }

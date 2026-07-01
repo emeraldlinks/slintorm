@@ -65,6 +65,8 @@ var node_path_1 = require("node:path");
 var node_fs_1 = require("node:fs");
 var node_crypto_1 = require("node:crypto");
 var node_url_1 = require("node:url");
+var migration_history_js_1 = require("../migration-history.js");
+var migrator_js_1 = require("../migrator.js");
 // ─── Colours ────────────────────────────────────────────────────────────────
 var c = {
     reset: "\x1b[0m",
@@ -750,7 +752,7 @@ function resolveSchemaGenerator() {
             switch (_b.label) {
                 case 0:
                     _b.trys.push([0, 2, , 4]);
-                    return [4 /*yield*/, Promise.resolve("".concat((0, node_url_1.pathToFileURL)(node_path_1.default.join(process.cwd(), "node_modules", "slintorm", "dist", "generator.js")).href)).then(function (s) { return require(s); })];
+                    return [4 /*yield*/, Promise.resolve("".concat((0, node_url_1.pathToFileURL)(node_path_1.default.join(process.cwd(), "node_modules", "slintorm", "dist", "src", "generator.js")).href)).then(function (s) { return require(s); })];
                 case 1:
                     mod = _b.sent();
                     return [2 /*return*/, mod.default];
@@ -807,11 +809,150 @@ function schemaToPlan(schema) {
         };
     }).sort(function (a, b) { return a.name.localeCompare(b.name); });
 }
+// ─── Schema diff (dry-run) ─────────────────────────────────────────────────
+function cmdDiff(cfg) {
+    return __awaiter(this, void 0, void 0, function () {
+        var exec, driver, schema, fullSchema, plan, migrator, totalStatements, _i, plan_1, unit, modelDef, stmts, _a, stmts_1, stmt;
+        var _b, _c, _d;
+        return __generator(this, function (_e) {
+            switch (_e.label) {
+                case 0:
+                    head("Schema diff (dry-run)…");
+                    return [4 /*yield*/, buildExec(cfg)];
+                case 1:
+                    exec = _e.sent();
+                    driver = (_b = cfg.driver) !== null && _b !== void 0 ? _b : "sqlite";
+                    if (driver === "mongodb") {
+                        warn("Diff is not applicable to MongoDB (schemaless).");
+                        return [2 /*return*/];
+                    }
+                    return [4 /*yield*/, loadLiveSchema((_c = cfg.dir) !== null && _c !== void 0 ? _c : "src")];
+                case 2:
+                    schema = _e.sent();
+                    if (!schema) {
+                        fail("No generated schema found. Run `npx slintorm generate` first.");
+                        process.exit(1);
+                        return [2 /*return*/];
+                    }
+                    fullSchema = withSyntheticPivots(schema);
+                    plan = schemaToPlan(fullSchema);
+                    migrator = new migrator_js_1.Migrator(exec, driver);
+                    totalStatements = 0;
+                    _i = 0, plan_1 = plan;
+                    _e.label = 3;
+                case 3:
+                    if (!(_i < plan_1.length)) return [3 /*break*/, 6];
+                    unit = plan_1[_i];
+                    modelDef = fullSchema[unit.modelName];
+                    if (!modelDef)
+                        return [3 /*break*/, 5];
+                    return [4 /*yield*/, migrator.diffSchema(unit.tableName, modelDef.fields, (_d = modelDef.relations) !== null && _d !== void 0 ? _d : [], true)];
+                case 4:
+                    stmts = _e.sent();
+                    if (stmts.length) {
+                        console.log("\n  ".concat(c.cyan).concat(unit.tableName).concat(c.reset));
+                        for (_a = 0, stmts_1 = stmts; _a < stmts_1.length; _a++) {
+                            stmt = stmts_1[_a];
+                            console.log("    ".concat(c.dim).concat(stmt).concat(c.reset));
+                            totalStatements++;
+                        }
+                    }
+                    _e.label = 5;
+                case 5:
+                    _i++;
+                    return [3 /*break*/, 3];
+                case 6:
+                    if (!totalStatements) {
+                        ok("No changes detected — schema is up to date.");
+                    }
+                    else {
+                        info("".concat(totalStatements, " SQL statement").concat(totalStatements === 1 ? "" : "s", " would be executed."));
+                    }
+                    return [2 /*return*/];
+            }
+        });
+    });
+}
+// ─── Seed command ────────────────────────────────────────────────────────────
+function cmdSeed(cfg, args) {
+    return __awaiter(this, void 0, void 0, function () {
+        var exec, driver, seedDirCandidates, seedDir, seedFiles, targetSeed, toRun, _i, toRun_1, file, filePath, mod, seedFn, e_3;
+        var _a, _b, _c;
+        return __generator(this, function (_d) {
+            switch (_d.label) {
+                case 0:
+                    head("Running seeds…");
+                    return [4 /*yield*/, buildExec(cfg)];
+                case 1:
+                    exec = _d.sent();
+                    driver = (_a = cfg.driver) !== null && _a !== void 0 ? _a : "sqlite";
+                    seedDirCandidates = [
+                        node_path_1.default.join(process.cwd(), (_b = cfg.dir) !== null && _b !== void 0 ? _b : "src", "seed"),
+                        node_path_1.default.join(process.cwd(), (_c = cfg.dir) !== null && _c !== void 0 ? _c : "src", "seeds"),
+                        node_path_1.default.join(process.cwd(), "seed"),
+                        node_path_1.default.join(process.cwd(), "seeds"),
+                    ];
+                    seedDir = seedDirCandidates.find(function (d) { return node_fs_1.default.existsSync(d); });
+                    if (!seedDir) {
+                        warn("No seed directory found. Create a `seed` or `seeds` folder in your project.");
+                        return [2 /*return*/];
+                    }
+                    seedFiles = node_fs_1.default.readdirSync(seedDir)
+                        .filter(function (f) { return f.endsWith(".ts") || f.endsWith(".js"); })
+                        .sort();
+                    if (!seedFiles.length) {
+                        warn("No seed files found in ".concat(seedDir, "."));
+                        return [2 /*return*/];
+                    }
+                    targetSeed = args[0];
+                    toRun = targetSeed
+                        ? seedFiles.filter(function (f) { return f.includes(targetSeed); })
+                        : seedFiles;
+                    if (!toRun.length) {
+                        fail("No seed file matching \"".concat(targetSeed, "\" found."));
+                        return [2 /*return*/];
+                    }
+                    _i = 0, toRun_1 = toRun;
+                    _d.label = 2;
+                case 2:
+                    if (!(_i < toRun_1.length)) return [3 /*break*/, 10];
+                    file = toRun_1[_i];
+                    filePath = node_path_1.default.join(seedDir, file);
+                    info("Running seed: ".concat(file));
+                    _d.label = 3;
+                case 3:
+                    _d.trys.push([3, 8, , 9]);
+                    return [4 /*yield*/, Promise.resolve("".concat((0, node_url_1.pathToFileURL)(filePath).href)).then(function (s) { return require(s); })];
+                case 4:
+                    mod = _d.sent();
+                    seedFn = mod.default || mod.seed;
+                    if (!(typeof seedFn === "function")) return [3 /*break*/, 6];
+                    return [4 /*yield*/, seedFn(exec, function (msg) { return console.log("  ".concat(c.dim).concat(msg).concat(c.reset)); })];
+                case 5:
+                    _d.sent();
+                    ok("Seed ".concat(file, " completed."));
+                    return [3 /*break*/, 7];
+                case 6:
+                    warn("Seed file ".concat(file, " has no default export or seed function."));
+                    _d.label = 7;
+                case 7: return [3 /*break*/, 9];
+                case 8:
+                    e_3 = _d.sent();
+                    fail("Seed ".concat(file, " failed: ").concat(e_3.message));
+                    return [3 /*break*/, 9];
+                case 9:
+                    _i++;
+                    return [3 /*break*/, 2];
+                case 10: return [2 /*return*/];
+            }
+        });
+    });
+}
 // ─── Commands ────────────────────────────────────────────────────────────────
 // generate ──────────────────────────────────────────────────────────────────
 function cmdGenerate(cfg) {
     return __awaiter(this, void 0, void 0, function () {
-        var srcDir, generateSchema, mod, _a, mod, e_3, schema, count;
+        var srcDir, generateSchema, mod, _a, mod, e_4, schema, count;
         var _b, _c;
         return __generator(this, function (_d) {
             switch (_d.label) {
@@ -826,7 +967,7 @@ function cmdGenerate(cfg) {
                     _d.label = 1;
                 case 1:
                     _d.trys.push([1, 3, , 8]);
-                    return [4 /*yield*/, Promise.resolve("".concat((0, node_url_1.pathToFileURL)(node_path_1.default.join(process.cwd(), "node_modules", "slintorm", "dist", "generator.js")).href)).then(function (s) { return require(s); })];
+                    return [4 /*yield*/, Promise.resolve("".concat((0, node_url_1.pathToFileURL)(node_path_1.default.join(process.cwd(), "node_modules", "slintorm", "dist", "src", "generator.js")).href)).then(function (s) { return require(s); })];
                 case 2:
                     mod = _d.sent();
                     generateSchema = mod.default;
@@ -842,8 +983,8 @@ function cmdGenerate(cfg) {
                     generateSchema = mod.default;
                     return [3 /*break*/, 7];
                 case 6:
-                    e_3 = _d.sent();
-                    fail("Could not load schema generator: ".concat(e_3.message));
+                    e_4 = _d.sent();
+                    fail("Could not load schema generator: ".concat(e_4.message));
                     process.exit(1);
                     return [3 /*break*/, 7];
                 case 7: return [3 /*break*/, 8];
@@ -866,7 +1007,7 @@ function cmdGenerate(cfg) {
 // status ────────────────────────────────────────────────────────────────────
 function cmdStatus(cfg) {
     return __awaiter(this, void 0, void 0, function () {
-        var exec, driver, schema, plan, rows, records, dbApplied, applied, pending, done, _loop_1, _i, plan_1, u;
+        var exec, driver, schema, plan, rows, records, dbApplied, applied, pending, done, _loop_1, _i, plan_2, u, currentBatch, nextRollbackTarget;
         var _a, _b, _c;
         return __generator(this, function (_d) {
             switch (_d.label) {
@@ -912,11 +1053,16 @@ function cmdStatus(cfg) {
                         var batch = row ? String(row.batch) : "—";
                         console.log("  ".concat(u.name.padEnd(42), " ").concat(status_1.padEnd(10 + (row ? c.green.length + c.reset.length : c.yellow.length + c.reset.length)), " ").concat(batch));
                     };
-                    for (_i = 0, plan_1 = plan; _i < plan_1.length; _i++) {
-                        u = plan_1[_i];
+                    for (_i = 0, plan_2 = plan; _i < plan_2.length; _i++) {
+                        u = plan_2[_i];
                         _loop_1(u);
                     }
                     console.log("\n  ".concat(c.green).concat(done.length, " applied").concat(c.reset, "  \u00B7  ").concat(c.yellow).concat(pending.length, " pending").concat(c.reset, "\n"));
+                    if (pending.length) {
+                        currentBatch = rows.reduce(function (max, row) { return Math.max(max, row.batch || 0); }, 0);
+                        nextRollbackTarget = currentBatch > 0 ? "batch ".concat(Math.max(currentBatch - 1, 0)) : "none";
+                        console.log("  ".concat(c.cyan, "Current rollback target:").concat(c.reset, " ").concat(nextRollbackTarget, "\n"));
+                    }
                     return [2 /*return*/];
             }
         });
@@ -925,30 +1071,37 @@ function cmdStatus(cfg) {
 // migrate ───────────────────────────────────────────────────────────────────
 function cmdMigrate(cfg) {
     return __awaiter(this, void 0, void 0, function () {
-        var exec, driver, schema, plan, rows, records, dbApplied, applied, pending, MigratorCtor, mod, _a, mod, e_4, migrator, batch, count, failed, startedAt, idx, unit, modelDef, isPg, e_5, elapsed;
-        var _b, _c, _d, _e, _f, _g;
-        return __generator(this, function (_h) {
-            switch (_h.label) {
+        var exec, driver, schema, startedAt, result, elapsed;
+        var _a, _b, _c, _d, _e;
+        return __generator(this, function (_f) {
+            switch (_f.label) {
                 case 0:
                     head("Running migrations…");
                     return [4 /*yield*/, buildExec(cfg)];
                 case 1:
-                    exec = _h.sent();
-                    driver = (_b = cfg.driver) !== null && _b !== void 0 ? _b : "sqlite";
+                    exec = _f.sent();
+                    driver = (_a = cfg.driver) !== null && _a !== void 0 ? _a : "sqlite";
                     return [4 /*yield*/, ensureMigrationsTable(exec, driver)];
                 case 2:
-                    _h.sent();
+                    _f.sent();
                     log("Migrations table ready");
-                    return [4 /*yield*/, loadLiveSchema((_c = cfg.dir) !== null && _c !== void 0 ? _c : "src")];
+                    return [4 /*yield*/, (0, migration_history_js_1.snapshotCurrentGeneratedSchema)({
+                            exec: exec,
+                            driver: driver,
+                            dir: (_b = cfg.dir) !== null && _b !== void 0 ? _b : "src",
+                        })];
                 case 3:
-                    schema = _h.sent();
-                    if (!!schema) return [3 /*break*/, 5];
+                    _f.sent();
+                    return [4 /*yield*/, loadLiveSchema((_c = cfg.dir) !== null && _c !== void 0 ? _c : "src")];
+                case 4:
+                    schema = _f.sent();
+                    if (!!schema) return [3 /*break*/, 6];
                     warn("No generated schema found. Running `generate` first…\n");
                     return [4 /*yield*/, cmdGenerate(cfg)];
-                case 4:
-                    _h.sent();
-                    return [2 /*return*/, cmdMigrate(cfg)]; // retry after generate
                 case 5:
+                    _f.sent();
+                    return [2 /*return*/, cmdMigrate(cfg)]; // retry after generate
+                case 6:
                     // Augment with synthetic pivot tables BEFORE building the plan, so
                     // many-to-many junction tables (e.g. team_members) get migrated too —
                     // matching what orm.migrate() / Migrator.migrateSchema() already does.
@@ -956,142 +1109,112 @@ function cmdMigrate(cfg) {
                     if (driver === "mongodb") {
                         info("MongoDB driver — DDL skipped, only indexes (@index / @unique) will be created.");
                     }
-                    plan = schemaToPlan(schema);
-                    return [4 /*yield*/, getApplied(exec)];
-                case 6:
-                    rows = _h.sent();
-                    records = loadMigrationRecords((_d = cfg.dir) !== null && _d !== void 0 ? _d : "src");
-                    dbApplied = new Set(rows.map(function (r) { return r.name; }));
-                    applied = new Set(plan
-                        .filter(function (unit) {
-                        var modelDef = schema[unit.modelName];
-                        var currentFields = fieldNames(modelDef);
-                        return dbApplied.has(unit.name) || records.some(function (record) { return recordMatchesUnit(record, unit, currentFields); });
-                    })
-                        .map(function (unit) { return unit.name; }));
-                    pending = plan.filter(function (u) { return !applied.has(u.name); });
-                    if (!pending.length) {
+                    startedAt = Date.now();
+                    return [4 /*yield*/, (0, migration_history_js_1.runMigrations)({
+                            exec: exec,
+                            driver: cfg.driver,
+                            dir: (_d = cfg.dir) !== null && _d !== void 0 ? _d : "src",
+                            schema: schema,
+                            hooks: {
+                                onPending: function (pending) {
+                                    if (!pending.length)
+                                        return;
+                                    info("".concat(pending.length, " migration").concat(pending.length === 1 ? "" : "s", " pending: ").concat(pending.map(function (unit) { return unit.name; }).join(", ")));
+                                },
+                                onProgress: function (index, total, unit) {
+                                    progressBar(index, total, "Migrating ".concat(unit.name));
+                                },
+                                onDone: function (migrationResult) {
+                                    progressBar(migrationResult.pending.length, migrationResult.pending.length, "Done");
+                                    progressBarDone();
+                                },
+                                onError: function (unit, error) {
+                                    progressBarDone();
+                                    fail("".concat(unit.name, " \u2014 ").concat(error instanceof Error ? error.message : String(error)));
+                                    process.exit(1);
+                                },
+                            },
+                        })];
+                case 7:
+                    result = _f.sent();
+                    if (!result.applied) {
                         ok("Nothing to migrate — all migrations are up to date.");
                         return [2 /*return*/];
                     }
-                    info("".concat(pending.length, " migration").concat(pending.length === 1 ? "" : "s", " pending"));
-                    _h.label = 7;
-                case 7:
-                    _h.trys.push([7, 9, , 14]);
-                    return [4 /*yield*/, Promise.resolve("".concat((0, node_url_1.pathToFileURL)(node_path_1.default.join(process.cwd(), "node_modules", "slintorm", "dist", "migrator.js")).href)).then(function (s) { return require(s); })];
-                case 8:
-                    mod = _h.sent();
-                    MigratorCtor = mod.Migrator;
-                    return [3 /*break*/, 14];
-                case 9:
-                    _a = _h.sent();
-                    _h.label = 10;
-                case 10:
-                    _h.trys.push([10, 12, , 13]);
-                    return [4 /*yield*/, Promise.resolve("".concat((0, node_url_1.pathToFileURL)(node_path_1.default.join(process.cwd(), "src", "migrator.js")).href)).then(function (s) { return require(s); })];
-                case 11:
-                    mod = _h.sent();
-                    MigratorCtor = mod.Migrator;
-                    return [3 /*break*/, 13];
-                case 12:
-                    e_4 = _h.sent();
-                    fail("Could not load Migrator: ".concat(e_4.message));
-                    process.exit(1);
-                    return [3 /*break*/, 13];
-                case 13: return [3 /*break*/, 14];
-                case 14:
-                    migrator = new MigratorCtor(exec, driver);
-                    return [4 /*yield*/, getLastBatch(exec)];
-                case 15:
-                    batch = (_h.sent()) + 1;
-                    count = 0;
-                    failed = [];
-                    startedAt = Date.now();
-                    idx = 0;
-                    _h.label = 16;
-                case 16:
-                    if (!(idx < pending.length)) return [3 /*break*/, 25];
-                    unit = pending[idx];
-                    modelDef = schema[unit.modelName];
-                    progressBar(idx, pending.length, "Migrating ".concat(unit.name));
-                    _h.label = 17;
-                case 17:
-                    _h.trys.push([17, 23, , 24]);
-                    return [4 /*yield*/, migrator.ensureTable(unit.tableName, modelDef.fields, (_e = modelDef.relations) !== null && _e !== void 0 ? _e : [])];
-                case 18:
-                    _h.sent();
-                    if (!(driver === "mongodb")) return [3 /*break*/, 20];
-                    return [4 /*yield*/, exec("INSERT INTO \"".concat(MIGRATIONS_TABLE, "\" (name, batch) VALUES (?,?)"), [unit.name, batch])];
-                case 19:
-                    _h.sent();
-                    return [3 /*break*/, 22];
-                case 20:
-                    isPg = driver === "postgres";
-                    return [4 /*yield*/, exec("INSERT INTO \"".concat(MIGRATIONS_TABLE, "\" (name, batch) VALUES (").concat(isPg ? "$1,$2" : "?,?", ")"), [unit.name, batch])];
-                case 21:
-                    _h.sent();
-                    _h.label = 22;
-                case 22:
-                    writeMigrationRecord((_f = cfg.dir) !== null && _f !== void 0 ? _f : "src", unit, batch, modelDef);
-                    count++;
-                    return [3 /*break*/, 24];
-                case 23:
-                    e_5 = _h.sent();
-                    progressBarDone();
-                    fail("".concat(unit.name, " \u2014 ").concat(e_5.message));
-                    failed.push(unit.name);
-                    process.exit(1);
-                    return [3 /*break*/, 24];
-                case 24:
-                    idx++;
-                    return [3 /*break*/, 16];
-                case 25:
-                    progressBar(pending.length, pending.length, "Done");
-                    progressBarDone();
                     elapsed = ((Date.now() - startedAt) / 1000).toFixed(2);
-                    ok("".concat(count, " migration").concat(count === 1 ? "" : "s", " applied (batch ").concat(batch, ") in ").concat(elapsed, "s."));
-                    info("Migration records written to ".concat((_g = cfg.dir) !== null && _g !== void 0 ? _g : "src", "/schema/migrations/"));
+                    ok("".concat(result.applied, " migration").concat(result.applied === 1 ? "" : "s", " applied (batch ").concat(result.batch, ") in ").concat(elapsed, "s."));
+                    info("Migration records written to ".concat((_e = cfg.dir) !== null && _e !== void 0 ? _e : "src", "/schema/migrations/"));
                     return [2 /*return*/];
             }
         });
     });
 }
 // rollback ──────────────────────────────────────────────────────────────────
-function cmdRollback(cfg) {
-    return __awaiter(this, void 0, void 0, function () {
-        var exec, driver, lastBatch, isPg, res, toRollback, schema, rolledBack, idx, name_2, record, modelName, tableName, e_6;
-        var _a, _b, _c, _d, _e, _f, _g, _h;
-        return __generator(this, function (_j) {
-            switch (_j.label) {
+function cmdRollback(cfg_1) {
+    return __awaiter(this, arguments, void 0, function (cfg, rawArgs) {
+        var exec, driver, lastBatch, parseTarget, targetArg, targetBatch, isPg_1, lookup, targetLabel, rolledBack, schema, isPg, batch, res, toRollback, idx, name_2, record, modelName, tableName, e_5, restoredSchema, rebuildPlan, migrator, idx, unit, modelDef, e_6;
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+        if (rawArgs === void 0) { rawArgs = []; }
+        return __generator(this, function (_m) {
+            switch (_m.label) {
                 case 0:
                     head("Rolling back last batch…");
                     return [4 /*yield*/, buildExec(cfg)];
                 case 1:
-                    exec = _j.sent();
+                    exec = _m.sent();
                     driver = (_a = cfg.driver) !== null && _a !== void 0 ? _a : "sqlite";
                     return [4 /*yield*/, ensureMigrationsTable(exec, driver)];
                 case 2:
-                    _j.sent();
+                    _m.sent();
                     return [4 /*yield*/, getLastBatch(exec)];
                 case 3:
-                    lastBatch = _j.sent();
+                    lastBatch = _m.sent();
                     if (!lastBatch) {
                         warn("Nothing to roll back — migrations table is empty.");
                         return [2 /*return*/];
                     }
-                    isPg = driver === "postgres";
-                    return [4 /*yield*/, exec("SELECT name FROM \"".concat(MIGRATIONS_TABLE, "\" WHERE batch = ").concat(isPg ? "$1" : "?", " ORDER BY id DESC"), [lastBatch])];
+                    parseTarget = function () {
+                        var _a;
+                        if (!rawArgs.length)
+                            return null;
+                        if (rawArgs[0] === "--to" || rawArgs[0] === "-t")
+                            return (_a = rawArgs[1]) !== null && _a !== void 0 ? _a : null;
+                        if (rawArgs[0].startsWith("--to="))
+                            return rawArgs[0].slice(5) || null;
+                        if (!rawArgs[0].startsWith("-"))
+                            return rawArgs[0];
+                        return null;
+                    };
+                    targetArg = parseTarget();
+                    targetBatch = lastBatch - 1;
+                    if (!targetArg) return [3 /*break*/, 6];
+                    if (!/^\d+$/.test(targetArg)) return [3 /*break*/, 4];
+                    targetBatch = parseInt(targetArg, 10);
+                    return [3 /*break*/, 6];
                 case 4:
-                    res = _j.sent();
-                    toRollback = res.rows.map(function (r) { return r.name; });
-                    if (!toRollback.length) {
-                        warn("Nothing to roll back.");
+                    isPg_1 = driver === "postgres";
+                    return [4 /*yield*/, exec("SELECT batch FROM \"".concat(MIGRATIONS_TABLE, "\" WHERE name = ").concat(isPg_1 ? "$1" : "?", " ORDER BY id DESC LIMIT 1"), [targetArg])];
+                case 5:
+                    lookup = _m.sent();
+                    if (!lookup.rows.length) {
+                        fail("Unknown rollback target: ".concat(targetArg));
+                        process.exit(1);
+                    }
+                    targetBatch = parseInt(lookup.rows[0].batch, 10);
+                    _m.label = 6;
+                case 6:
+                    if (targetBatch < 0)
+                        targetBatch = 0;
+                    if (targetBatch >= lastBatch) {
+                        ok("Already at batch ".concat(lastBatch, "; nothing to roll back."));
                         return [2 /*return*/];
                     }
-                    info("Rolling back batch ".concat(lastBatch, " \u2014 ").concat(toRollback.length, " migration").concat(toRollback.length === 1 ? "" : "s"));
+                    targetLabel = targetArg ? "".concat(targetArg) : "batch ".concat(targetBatch);
+                    info("Rolling back to ".concat(targetLabel, " (current batch ").concat(lastBatch, ")"));
+                    rolledBack = 0;
                     return [4 /*yield*/, loadLiveSchema((_b = cfg.dir) !== null && _b !== void 0 ? _b : "src")];
-                case 5:
-                    schema = _j.sent();
+                case 7:
+                    schema = _m.sent();
                     if (!schema) {
                         warn("No generated schema found — table names will be guessed from migration names.");
                     }
@@ -1099,43 +1222,100 @@ function cmdRollback(cfg) {
                         // Ensure pivot tables resolve correctly too, same as migrate/status.
                         schema = withSyntheticPivots(schema);
                     }
-                    rolledBack = 0;
+                    isPg = driver === "postgres";
+                    batch = lastBatch;
+                    _m.label = 8;
+                case 8:
+                    if (!(batch > targetBatch)) return [3 /*break*/, 18];
+                    return [4 /*yield*/, exec("SELECT name FROM \"".concat(MIGRATIONS_TABLE, "\" WHERE batch = ").concat(isPg ? "$1" : "?", " ORDER BY id DESC"), [batch])];
+                case 9:
+                    res = _m.sent();
+                    toRollback = res.rows.map(function (r) { return r.name; });
+                    if (!toRollback.length) {
+                        warn("Nothing to roll back in batch ".concat(batch, "."));
+                        return [3 /*break*/, 17];
+                    }
+                    info("Rolling back batch ".concat(batch, " \u2014 ").concat(toRollback.length, " migration").concat(toRollback.length === 1 ? "" : "s"));
                     idx = 0;
-                    _j.label = 6;
-                case 6:
-                    if (!(idx < toRollback.length)) return [3 /*break*/, 12];
+                    _m.label = 10;
+                case 10:
+                    if (!(idx < toRollback.length)) return [3 /*break*/, 16];
                     name_2 = toRollback[idx];
                     progressBar(idx, toRollback.length, "Rolling back ".concat(name_2));
                     record = readMigrationRecord((_c = cfg.dir) !== null && _c !== void 0 ? _c : "src", name_2);
                     modelName = (_d = record === null || record === void 0 ? void 0 : record.modelName) !== null && _d !== void 0 ? _d : migrationModelName(name_2);
                     tableName = (_g = (_e = record === null || record === void 0 ? void 0 : record.tableName) !== null && _e !== void 0 ? _e : (_f = schema === null || schema === void 0 ? void 0 : schema[modelName]) === null || _f === void 0 ? void 0 : _f.table) !== null && _g !== void 0 ? _g : modelName.toLowerCase();
-                    _j.label = 7;
-                case 7:
-                    _j.trys.push([7, 10, , 11]);
+                    _m.label = 11;
+                case 11:
+                    _m.trys.push([11, 14, , 15]);
                     return [4 /*yield*/, exec("DROP TABLE IF EXISTS \"".concat(tableName, "\""))];
-                case 8:
-                    _j.sent();
+                case 12:
+                    _m.sent();
                     return [4 /*yield*/, exec("DELETE FROM \"".concat(MIGRATIONS_TABLE, "\" WHERE name = ").concat(isPg ? "$1" : "?"), [name_2])];
-                case 9:
-                    _j.sent();
+                case 13:
+                    _m.sent();
                     removeMigrationRecord((_h = cfg.dir) !== null && _h !== void 0 ? _h : "src", name_2);
                     rolledBack++;
-                    return [3 /*break*/, 11];
-                case 10:
-                    e_6 = _j.sent();
+                    return [3 /*break*/, 15];
+                case 14:
+                    e_5 = _m.sent();
                     progressBarDone();
-                    fail("".concat(name_2, " \u2014 ").concat(e_6.message));
-                    return [3 /*break*/, 11];
-                case 11:
+                    fail("".concat(name_2, " \u2014 ").concat(e_5.message));
+                    return [3 /*break*/, 15];
+                case 15:
                     idx++;
-                    return [3 /*break*/, 6];
-                case 12:
+                    return [3 /*break*/, 10];
+                case 16:
                     progressBar(toRollback.length, toRollback.length, "Done");
                     progressBarDone();
-                    ok("Batch ".concat(lastBatch, " rolled back (").concat(rolledBack, " migration").concat(rolledBack === 1 ? "" : "s", ")."));
-                    warn(driver === "mongodb"
-                        ? "Collections were dropped. Re-run `npx slintorm migrate` to recreate indexes."
-                        : "Tables were dropped. Re-run `npx slintorm migrate` to recreate them.");
+                    _m.label = 17;
+                case 17:
+                    batch--;
+                    return [3 /*break*/, 8];
+                case 18:
+                    restoredSchema = (0, migration_history_js_1.restoreGeneratedSchemaForBatch)((_j = cfg.dir) !== null && _j !== void 0 ? _j : "src", targetBatch);
+                    if (!(targetBatch > 0)) return [3 /*break*/, 27];
+                    if (!!restoredSchema) return [3 /*break*/, 19];
+                    warn("No schema snapshot found for batch ".concat(targetBatch, "; cannot rebuild previous tables automatically."));
+                    warn("Update your source files to match that point in history, then re-run `npx slintorm migrate`.");
+                    return [3 /*break*/, 27];
+                case 19:
+                    info("Restored schema snapshot for batch ".concat(targetBatch, " \u2014 rebuilding tables\u2026"));
+                    rebuildPlan = schemaToPlan(withSyntheticPivots(restoredSchema));
+                    migrator = new migrator_js_1.Migrator(exec, driver);
+                    idx = 0;
+                    _m.label = 20;
+                case 20:
+                    if (!(idx < rebuildPlan.length)) return [3 /*break*/, 26];
+                    unit = rebuildPlan[idx];
+                    modelDef = restoredSchema[unit.modelName];
+                    progressBar(idx, rebuildPlan.length, "Restoring ".concat(unit.tableName));
+                    _m.label = 21;
+                case 21:
+                    _m.trys.push([21, 24, , 25]);
+                    return [4 /*yield*/, migrator.ensureTable(unit.tableName, modelDef.fields, (_k = modelDef.relations) !== null && _k !== void 0 ? _k : [])];
+                case 22:
+                    _m.sent();
+                    return [4 /*yield*/, exec("INSERT INTO \"".concat(MIGRATIONS_TABLE, "\" (name, batch) VALUES (").concat(isPg ? "$1,$2" : "?,?", ")"), [unit.name, targetBatch])];
+                case 23:
+                    _m.sent();
+                    writeMigrationRecord((_l = cfg.dir) !== null && _l !== void 0 ? _l : "src", unit, targetBatch, modelDef);
+                    return [3 /*break*/, 25];
+                case 24:
+                    e_6 = _m.sent();
+                    progressBarDone();
+                    fail("Failed to restore ".concat(unit.tableName, " \u2014 ").concat(e_6.message));
+                    return [3 /*break*/, 25];
+                case 25:
+                    idx++;
+                    return [3 /*break*/, 20];
+                case 26:
+                    progressBar(rebuildPlan.length, rebuildPlan.length, "Done");
+                    progressBarDone();
+                    ok("Rebuilt ".concat(rebuildPlan.length, " table").concat(rebuildPlan.length === 1 ? "" : "s", " from batch ").concat(targetBatch, "."));
+                    _m.label = 27;
+                case 27:
+                    ok("Rolled back from batch ".concat(lastBatch, " to batch ").concat(targetBatch, " (").concat(rolledBack, " migration").concat(rolledBack === 1 ? "" : "s", " removed)."));
                     return [2 /*return*/];
             }
         });
@@ -1205,9 +1385,91 @@ function cmdFresh(cfg) {
         });
     });
 }
+// drop-tracking ─────────────────────────────────────────────────────────────
+// Standalone production-cutover command — irreversible, drops the
+// _slint_migrations table/collection entirely. Not part of rollback.
+function cmdDropTracking(cfg_1) {
+    return __awaiter(this, arguments, void 0, function (cfg, rawArgs) {
+        var skipConfirm, confirmed, exec, driver, ddl, e_7;
+        var _a;
+        if (rawArgs === void 0) { rawArgs = []; }
+        return __generator(this, function (_b) {
+            switch (_b.label) {
+                case 0:
+                    head("Dropping migration tracking…");
+                    skipConfirm = rawArgs.includes("-y") || rawArgs.includes("--yes");
+                    warn("This will permanently remove the _slint_migrations tracking table.");
+                    warn("Intended for production cutover only — this is irreversible.");
+                    if (!!skipConfirm) return [3 /*break*/, 2];
+                    return [4 /*yield*/, promptConfirm("Type 'y' or 'yes' to continue: ")];
+                case 1:
+                    confirmed = _b.sent();
+                    if (!confirmed) {
+                        info("Aborted — tracking table was not dropped.");
+                        return [2 /*return*/];
+                    }
+                    _b.label = 2;
+                case 2: return [4 /*yield*/, buildExec(cfg)];
+                case 3:
+                    exec = _b.sent();
+                    driver = (_a = cfg.driver) !== null && _a !== void 0 ? _a : "sqlite";
+                    _b.label = 4;
+                case 4:
+                    _b.trys.push([4, 9, , 10]);
+                    if (!(driver === "mongodb")) return [3 /*break*/, 6];
+                    return [4 /*yield*/, exec("DROP TABLE IF EXISTS \"".concat(MIGRATIONS_TABLE, "\""))];
+                case 5:
+                    _b.sent();
+                    return [3 /*break*/, 8];
+                case 6:
+                    ddl = driver === "mysql"
+                        ? "DROP TABLE IF EXISTS `".concat(MIGRATIONS_TABLE, "`")
+                        : "DROP TABLE IF EXISTS \"".concat(MIGRATIONS_TABLE, "\"");
+                    return [4 /*yield*/, exec(ddl)];
+                case 7:
+                    _b.sent();
+                    _b.label = 8;
+                case 8:
+                    ok("Tracking table \"".concat(MIGRATIONS_TABLE, "\" removed."));
+                    return [3 /*break*/, 10];
+                case 9:
+                    e_7 = _b.sent();
+                    fail("Failed to drop tracking table \u2014 ".concat(e_7.message));
+                    process.exit(1);
+                    return [3 /*break*/, 10];
+                case 10: return [2 /*return*/];
+            }
+        });
+    });
+}
+// ─── Confirmation prompt helper ──────────────────────────────────────────────
+function promptConfirm(question) {
+    return __awaiter(this, void 0, void 0, function () {
+        var readline, rl, answer;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0: return [4 /*yield*/, Promise.resolve().then(function () { return require("node:readline/promises"); })];
+                case 1:
+                    readline = _a.sent();
+                    rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+                    _a.label = 2;
+                case 2:
+                    _a.trys.push([2, , 4, 5]);
+                    return [4 /*yield*/, rl.question("".concat(c.yellow, "?").concat(c.reset, "  ").concat(question))];
+                case 3:
+                    answer = (_a.sent()).trim().toLowerCase();
+                    return [2 /*return*/, answer === "y" || answer === "yes"];
+                case 4:
+                    rl.close();
+                    return [7 /*endfinally*/];
+                case 5: return [2 /*return*/];
+            }
+        });
+    });
+}
 // help ───────────────────────────────────────────────────────────────────────
 function cmdHelp() {
-    console.log("\n".concat(c.bold, "SlintORM CLI").concat(c.reset, "  ").concat(c.gray, "\u2014 database migration tool").concat(c.reset, "\n\n").concat(c.bold, "Usage:").concat(c.reset, "\n  npx slintorm <command> [options]\n\n").concat(c.bold, "Commands:").concat(c.reset, "\n  ").concat(c.cyan, "generate").concat(c.reset, "    Scan source files and (re)generate schema/generated.ts\n  ").concat(c.cyan, "migrate").concat(c.reset, "     Apply all pending migrations\n  ").concat(c.cyan, "rollback").concat(c.reset, "    Undo the last migration batch (drops the tables)\n  ").concat(c.cyan, "status").concat(c.reset, "      Show applied / pending migrations\n  ").concat(c.cyan, "fresh").concat(c.reset, "       Drop all tables then re-run all migrations\n\n").concat(c.bold, "Config:").concat(c.reset, "\n  Create ").concat(c.white, "slintorm.config.js").concat(c.reset, " in your project root:\n\n  ").concat(c.gray, "// slintorm.config.js").concat(c.reset, "\n  ").concat(c.yellow, "export default ").concat(c.reset, "{\n    driver:      ").concat(c.green, "\"sqlite\"").concat(c.reset, ",          ").concat(c.gray, "// sqlite | postgres | mysql | mongodb").concat(c.reset, "\n    databaseUrl: ").concat(c.green, "\"./myapp.db\"").concat(c.reset, ",\n    dir:         ").concat(c.green, "\"src\"").concat(c.reset, ",             ").concat(c.gray, "// folder with your TypeScript interfaces").concat(c.reset, "\n    logs:        ").concat(c.yellow, "false").concat(c.reset, ",\n  };\n\n  ").concat(c.gray, "For mongodb, databaseUrl should include the database name, e.g.").concat(c.reset, "\n  ").concat(c.gray, "\"mongodb://localhost:27017/myapp\". Mongo is schemaless \u2014 migrate/").concat(c.reset, "\n  ").concat(c.gray, "fresh/rollback only create or drop indexes and collections, not columns.").concat(c.reset, "\n\n  ").concat(c.gray, "Or add a \"slintorm\" key to package.json.").concat(c.reset, "\n  ").concat(c.gray, "(orm.config.js is still read for backwards compatibility, but is deprecated.)").concat(c.reset, "\n\n").concat(c.bold, "Migration records:").concat(c.reset, "\n  Each applied migration writes a JSON record to ").concat(c.white, "<dir>/schema/migrations/").concat(c.reset, "\n  in addition to the internal _slint_migrations tracking collection/table.\n"));
+    console.log("\n".concat(c.bold, "SlintORM CLI").concat(c.reset, "  ").concat(c.gray, "\u2014 database migration tool").concat(c.reset, "\n\n").concat(c.bold, "Usage:").concat(c.reset, "\n  npx slintorm <command> [options]\n\n").concat(c.bold, "Commands:").concat(c.reset, "\n  ").concat(c.cyan, "generate").concat(c.reset, "    Scan source files and (re)generate schema/generated.ts\n  ").concat(c.cyan, "migrate").concat(c.reset, "     Apply all pending migrations\n  ").concat(c.cyan, "rollback").concat(c.reset, "    Undo migrations back to a batch or migration name\n  ").concat(c.cyan, "status").concat(c.reset, "      Show applied / pending migrations\n  ").concat(c.cyan, "fresh").concat(c.reset, "       Drop all tables then re-run all migrations\n  ").concat(c.cyan, "drop-tracking").concat(c.reset, " Drop the internal migration tracking table\n  ").concat(c.cyan, "diff").concat(c.reset, "        Show schema diff without applying changes (dry-run)\n  ").concat(c.cyan, "seed").concat(c.reset, "        Run database seeders from seed/ directory\n\n\n").concat(c.bold, "Config:").concat(c.reset, "\n  Create ").concat(c.white, "slintorm.config.js").concat(c.reset, " in your project root:\n\n  ").concat(c.gray, "// slintorm.config.js").concat(c.reset, "\n  ").concat(c.yellow, "export default ").concat(c.reset, "{\n    driver:      ").concat(c.green, "\"sqlite\"").concat(c.reset, ",          ").concat(c.gray, "// sqlite | postgres | mysql | mongodb").concat(c.reset, "\n    databaseUrl: ").concat(c.green, "\"./myapp.db\"").concat(c.reset, ",\n    dir:         ").concat(c.green, "\"src\"").concat(c.reset, ",             ").concat(c.gray, "// folder with your TypeScript interfaces").concat(c.reset, "\n    logs:        ").concat(c.yellow, "false").concat(c.reset, ",\n  };\n\n  ").concat(c.gray, "For mongodb, databaseUrl should include the database name, e.g.").concat(c.reset, "\n  ").concat(c.gray, "Or add a \"slintorm\" key to package.json.").concat(c.reset, "\n  ").concat(c.gray, "(orm.config.js is still read for backwards compatibility, but is deprecated.)").concat(c.reset, "\n\n").concat(c.bold, "Migration records:").concat(c.reset, "\n  Each applied migration writes a JSON record to ").concat(c.white, "<dir>/schema/migrations/").concat(c.reset, "\n  in addition to the internal _slint_migrations tracking collection/table.\n\n").concat(c.bold, "Rollback behavior:").concat(c.reset, "\n  Rollback drops the tables for the rolled-back batch, then rebuilds the\n  tables for the target batch from its schema snapshot automatically.\n"));
 }
 // ─── Entry point ─────────────────────────────────────────────────────────────
 var _a = process.argv, _b = _a[2], command = _b === void 0 ? "--help" : _b, args = _a.slice(3);
@@ -1231,34 +1493,49 @@ function main() {
                         case "rollback": return [3 /*break*/, 6];
                         case "status": return [3 /*break*/, 8];
                         case "fresh": return [3 /*break*/, 10];
+                        case "drop-tracking": return [3 /*break*/, 12];
+                        case "diff": return [3 /*break*/, 14];
+                        case "seed": return [3 /*break*/, 16];
                     }
-                    return [3 /*break*/, 12];
+                    return [3 /*break*/, 18];
                 case 2: return [4 /*yield*/, cmdGenerate(cfg)];
                 case 3:
                     _b.sent();
-                    return [3 /*break*/, 13];
+                    return [3 /*break*/, 19];
                 case 4: return [4 /*yield*/, cmdMigrate(cfg)];
                 case 5:
                     _b.sent();
-                    return [3 /*break*/, 13];
-                case 6: return [4 /*yield*/, cmdRollback(cfg)];
+                    return [3 /*break*/, 19];
+                case 6: return [4 /*yield*/, cmdRollback(cfg, args)];
                 case 7:
                     _b.sent();
-                    return [3 /*break*/, 13];
+                    return [3 /*break*/, 19];
                 case 8: return [4 /*yield*/, cmdStatus(cfg)];
                 case 9:
                     _b.sent();
-                    return [3 /*break*/, 13];
+                    return [3 /*break*/, 19];
                 case 10: return [4 /*yield*/, cmdFresh(cfg)];
                 case 11:
                     _b.sent();
-                    return [3 /*break*/, 13];
-                case 12:
+                    return [3 /*break*/, 19];
+                case 12: return [4 /*yield*/, cmdDropTracking(cfg)];
+                case 13:
+                    _b.sent();
+                    return [3 /*break*/, 19];
+                case 14: return [4 /*yield*/, cmdDiff(cfg)];
+                case 15:
+                    _b.sent();
+                    return [3 /*break*/, 19];
+                case 16: return [4 /*yield*/, cmdSeed(cfg, args)];
+                case 17:
+                    _b.sent();
+                    return [3 /*break*/, 19];
+                case 18:
                     fail("Unknown command: ".concat(c.bold).concat(command).concat(c.reset));
                     console.log("Run ".concat(c.cyan, "npx slintorm --help").concat(c.reset, " to see available commands.\n"));
                     process.exit(1);
-                    _b.label = 13;
-                case 13: return [2 /*return*/];
+                    _b.label = 19;
+                case 19: return [2 /*return*/];
             }
         });
     });

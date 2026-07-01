@@ -1,4 +1,4 @@
-import type { SQLExecResult, DBDriver } from "./types.ts";
+import type { SQLExecResult, DBDriver, ExecFn } from "./types.ts";
 
 // ─── DBAdapter ────────────────────────────────────────────────────────────────
 // SERVERLESS / EDGE CHANGES:
@@ -14,6 +14,7 @@ export class DBAdapter {
   driver?: DBDriver;
   dir?: string;
   schema?: Record<string, any>;
+  customExec: ExecFn | null = null;
   private sqliteDb: any = null;
   private mysqlConn: any = null;
   private pgClient: any = null;
@@ -35,6 +36,7 @@ export class DBAdapter {
     logs?: boolean;
     replicas?: string[];  // connection URLs for read replicas
     poolSize?: number;    // connection pool size (PG/MySQL)
+    exec?: ExecFn;        // custom exec function (bypasses TCP — use in edge/serverless)
     [key: string]: any;
   } = {};
 
@@ -47,6 +49,7 @@ export class DBAdapter {
       databaseName?: string;
       dir?: string;
       logs?: boolean;
+      exec?: ExecFn;
       [key: string]: any;
     } = {}
   ) {
@@ -55,6 +58,10 @@ export class DBAdapter {
     this.dir = config.dir;
     this.schema = config.schema;
     this.logs = !!config.logs;
+    if (config.exec) {
+      this.customExec = config.exec;
+      this.connected = true;
+    }
     // NOTE: autoInstallDrivers intentionally removed. Install your driver
     // (pg, mysql2, mongodb) as a normal dependency. sqlite3/sqlite are
     // optional — only needed when driver="sqlite".
@@ -220,6 +227,9 @@ export class DBAdapter {
   }
 
   async exec(sqlOrOp: string, params: any[] = []): Promise<SQLExecResult> {
+    if (this.customExec) {
+      return this.customExec(sqlOrOp, params);
+    }
     await this.connect();
 
     switch (this.driver) {

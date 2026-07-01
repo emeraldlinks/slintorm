@@ -629,6 +629,21 @@ async function main() {
   ok("Prepared Statement Mode works");
 
   // ──────────────────────────────────────────────────────────────────────────
+  // 34. DATABASE RESOLVER — useDb on model
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("34. Database Resolver — useDb");
+
+  (orm as any).addDatabase("archive", { driver: "sqlite", databaseUrl: ":memory:", logs: false });
+  const archiveDb = (orm as any).resolveDb("archive");
+  archiveDb.exec("CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, createdAt TEXT, updatedAt TEXT)");
+
+  const ArchivePosts = await (Posts as any).useDb("archive");
+  await ArchivePosts.insert({ title: "Archive post", createdAt: new Date().toISOString() });
+  const archiveResult = await ArchivePosts.getAll();
+  info(`Archive posts: ${archiveResult.length}`);
+  ok("useDb works");
+
+  // ──────────────────────────────────────────────────────────────────────────
   // CLEANUP
   // ──────────────────────────────────────────────────────────────────────────
   try { await (Posts as any).delete({ id: newPost?.id! }); } catch {}
