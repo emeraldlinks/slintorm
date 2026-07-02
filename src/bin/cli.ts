@@ -245,10 +245,49 @@ async function buildExec(cfg: ORMConfig): Promise<ExecFn> {
   info(`Connecting to ${driver} database (${url})…`);
 
   if (driver === "sqlite") {
-    // Fallback chain: node:sqlite (Node 22.5+) → better-sqlite3 → sqlite3+sqlite
+    // Fallback chain: better-sqlite3 → sqlite3+sqlite → node:sqlite (Node 22.5+, last resort)
     let sqliteErr: any;
 
-    // --- 1. Try node:sqlite (Node 22.5+) ---
+    // --- 1. Try better-sqlite3 (preferred) ---
+    try {
+      const Database = (await import("better-sqlite3" as any)).default;
+      const db = new Database(url);
+      db.pragma("journal_mode = WAL");
+      db.pragma("foreign_keys = ON");
+      ok("Connected (better-sqlite3)");
+
+      return async (sql: string, params: any[] = []) => {
+        if (/^\s*(select|pragma)/i.test(sql)) {
+          const rows = db.prepare(sql).all(...params);
+          return { rows };
+        }
+        const r = db.prepare(sql).run(...params);
+        return { rows: [], changes: r.changes, lastID: r.lastInsertRowid as number };
+      };
+    } catch {
+      // fall through
+    }
+
+    // --- 2. Try sqlite3 + sqlite (async wrapper) ---
+    try {
+      const sqlite3 = (await import("sqlite3" as any)).default;
+      const { open }  = await import("sqlite" as any);
+      const db = await open({ filename: url, driver: sqlite3.Database });
+      ok("Connected (sqlite3)");
+
+      return async (sql: string, params: any[] = []) => {
+        if (/^\s*(select|pragma)/i.test(sql)) {
+          const rows = await db.all(sql, params);
+          return { rows };
+        }
+        const r = await db.run(sql, params);
+        return { rows: [], changes: r.changes, lastID: r.lastID };
+      };
+    } catch {
+      // fall through
+    }
+
+    // --- 3. Try node:sqlite (Node 22.5+, last resort) ---
     try {
       // @ts-ignore — node:sqlite available from Node 22.5+
       const { DatabaseSync } = await import("node:sqlite");
@@ -271,45 +310,6 @@ async function buildExec(cfg: ORMConfig): Promise<ExecFn> {
       };
     } catch (e) {
       sqliteErr = e;
-    }
-
-    // --- 2. Try better-sqlite3 ---
-    try {
-      const Database = (await import("better-sqlite3" as any)).default;
-      const db = new Database(url);
-      db.pragma("journal_mode = WAL");
-      db.pragma("foreign_keys = ON");
-      ok("Connected (better-sqlite3)");
-
-      return async (sql: string, params: any[] = []) => {
-        if (/^\s*(select|pragma)/i.test(sql)) {
-          const rows = db.prepare(sql).all(...params);
-          return { rows };
-        }
-        const r = db.prepare(sql).run(...params);
-        return { rows: [], changes: r.changes, lastID: r.lastInsertRowid as number };
-      };
-    } catch {
-      // fall through
-    }
-
-    // --- 3. Try sqlite3 + sqlite ---
-    try {
-      const sqlite3 = (await import("sqlite3" as any)).default;
-      const { open }  = await import("sqlite" as any);
-      const db = await open({ filename: url, driver: sqlite3.Database });
-      ok("Connected (sqlite3)");
-
-      return async (sql: string, params: any[] = []) => {
-        if (/^\s*(select|pragma)/i.test(sql)) {
-          const rows = await db.all(sql, params);
-          return { rows };
-        }
-        const r = await db.run(sql, params);
-        return { rows: [], changes: r.changes, lastID: r.lastID };
-      };
-    } catch {
-      // fall through
     }
 
     // --- 4. Nothing worked — clear error ---

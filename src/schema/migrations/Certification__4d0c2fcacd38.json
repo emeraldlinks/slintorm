@@ -4,7 +4,7 @@
   "tableName": "certifications",
   "schemaHash": "4d0c2fcacd389d8b8baa357267a5a06b909541d6f42bb2a38c2343a3df870026",
   "batch": 1,
-  "appliedAt": "2026-06-28T00:21:02.780Z",
+  "appliedAt": "2026-07-02T03:55:59.281Z",
   "fields": [
     "id",
     "enrollmentId",

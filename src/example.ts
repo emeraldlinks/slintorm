@@ -30,6 +30,8 @@ interface User {
   id?: number;
   name: string;
   email?: string;
+  // @json
+  meta?: Record<string, any>;
   createdAt?: string;
   updatedAt?: string;
   deletedAt?: string;
@@ -155,6 +157,45 @@ async function main() {
     name: "Catherine", email: "catherine@example.com",
   });
   console.log("newUser:", newUser);
+
+  // ── @json demo ──────────────────────────────────────────────────────
+  heading("2b. @json field round-trip");
+
+  const jsonUser = await (Users as any).insert({
+    name: "JsonDemo",
+    email: "json@demo.com",
+    meta: { theme: "dark", notifications: true, score: 42, tags: ["orm", "typescript"] },
+  });
+  console.log("insert with meta:", jsonUser);
+  console.log("  meta.theme  →", jsonUser?.meta?.theme);
+  console.log("  meta.tags   →", jsonUser?.meta?.tags);
+
+  const fetched = await (Users as any).get({ id: jsonUser?.id });
+  console.log("get() after insert:", fetched);
+  console.log("  meta.theme  →", fetched?.meta?.theme);
+  console.log("  meta.tags   →", fetched?.meta?.tags);
+
+  const updated = await (Users as any).update(
+    { id: jsonUser?.id },
+    { meta: { theme: "light", score: 99 } }
+  );
+  console.log("after update():", updated);
+  console.log("  meta.theme  →", updated?.meta?.theme);
+
+  await (jsonUser as any).update({ meta: { nested: { a: 1, b: [2, 3] } } });
+  const afterInstance = await (Users as any).get({ id: jsonUser?.id });
+  console.log("after instance update():", afterInstance);
+  console.log("  meta.nested.b →", afterInstance?.meta?.nested?.b);
+
+  await (Users as any).updateMany(
+    { name: "JsonDemo" },
+    { meta: { val: "bulk" } }
+  );
+  const afterBulk = await (Users as any).get({ id: jsonUser?.id });
+  console.log("after updateMany():", afterBulk);
+  console.log("  meta.val  →", afterBulk?.meta?.val);
+
+  ok("@json insert, get, update, instance update, updateMany all round-trip correctly");
 
   await Profiles.insert({ userId: newUser?.id!, bio: "My bio" } as any);
 

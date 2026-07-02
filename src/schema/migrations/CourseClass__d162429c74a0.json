@@ -4,7 +4,7 @@
   "tableName": "classes",
   "schemaHash": "d162429c74a011741ab1c62dc99ffff0c93afe28ea2b9adbb3c8311c14870f5e",
   "batch": 1,
-  "appliedAt": "2026-06-28T00:21:02.800Z",
+  "appliedAt": "2026-07-02T03:55:59.360Z",
   "fields": [
     "id",
     "trackId",

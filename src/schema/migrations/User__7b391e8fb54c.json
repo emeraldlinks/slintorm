@@ -4,7 +4,7 @@
   "tableName": "users",
   "schemaHash": "7b391e8fb54cd3c372747da4b0cd8f4752b47647286b40e278eca4651aba4a48",
   "batch": 1,
-  "appliedAt": "2026-06-28T00:21:02.925Z",
+  "appliedAt": "2026-07-02T03:55:59.751Z",
   "fields": [
     "id",
     "name",

@@ -4,7 +4,7 @@
   "tableName": "submissions",
   "schemaHash": "651e5caa86de2092e1a00681125144140d087aa7fb4f77874bcf31a2c972e3b4",
   "batch": 1,
-  "appliedAt": "2026-06-28T00:21:02.884Z",
+  "appliedAt": "2026-07-02T03:55:59.602Z",
   "fields": [
     "id",
     "enrollmentId",

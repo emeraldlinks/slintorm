@@ -4,7 +4,7 @@
   "tableName": "placement_partners",
   "schemaHash": "cfaeb7b08764d741184cd156284181c0440227c4c20948ce4c6ecd3a6638c1c0",
   "batch": 1,
-  "appliedAt": "2026-06-28T00:21:02.851Z",
+  "appliedAt": "2026-07-02T03:55:59.491Z",
   "fields": [
     "id",
     "companyName",

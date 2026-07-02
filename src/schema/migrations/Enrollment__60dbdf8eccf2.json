@@ -4,7 +4,7 @@
   "tableName": "enrollments",
   "schemaHash": "60dbdf8eccf23c235f2c0b120d05cb077d32b0068d2e8322379eb5eb463c45e9",
   "batch": 1,
-  "appliedAt": "2026-06-28T00:21:02.808Z",
+  "appliedAt": "2026-07-02T03:55:59.376Z",
   "fields": [
     "id",
     "userId",

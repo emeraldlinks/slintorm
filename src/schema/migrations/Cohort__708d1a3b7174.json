@@ -4,7 +4,7 @@
   "tableName": "cohorts",
   "schemaHash": "708d1a3b7174e773825d5c2d9145d0714ed5e389d7fbf94a39d90ac39838ec67",
   "batch": 1,
-  "appliedAt": "2026-06-28T00:21:02.786Z",
+  "appliedAt": "2026-07-02T03:55:59.298Z",
   "fields": [
     "id",
     "name",

@@ -4,7 +4,7 @@
   "tableName": "messages",
   "schemaHash": "fe4d02dbe8fe99493e4e46259380a34eedadbf2821d7347a63e0067419591123",
   "batch": 1,
-  "appliedAt": "2026-06-28T00:21:02.823Z",
+  "appliedAt": "2026-07-02T03:55:59.408Z",
   "fields": [
     "id",
     "conversationId",

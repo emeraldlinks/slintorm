@@ -4,7 +4,7 @@
   "tableName": "alumni_reports",
   "schemaHash": "2ebbf34465ac0acea9408d9512834e473496ae07e3f1e383a0b52b3a0ad1fe8f",
   "batch": 1,
-  "appliedAt": "2026-06-28T00:21:02.736Z",
+  "appliedAt": "2026-07-02T03:55:59.202Z",
   "fields": [
     "id",
     "userId",
