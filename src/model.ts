@@ -341,7 +341,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
           const setClause = setCols.map((c, i) => isPg ? `"${c}" = $${i + 1}` : `${c} = ?`).join(", ");
           const whereClause = whereCols.map((c, i) => isPg ? `"${c}" = $${setCols.length + i + 1}` : `${c} = ?`).join(" AND ");
-          const params = [...setCols.map((c) => data[c as keyof T]), ...whereCols.map((c) => where[c as keyof T])];
+          const params = [...setCols.map((c) => serializeValue(c, (data as any)[c])), ...whereCols.map((c) => where[c as keyof T])];
           if (versionClause) {
             params.push((before as any)?.[versionField as string]);
           }

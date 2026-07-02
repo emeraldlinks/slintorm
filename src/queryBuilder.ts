@@ -220,7 +220,7 @@ export class QueryBuilder<T extends Record<string, any>> {
     return this;
   }
 
-  whereColumnsIn<K extends keyof T>(columns: K[], values: T[][]) {
+  whereColumnsIn<K extends keyof T>(columns: K[], values: Array<Array<T[K]>>) {
     if (!columns.length || !values.length) return this;
     const ph = values.map(() => `(${columns.map(() => "?").join(", ")})`).join(", ");
     const flat = values.flat();

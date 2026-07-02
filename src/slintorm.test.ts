@@ -1,4 +1,5 @@
 import ORMManager from "./index.js";
+import { type ModelAPI } from "./model.js";
 import { SqlExpr } from "./types.js";
 import { proxyExec } from "./proxy.js";
 
@@ -201,35 +202,35 @@ const schema = {
   User: {
     table: "users",
     fields: {
-      id: { type: "INTEGER", primaryKey: true, auto: true },
-      name: { type: "TEXT", optional: false },
-      email: { type: "TEXT", optional: true },
-      score: { type: "INTEGER", optional: true },
-      status: { type: "TEXT", optional: true },
-      category: { type: "TEXT", optional: true },
+      id: { type: "INTEGER", meta: { primaryKey: true, auto: true } },
+      name: { type: "TEXT", optional: false, meta: {} },
+      email: { type: "TEXT", optional: true, meta: {} },
+      score: { type: "INTEGER", optional: true, meta: {} },
+      status: { type: "TEXT", optional: true, meta: {} },
+      category: { type: "TEXT", optional: true, meta: {} },
       meta: { type: "TEXT", optional: true, meta: { json: true } },
       deletedAt: { type: "TEXT", optional: true, meta: { softDelete: true } },
-      createdAt: { type: "TEXT", optional: true },
-      updatedAt: { type: "TEXT", optional: true },
+      createdAt: { type: "TEXT", optional: true, meta: {} },
+      updatedAt: { type: "TEXT", optional: true, meta: {} },
     },
     relations: [],
   },
   Profile: {
     table: "profiles",
     fields: {
-      id: { type: "INTEGER", primaryKey: true, auto: true },
-      userId: { type: "INTEGER", optional: false },
-      bio: { type: "TEXT", optional: true },
-      createdAt: { type: "TEXT", optional: true },
-      updatedAt: { type: "TEXT", optional: true },
+      id: { type: "INTEGER", meta: { primaryKey: true, auto: true } },
+      userId: { type: "INTEGER", optional: false, meta: {} },
+      bio: { type: "TEXT", optional: true, meta: {} },
+      createdAt: { type: "TEXT", optional: true, meta: {} },
+      updatedAt: { type: "TEXT", optional: true, meta: {} },
     },
     relations: [],
   },
 };
 
 let orm: ORMManager;
-let Users: Awaited<ReturnType<typeof orm.defineModel<User>>>;
-let Profiles: Awaited<ReturnType<typeof orm.defineModel<Profile>>>;
+let Users: ModelAPI<User>;
+let Profiles: ModelAPI<Profile>;
 
 beforeAll(async () => {
   orm = new ORMManager({ driver: "sqlite", databaseUrl: ":memory:", schema, logs: false });
@@ -288,6 +289,100 @@ describe("CRUD", () => {
     await user!.delete();
     const gone = await Users.get({ id: user!.id });
     expect(gone).toBeNull();
+  });
+});
+
+// ── 1b. JSON field handling ────────────────────────────────────────────
+
+describe("JSON field (@json)", () => {
+  beforeEach(async () => { await resetUsers(); });
+
+  it("inserts and reads back a JSON field", async () => {
+    const settings = { theme: "dark", notifications: true, score: 42 };
+    const user = await Users.insert({
+      name: "JsonTest",
+      email: "json@t.com",
+      meta: settings,
+      createdAt: new Date().toISOString(),
+    });
+    expect(user).notToBeNull();
+    // The returned entity should have the JSON already parsed back
+    expect(user!.meta?.theme).toBe("dark");
+    expect(user!.meta?.notifications).toBe(true);
+    expect(user!.meta?.score).toBe(42);
+  });
+
+  it("reads JSON field via get()", async () => {
+    const inserted = await Users.insert({
+      name: "JsonGet",
+      email: "jget@t.com",
+      meta: { nested: { a: 1, b: [2, 3] } },
+      createdAt: new Date().toISOString(),
+    });
+    const user = await Users.get({ id: inserted!.id });
+    expect(user).notToBeNull();
+    expect(user!.meta?.nested?.a).toBe(1);
+    expect(JSON.stringify(user!.meta?.nested?.b)).toBe(JSON.stringify([2, 3]));
+  });
+
+  it("updates a JSON field", async () => {
+    const user = await Users.insert({
+      name: "JsonUpd",
+      email: "jupd@t.com",
+      meta: { version: 1 },
+      createdAt: new Date().toISOString(),
+    });
+    const updated = await Users.update(
+      { id: user!.id },
+      { meta: { version: 2, status: "updated" } }
+    );
+    expect(updated).notToBeNull();
+    expect(updated!.meta?.version).toBe(2);
+    expect(updated!.meta?.status).toBe("updated");
+  });
+
+  it("updates JSON field via instance method", async () => {
+    const user = await Users.insert({
+      name: "JsonInst",
+      email: "jinst@t.com",
+      meta: { count: 1 },
+      createdAt: new Date().toISOString(),
+    });
+    await user!.update({ meta: { count: 99, label: "updated" } });
+    const reloaded = await Users.get({ id: user!.id });
+    expect(reloaded!.meta?.count).toBe(99);
+    expect(reloaded!.meta?.label).toBe("updated");
+  });
+
+  it("updates JSON field via updateMany", async () => {
+    const u1 = await Users.insert({
+      name: "JM1", email: "jm1@t.com", meta: { val: 1 },
+      createdAt: new Date().toISOString(),
+    });
+    await Users.insert({
+      name: "JM2", email: "jm2@t.com", meta: { val: 2 },
+      createdAt: new Date().toISOString(),
+    });
+    const changed = await Users.updateMany(
+      { name: "JM1" },
+      { meta: { val: 100 } }
+    );
+    expect(changed).toBe(1);
+    const reloaded = await Users.get({ id: u1!.id });
+    expect(reloaded!.meta?.val).toBe(100);
+  });
+
+  it("handles null JSON field", async () => {
+    const user = await Users.insert({
+      name: "JsonNull",
+      email: "jnull@t.com",
+      meta: null as any,
+      createdAt: new Date().toISOString(),
+    });
+    expect(user).notToBeNull();
+    // null should stay null, not become JSON.stringify("null")
+    const fetched = await Users.get({ id: user!.id });
+    expect(fetched!.meta).toBeNull();
   });
 });
 
@@ -634,7 +729,7 @@ describe("Rows streaming", () => {
 
 describe("Raw SQL & SqlExpr", () => {
   it("SqlExpr.raw works in insert", async () => {
-    const user = await Users.insert({ name: SqlExpr.raw("'ExprUser'"), email: "raw@t.com", createdAt: SqlExpr.raw("datetime('now')") });
+    const user = await Users.insert({ name: SqlExpr.raw("'ExprUser'"), email: "raw@t.com", createdAt: SqlExpr.raw("datetime('now')") } as any);
     expect(user).notToBeNull();
   });
 });
@@ -817,8 +912,8 @@ describe("Custom exec (edge mode)", () => {
       Item: {
         table: "items",
         fields: {
-          id: { type: "INTEGER", primaryKey: true, auto: true },
-          value: { type: "TEXT", optional: false },
+          id: { type: "INTEGER", meta: { primaryKey: true, auto: true } },
+          value: { type: "TEXT", optional: false, meta: {} },
         },
         relations: [],
       },
@@ -826,7 +921,7 @@ describe("Custom exec (edge mode)", () => {
     const customOrm = new ORMManager({ exec: myExec, schema: customSchema });
     const Items = await customOrm.defineModel("items", "Item");
     await Items.insert({ value: "custom-exec-test" });
-    const items = await Items.getAll();
+    const items = await Items.getAll() as any[];
     expect(items.length).toBe(1);
     expect(items[0].value).toBe("custom-exec-test");
     await adapter.close();

@@ -81,14 +81,54 @@ export class DBAdapter {
         const filename = this.config.databaseUrl || ":memory:";
 
         // Fallback chain:
-        //   1. node:sqlite (Node 22.5+) — built-in, zero deps
-        //   2. better-sqlite3 — sync, fast
-        //   3. sqlite3 + sqlite — async wrapper
+        //   1. better-sqlite3 — sync, fast, most capable
+        //   2. sqlite3 + sqlite — async wrapper
+        //   3. node:sqlite (Node 22.5+) — built-in, zero deps (last resort)
         //   4. Helpful install error
 
         let sqliteErr: any;
 
-        // --- 1. Try node:sqlite (Node 22.5+) ---
+        // --- 1. Try better-sqlite3 ---
+        try {
+          // @ts-ignore -- optional peer dep, not in devDependencies
+          const mod = await import("better-sqlite3");
+          const Database = await this.defaultExport<any>(mod);
+          const db = new Database(filename);
+          db.pragma("journal_mode = WAL");
+          db.pragma("foreign_keys = ON");
+
+          this.sqliteDb = {
+            _db: db,
+            async all(sql: string, params: any[]) {
+              return db.prepare(sql).all(...params);
+            },
+            async run(sql: string, params: any[]) {
+              const r = db.prepare(sql).run(...params);
+              return { changes: r.changes, lastID: r.lastInsertRowid };
+            },
+            async close() { db.close(); },
+            _isBetterSqlite: true,
+          };
+          break;
+        } catch {
+          // fall through
+        }
+
+        // --- 2. Try sqlite3 + sqlite (async wrapper) ---
+        try {
+          // @ts-ignore -- optional peer deps, not in devDependencies
+          const sqlite3Mod = await import("sqlite3");
+          const sqlite3 = await this.defaultExport<any>(sqlite3Mod);
+          // @ts-ignore -- optional peer dep
+          const sqliteMod = await import("sqlite");
+          const sqlite = sqliteMod as any;
+          this.sqliteDb = await sqlite.open({ filename, driver: sqlite3.Database });
+          break;
+        } catch {
+          // fall through
+        }
+
+        // --- 3. Fall back to node:sqlite (Node 22.5+) ---
         try {
           // @ts-ignore — node:sqlite is available from Node 22.5+
           const { DatabaseSync } = await import("node:sqlite");
@@ -117,51 +157,10 @@ export class DBAdapter {
           sqliteErr = e;
         }
 
-        // --- 2. Try better-sqlite3 ---
-        try {
-          // @ts-ignore -- optional peer dep, not in devDependencies
-          const mod = await import("better-sqlite3");
-          const Database = await this.defaultExport<any>(mod);
-          const db = new Database(filename);
-          db.pragma("journal_mode = WAL");
-          db.pragma("foreign_keys = ON");
-
-          this.sqliteDb = {
-            _db: db,
-            async all(sql: string, params: any[]) {
-              return db.prepare(sql).all(...params);
-            },
-            async run(sql: string, params: any[]) {
-              const r = db.prepare(sql).run(...params);
-              return { changes: r.changes, lastID: r.lastInsertRowid };
-            },
-            async close() { db.close(); },
-            _isBetterSqlite: true,
-          };
-          break;
-        } catch {
-          // fall through
-        }
-
-        // --- 3. Try sqlite3 + sqlite (async wrapper) ---
-        try {
-          // @ts-ignore -- optional peer deps, not in devDependencies
-          const sqlite3Mod = await import("sqlite3");
-          const sqlite3 = await this.defaultExport<any>(sqlite3Mod);
-          // @ts-ignore -- optional peer dep
-          const sqliteMod = await import("sqlite");
-          const sqlite = sqliteMod as any;
-          this.sqliteDb = await sqlite.open({ filename, driver: sqlite3.Database });
-          break;
-        } catch {
-          // fall through
-        }
-
         // --- 4. Nothing worked — clear error ---
         throw new Error(
           `No SQLite driver found.\n\n` +
-          `  Your Node version: ${process.version}\n` +
-          `  (node:sqlite requires Node 22.5+)\n\n` +
+          `  Your Node version: ${process.version}\n\n` +
           `Install one of:\n` +
           `  npm install better-sqlite3    (recommended)\n` +
           `  npm install sqlite3 sqlite     (async wrapper)\n` +

@@ -1,6 +1,6 @@
 {
   "name": "slintorm",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "description": "Minimal fully typed orm for typescript",
   "license": "MIT",
   "author": "Joseph Christopher",
@@ -53,32 +53,5 @@
     "uvu": "^0.5.6",
     "vitest": "^4.1.9"
   },
-  "peerDependencies": {
-    "better-sqlite3": "^9.0.0",
-    "mongodb": "^6.0.0",
-    "mysql2": "^3.0.0",
-    "pg": "^8.0.0",
-    "sqlite": "^5.0.0",
-    "sqlite3": "^5.0.0"
-  },
-  "peerDependenciesMeta": {
-    "pg": {
-      "optional": true
-    },
-    "mysql2": {
-      "optional": true
-    },
-    "mongodb": {
-      "optional": true
-    },
-    "sqlite3": {
-      "optional": true
-    },
-    "sqlite": {
-      "optional": true
-    },
-    "better-sqlite3": {
-      "optional": true
-    }
-  }
+  "peerDependencies": {}
 }
