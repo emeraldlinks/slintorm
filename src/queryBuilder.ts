@@ -984,6 +984,13 @@ export class QueryBuilder<T extends Record<string, any>> {
         try { out[key] = JSON.parse(out[key]); } catch {}
       }
     }
+    // Fallback: deserialize JSON-looking strings for fields not in schema
+    for (const key of Object.keys(out)) {
+      if (schemaFields[key]) continue;
+      if (typeof out[key] === "string" && (out[key].startsWith("{") || out[key].startsWith("["))) {
+        try { out[key] = JSON.parse(out[key]); } catch {}
+      }
+    }
     return out;
   }
 

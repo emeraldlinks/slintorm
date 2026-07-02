@@ -154,11 +154,22 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       if (!item || typeof item !== "object") return modelSchema;
       const inferredFields = Object.entries(item).reduce<Record<string, any>>((acc, [key, value]) => {
         if (value === undefined) return acc;
-        acc[key] = { type: inferFieldType(value), originalType: inferFieldType(value), optional: true, meta: {} };
+        const inferredType = inferFieldType(value);
+        acc[key] = {
+          type: inferredType,
+          originalType: inferredType,
+          optional: true,
+          meta: inferredType === "object" ? { json: true } : {},
+        };
         return acc;
       }, {});
       if (!Object.keys(inferredFields).length) return modelSchema;
-      return { ...modelSchema, fields: { ...(modelSchema.fields || {}), ...inferredFields } };
+      const merged = { ...modelSchema, fields: { ...(modelSchema.fields || {}), ...inferredFields } };
+      // Ensure an id PK column exists when the schema is inferred (no explicit schema)
+      if (!merged.fields.id) {
+        merged.fields.id = { type: "INTEGER", meta: { primaryKey: true, auto: true } };
+      }
+      return merged;
     }
 
     const driver = adapter.driver as "sqlite" | "postgres" | "mysql" | "mongodb" | undefined;
@@ -180,12 +191,18 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       return { clause, params };
     }
 
+    function isJsonMeta(meta: any) { return !!(meta?.json || meta?.["@json"]); }
+
     function serializeValue(col: string, value: any): any {
       if (value === undefined) return null;
       if (value instanceof Date) return value.toISOString();
       const fieldMeta = modelSchema.fields?.[col]?.meta;
-      if (fieldMeta?.json && value !== null && typeof value === "object") {
+      if (isJsonMeta(fieldMeta) && value !== null && typeof value === "object") {
         try { return JSON.stringify(value); } catch { return null; }
+      }
+      // Fallback: serialize plain objects as JSON even without schema metadata
+      if (value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date)) {
+        try { return JSON.stringify(value); } catch { return value; }
       }
       return value;
     }
@@ -246,12 +263,16 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         if (driver === "mongodb") {
           await adapter.exec(JSON.stringify({ collection: tableName, action: "insert", data: [item] }));
         } else {
+          const itemValue = (c: string) => (item as any)[c];
           const isJsonField = (col: string) => {
             const meta = modelSchema.fields[col]?.meta;
-            return !!(meta?.json || meta?.["@json"]);
+            if (meta?.json || meta?.["@json"]) return true;
+            // Fallback: if no schema defines this field but the value is a plain object, treat as JSON
+            const val = itemValue(col);
+            return typeof val === "object" && val !== null && !Array.isArray(val) && !(val instanceof Date);
           };
           const cols = Object.keys(item).filter((c) => {
-            const value = (item as any)[c];
+            const value = itemValue(c);
             if (value === undefined) return false;
             if (value === null || value instanceof Date) return true;
             if (typeof value === "object") return isJsonField(c);
@@ -747,7 +768,14 @@ function mapJson<T extends Record<string, any>>(row: T, schemaFields: Record<str
   const out = { ...row } as Record<string, any>;
   for (const key of Object.keys(schemaFields)) {
     const fieldMeta = schemaFields[key]?.meta;
-    if (fieldMeta?.json && typeof out[key] === "string") {
+    if ((fieldMeta?.json || fieldMeta?.["@json"]) && typeof out[key] === "string") {
+      try { out[key] = JSON.parse(out[key]); } catch {}
+    }
+  }
+  // Fallback: deserialize any string that looks like JSON, for inferred fields
+  for (const key of Object.keys(out)) {
+    if (schemaFields[key]) continue;
+    if (typeof out[key] === "string" && (out[key].startsWith("{") || out[key].startsWith("["))) {
       try { out[key] = JSON.parse(out[key]); } catch {}
     }
   }

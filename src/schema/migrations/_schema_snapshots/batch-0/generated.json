@@ -68,6 +68,14 @@
         "optional": true,
         "meta": {}
       },
+      "meta": {
+        "type": "Record <string ,any > | undefined",
+        "originalType": "Record <string ,any >",
+        "optional": true,
+        "meta": {
+          "@json": true
+        }
+      },
       "createdAt": {
         "type": "string | undefined",
         "originalType": "string",

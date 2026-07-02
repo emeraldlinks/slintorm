@@ -184,6 +184,7 @@ interface User {
   score?: number;
   status?: string;
   category?: string;
+  // @json
   meta?: Record<string, any>;
   deletedAt?: string | null;
   createdAt?: string;

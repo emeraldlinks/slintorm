@@ -17,6 +17,8 @@ export interface User {
   bio?: string;
   city?: string;
   country?: string;
+  // @json
+  meta?: Record<string, any>;
   createdAt?: string;
   updatedAt?: string;
   

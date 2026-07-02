@@ -1,7 +1,7 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: bdc3c2d7eb760ea5
-// Source Hash: 0515467480ac4843
+// Schema Hash: 8625db84d72e0d98
+// Source Hash: 209902cffa45af27
 
 export interface User {
   id?: number;
@@ -15,6 +15,7 @@ export interface User {
   bio?: string;
   city?: string;
   country?: string;
+  meta?: Record <string ,any >;
   createdAt?: string;
   updatedAt?: string;
   payments?: Payment[];
@@ -565,6 +566,14 @@ export const schema = {
         "originalType": "string",
         "optional": true,
         "meta": {}
+      },
+      "meta": {
+        "type": "Record <string ,any > | undefined",
+        "originalType": "Record <string ,any >",
+        "optional": true,
+        "meta": {
+          "@json": true
+        }
       },
       "createdAt": {
         "type": "string | undefined",
