@@ -645,7 +645,7 @@ try {
 ## Important Implementation Details
 
 1. **ESM only** — `"type": "module"` in package.json, all imports use `.js` extensions
-2. **Optional peer dependencies** — pg, mysql2, sqlite3, better-sqlite3, mongodb are all optional; only the driver you use needs to be installed
+2. **All drivers optional** — pg, mysql2, sqlite3, better-sqlite3, mongodb are all loaded dynamically at connect time; only the driver you use needs to be installed
 3. **Dynamic driver loading** — drivers are loaded via `import()` at connect time, tree-shakeable
 4. **Custom exec bypasses TCP entirely** — when `exec` is passed in config, `DBAdapter` never calls `connect()`, and `wrapExec` is skipped
 5. **Schema auto-creates table on first use** — `defineModel()` creates the ModelAPI immediately, but the table is not created until the first `insert()`/`insertMany()` call (which calls `ensure()`)
