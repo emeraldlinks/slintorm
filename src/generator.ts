@@ -658,8 +658,17 @@ class InterfaceTokenParser {
     for (const part of parts) {
       if (part.includes(":")) {
         const [key, ...valueParts] = part.split(":");
-        const value = valueParts.join(":").trim();
-        meta[key.trim()] = value === "true" ? true : value === "false" ? false : value;
+        const rawValue = valueParts.join(":").trim();
+        let value: any = rawValue;
+        if (
+          (rawValue.startsWith("'") && rawValue.endsWith("'")) ||
+          (rawValue.startsWith("\"") && rawValue.endsWith("\""))
+        ) {
+          value = rawValue.slice(1, -1);
+        } else {
+          value = rawValue === "true" ? true : rawValue === "false" ? false : rawValue;
+        }
+        meta[key.trim()] = value;
       } else {
         meta[part] = true;
       }
