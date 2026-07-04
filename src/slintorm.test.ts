@@ -184,6 +184,7 @@ interface User {
   score?: number;
   status?: string;
   category?: string;
+  isActive?: boolean;
   // @json
   meta?: Record<string, any>;
   deletedAt?: string | null;
@@ -209,6 +210,7 @@ const schema = {
       score: { type: "INTEGER", optional: true, meta: {} },
       status: { type: "TEXT", optional: true, meta: {} },
       category: { type: "TEXT", optional: true, meta: {} },
+      isActive: { type: "boolean", optional: true, meta: {} },
       meta: { type: "TEXT", optional: true, meta: { json: true } },
       deletedAt: { type: "TEXT", optional: true, meta: { softDelete: true } },
       createdAt: { type: "TEXT", optional: true, meta: {} },
@@ -947,7 +949,54 @@ describe("Scopes", () => {
   });
 });
 
-// ── 26. Truncate ────────────────────────────────────────────────────────
+// ── 26. Boolean serialization ──────────────────────────────────────────
+
+describe("Boolean serialization", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+    await Users.insert({ name: "BoolTrue", email: "bt@t.com", isActive: true, createdAt: new Date().toISOString() });
+    await Users.insert({ name: "BoolFalse", email: "bf@t.com", isActive: false, createdAt: new Date().toISOString() });
+  });
+
+  it("inserts and reads back boolean true/false", async () => {
+    const t = await Users.get({ name: "BoolTrue" });
+    const f = await Users.get({ name: "BoolFalse" });
+    expect(t?.isActive).toBe(true);
+    expect(f?.isActive).toBe(false);
+  });
+
+  it("query().where() accepts boolean params", async () => {
+    const active = await Users.query().where("isActive", "=", true).get();
+    expect(active.length).toBe(1);
+    expect(active[0].name).toBe("BoolTrue");
+    const inactive = await Users.query().where("isActive", "=", false).get();
+    expect(inactive.length).toBe(1);
+    expect(inactive[0].name).toBe("BoolFalse");
+  });
+
+  it("query().first() accepts boolean params", async () => {
+    const row = await Users.query().first({ isActive: true } as any);
+    expect(row).notToBeNull();
+    expect(row?.name).toBe("BoolTrue");
+  });
+
+  it("query().update() accepts boolean in SET values", async () => {
+    const count = await Users.query().where("isActive", "=", false).update({ isActive: true } as any);
+    expect(count).toBe(1);
+    const all = await Users.query().where("isActive", "=", true).get();
+    expect(all.length).toBe(2);
+  });
+
+  it("query().delete() with boolean WHERE works", async () => {
+    const count = await Users.query().where("isActive", "=", false).delete();
+    expect(count).toBe(1);
+    const all = await Users.getAll();
+    expect(all.length).toBe(1);
+    expect(all[0].name).toBe("BoolTrue");
+  });
+});
+
+// ── 27. Truncate ────────────────────────────────────────────────────────
 
 describe("Truncate", () => {
   beforeEach(async () => {

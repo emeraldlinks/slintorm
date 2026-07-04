@@ -783,6 +783,38 @@ async function main() {
   await RandomKeys.query().where("id" as any, "LIKE", "bulk-up-%").delete();
 
   // ──────────────────────────────────────────────────────────────────────────
+  // 37. BOOLEAN ROUND-TRIP (SQLite stores 0/1, ORM returns true/false)
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("37. Boolean serialization");
+
+  await Teams.insert({
+    title: "BoolTest",
+    open: true,
+    tested: false,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  const boolTeam = await Teams.get({ title: "BoolTest" } as any);
+  info(`get() — open=${boolTeam?.open} (${typeof boolTeam?.open}), tested=${boolTeam?.tested} (${typeof boolTeam?.tested})`);
+  if (typeof boolTeam?.open !== "boolean" || typeof boolTeam?.tested !== "boolean") {
+    throw new Error(`Expected boolean types, got open=${typeof boolTeam?.open}, tested=${typeof boolTeam?.tested}`);
+  }
+  ok("insert + get round-trips booleans correctly");
+
+  const openTeams = await Teams.query().where("open" as any, "=", true).get();
+  info(`query().where(open=true) → ${openTeams.length} row(s)`);
+  if (openTeams.length < 1) throw new Error("Expected at least 1 open team");
+  ok("query().where() with boolean works");
+
+  const firstTeam = await Teams.query().first({ tested: false } as any);
+  info(`first(tested=false) → ${firstTeam?.title}`);
+  if (!firstTeam) throw new Error("Expected first team");
+  ok("query().first() with boolean works");
+
+  // Cleanup boolean test data
+  await Teams.query().where("title" as any, "=", "BoolTest").delete();
+
+  // ──────────────────────────────────────────────────────────────────────────
   // CLEANUP
   // ──────────────────────────────────────────────────────────────────────────
   try { await (Posts as any).delete({ id: newPost?.id! }); } catch {}
