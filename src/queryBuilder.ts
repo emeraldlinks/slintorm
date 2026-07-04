@@ -617,7 +617,7 @@ export class QueryBuilder<T extends Record<string, any>> {
       parts.push(`${connector}${quoteRef(qualify(w.column))} ${w.op} ${ph}`);
     }
 
-    return { sql: parts.join(""), params };
+    return { sql: parts.join(""), params: params.map(p => typeof p === "boolean" ? Number(p) : p) };
   }
 
   // ── getPaginated ──────────────────────────────────────────────────────────────
@@ -790,7 +790,7 @@ export class QueryBuilder<T extends Record<string, any>> {
     if (!cols.length) return 0;
     const setClause = cols.map((c, i) => `${dialect.quoteIdentifier(c)} = ${dialect.formatPlaceholder(i)}`).join(", ");
     const { sql: whereSql, params } = this._buildWhereSql(cols.length);
-    const setValues = cols.map((c) => (data as any)[c]);
+    const setValues = cols.map((c) => { const v = (data as any)[c]; return typeof v === "boolean" ? Number(v) : v; });
     const sql = `UPDATE ${dialect.quoteIdentifier(this.table)} SET ${setClause}${whereSql ? " WHERE " + whereSql : ""}`;
     const res = await this.exec(sql, [...setValues, ...params]);
     return res.changes ?? 0;
