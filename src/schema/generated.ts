@@ -1,7 +1,7 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: 8625db84d72e0d98
-// Source Hash: 4ac36544f9f04cd2
+// Schema Hash: 1fffe11c6c866840
+// Source Hash: 1e0bd712418d5880
 
 export interface User {
   id?: number;
@@ -74,6 +74,14 @@ export interface Comment {
   body: string;
   commentableType: string;
   commentableId: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface RandomKey {
+  id?: string;
+  uid?: string;
+  pin?: number;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -472,6 +480,7 @@ export type ModelMap = {
   Team: Team;
   AggTest: AggTest;
   Comment: Comment;
+  RandomKey: RandomKey;
   Track: Track;
   Cohort: Cohort;
   Application: Application;
@@ -946,6 +955,51 @@ export const schema = {
     },
     "relations": [],
     "table": "comments"
+  },
+  "RandomKey": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@primaryKey": true,
+          "@random": "string:16"
+        }
+      },
+      "uid": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@unique": true,
+          "@random": "string(24)"
+        }
+      },
+      "pin": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {
+          "@random": "number:4"
+        }
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      }
+    },
+    "relations": [],
+    "table": "random_keys"
   },
   "Track": {
     "primaryKey": "id",

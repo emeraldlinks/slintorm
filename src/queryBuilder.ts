@@ -755,6 +755,47 @@ export class QueryBuilder<T extends Record<string, any>> {
     return rows[0] || null;
   }
 
+  // ── delete ───────────────────────────────────────────────────────────────────
+  /**
+   * Bulk delete using the current WHERE clauses.
+   * @example await Users.query().where("status","=","inactive").delete()
+   */
+  async delete(): Promise<number> {
+    const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
+    if (isMongo) {
+      const mongoCmd = { collection: this.table, action: "delete", filter: this.buildMongoFilter() };
+      const res = await this.exec(JSON.stringify(mongoCmd), []);
+      return res.changes ?? 0;
+    }
+    const dialect = Dialects[this.orm?.dialect || "sqlite"];
+    const { sql: whereSql, params } = this._buildWhereSql(0);
+    const sql = `DELETE FROM ${dialect.quoteIdentifier(this.table)}${whereSql ? " WHERE " + whereSql : ""}`;
+    const res = await this.exec(sql, params);
+    return res.changes ?? 0;
+  }
+
+  /**
+   * Bulk update using the current WHERE clauses.
+   * @example await Users.query().where("status","=","inactive").update({ status: "active" })
+   */
+  async update(data: Partial<T>): Promise<number> {
+    const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
+    if (isMongo) {
+      const mongoCmd = { collection: this.table, action: "update", filter: this.buildMongoFilter(), data };
+      const res = await this.exec(JSON.stringify(mongoCmd), []);
+      return res.changes ?? 0;
+    }
+    const dialect = Dialects[this.orm?.dialect || "sqlite"];
+    const cols = Object.keys(data as any);
+    if (!cols.length) return 0;
+    const setClause = cols.map((c, i) => `${dialect.quoteIdentifier(c)} = ${dialect.formatPlaceholder(i)}`).join(", ");
+    const { sql: whereSql, params } = this._buildWhereSql(cols.length);
+    const setValues = cols.map((c) => (data as any)[c]);
+    const sql = `UPDATE ${dialect.quoteIdentifier(this.table)} SET ${setClause}${whereSql ? " WHERE " + whereSql : ""}`;
+    const res = await this.exec(sql, [...setValues, ...params]);
+    return res.changes ?? 0;
+  }
+
   // ── Preload engine ────────────────────────────────────────────────────────────
   private spawnChildBuilder(targetTable: string, targetModelName: string): QueryBuilder<any> {
     const ChildClass = this.constructor as new (

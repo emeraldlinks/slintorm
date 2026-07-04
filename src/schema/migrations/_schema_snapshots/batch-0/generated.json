@@ -448,6 +448,51 @@
     "relations": [],
     "table": "comments"
   },
+  "RandomKey": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@primaryKey": true,
+          "@random": "string:16"
+        }
+      },
+      "uid": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@unique": true,
+          "@random": "string(24)"
+        }
+      },
+      "pin": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {
+          "@random": "number:4"
+        }
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      }
+    },
+    "relations": [],
+    "table": "random_keys"
+  },
   "Track": {
     "primaryKey": "id",
     "fields": {

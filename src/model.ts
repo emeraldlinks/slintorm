@@ -317,6 +317,10 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
         let insertedId: number | undefined;
 
+        const pkFieldName = modelSchema?.primaryKey || "id";
+        const pkFieldMeta = modelSchema.fields?.[pkFieldName]?.meta;
+        const isRandomPk = pkFieldMeta && (pkFieldMeta.random || pkFieldMeta["@random"]);
+
         if (driver === "mongodb") {
           await adapter.exec(JSON.stringify({ collection: tableName, action: "insert", data: [item] }));
         } else {
@@ -324,7 +328,6 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           const isJsonField = (col: string) => {
             const meta = modelSchema.fields[col]?.meta;
             if (meta?.json || meta?.["@json"]) return true;
-            // Fallback: if no schema defines this field but the value is a plain object, treat as JSON
             const val = itemValue(col);
             return typeof val === "object" && val !== null && !Array.isArray(val) && !(val instanceof Date);
           };
@@ -354,21 +357,26 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
           const result: any = await adapter.exec(sql, values);
 
-          if (driver === "sqlite" && result?.lastID) insertedId = result.lastID;
-          if (driver === "mysql" && result?.lastID)  insertedId = result.lastID;
-          if (driver === "postgres" && result?.rows?.[0]?.id) insertedId = result.rows[0].id;
+          if (driver === "sqlite" && result?.lastID && !isRandomPk) insertedId = result.lastID;
+          if (driver === "mysql" && result?.lastID && !isRandomPk) insertedId = result.lastID;
 
           if (driver === "postgres" && result?.rows?.[0]) {
             const row = result.rows[0];
             if (hooks?.onCreateAfter) await hooks.onCreateAfter(row);
             return row as any;
           }
+
           if (insertedId) (item as any).id = insertedId;
         }
 
         let inserted: any = null;
-        if ((item as any).id) inserted = await this.get({ id: (item as any).id } as any);
-        if (!inserted && driver === "sqlite") {
+        if (isRandomPk) {
+          const pkValue = (item as any)[pkFieldName];
+          if (pkValue) inserted = await this.get({ [pkFieldName]: pkValue } as any);
+        } else if ((item as any).id) {
+          inserted = await this.get({ id: (item as any).id } as any);
+        }
+        if (!inserted && driver === "sqlite" && !isRandomPk) {
           try {
             const lr = await adapter.exec("SELECT last_insert_rowid() as id");
             const lastId = lr.rows?.[0]?.id;
