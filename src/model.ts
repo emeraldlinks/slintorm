@@ -213,13 +213,23 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
     function generateRandomValue(annotation: string | boolean): string | number {
       if (annotation === true || annotation === "string") {
-        // 32-char hex-ish string (timestamp + random)
+        // Default: 32-char hex-ish string (timestamp + random)
         return Date.now().toString(36) + Math.random().toString(36).slice(2, 10) +
                Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
       }
-      if (typeof annotation === "string" && annotation.startsWith("number")) {
-        const parts = annotation.split(":");
-        const digits = parseInt(parts[1] || "8", 10);
+      const raw = typeof annotation === "string" ? annotation : "";
+      // Support both :number:6 and :number(6) syntax
+      const parts = raw.split(/[:()]+/).filter(Boolean);
+      if (parts[0] === "string") {
+        const len = parseInt(parts[1] || "32", 10);
+        let s = "";
+        while (s.length < len) {
+          s += Math.random().toString(36).slice(2);
+        }
+        return s.slice(0, len);
+      }
+      if (parts[0] === "number") {
+        const digits = Math.max(1, parseInt(parts[1] || "8", 10));
         const min = 10 ** (digits - 1);
         const max = 10 ** digits - 1;
         return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -623,6 +633,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           const cols = Object.keys(data);
           const filterCols = Object.keys(filter);
           const row = { ...data } as any;
+          fillRandomFields(row);
           const now = new Date().toISOString();
           if (row.createdAt === undefined) row.createdAt = now;
           if (row.updatedAt === undefined) row.updatedAt = now;
@@ -639,6 +650,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         if (driver === "mysql") {
           const cols = Object.keys(data);
           const row = { ...data } as any;
+          fillRandomFields(row);
           const now = new Date().toISOString();
           if (row.createdAt === undefined) row.createdAt = now;
           if (row.updatedAt === undefined) row.updatedAt = now;
