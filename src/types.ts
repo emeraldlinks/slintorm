@@ -37,6 +37,7 @@ interface FieldMeta {
   generatedAlways?: string;
   onUpdateNow?: boolean;
   json?: boolean;
+  random?: string | boolean;
   array?: boolean;
   length?: number;
   precision?: number;

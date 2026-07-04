@@ -207,6 +207,36 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       return value;
     }
 
+    function getRandomMeta(meta: any): string | boolean | undefined {
+      return meta?.random || meta?.["@random"];
+    }
+
+    function generateRandomValue(annotation: string | boolean): string | number {
+      if (annotation === true || annotation === "string") {
+        // 32-char hex-ish string (timestamp + random)
+        return Date.now().toString(36) + Math.random().toString(36).slice(2, 10) +
+               Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+      }
+      if (typeof annotation === "string" && annotation.startsWith("number")) {
+        const parts = annotation.split(":");
+        const digits = parseInt(parts[1] || "8", 10);
+        const min = 10 ** (digits - 1);
+        const max = 10 ** digits - 1;
+        return Math.floor(Math.random() * (max - min + 1)) + min;
+      }
+      // Fallback
+      return Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+    }
+
+    function fillRandomFields(item: Partial<T>) {
+      for (const [col, def] of Object.entries(modelSchema.fields || {})) {
+        const r = getRandomMeta((def as any)?.meta);
+        if (r && (item as any)[col] === undefined) {
+          (item as any)[col] = generateRandomValue(r);
+        }
+      }
+    }
+
     async function scalarAggregate(fn: string, column: string, filter?: Partial<T>): Promise<number> {
       if (driver === "mongodb") {
         const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "find", filter: filter ?? {} }));
@@ -248,6 +278,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
     return {
       async insert(item: T) {
         await ensure(item);
+        fillRandomFields(item);
         await emit("beforeInsert", item);
         const now = new Date().toISOString();
         if ((item as any).createdAt === undefined) (item as any).createdAt = now;
@@ -497,6 +528,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         const now = new Date().toISOString();
         const prepared = items.map((item) => {
           const row = { ...item } as any;
+          fillRandomFields(row);
           if (row.createdAt === undefined) row.createdAt = now;
           if (row.updatedAt === undefined) row.updatedAt = now;
           return row;

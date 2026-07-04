@@ -160,9 +160,12 @@ export class Migrator {
     if (this.processedTables.has(table)) return;
 
     // Heuristic: ensure `id` gets PK + auto when the generator left them out
+    // (skip auto if @random is present — app generates the value, not the DB)
     if (schema["id"] && schema["id"].meta) {
       if (!this.hasM(schema["id"].meta, "primaryKey")) schema["id"].meta.primaryKey = true;
-      if (!this.hasM(schema["id"].meta, "auto"))       schema["id"].meta.auto       = true;
+      if (!this.hasM(schema["id"].meta, "auto") && !this.hasM(schema["id"].meta, "random")) {
+        schema["id"].meta.auto = true;
+      }
     }
 
     const exists = await this.tableExists(table);
