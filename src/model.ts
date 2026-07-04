@@ -196,6 +196,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
     function serializeValue(col: string, value: any): any {
       if (value === undefined) return null;
       if (value instanceof Date) return value.toISOString();
+      if (typeof value === "boolean") return Number(value);
       const fieldMeta = modelSchema.fields?.[col]?.meta;
       if (isJsonMeta(fieldMeta) && value !== null && typeof value === "object") {
         try { return JSON.stringify(value); } catch { return null; }
@@ -338,15 +339,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
             if (typeof value === "object") return isJsonField(c);
             return true;
           });
-          const values = cols.map((c) => {
-            const value = (item as any)[c];
-            if (value === undefined) return null;
-            if (value instanceof Date) return value.toISOString();
-            if (isJsonField(c) && value !== null && typeof value === "object") {
-              try { return JSON.stringify(value); } catch { return null; }
-            }
-            return value;
-          });
+          const values = cols.map((c) => serializeValue(c, (item as any)[c]));
           const wrap = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
           const placeholders = driver === "postgres"
             ? cols.map((_, i) => `$${i + 1}`).join(", ")
