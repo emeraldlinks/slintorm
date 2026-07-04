@@ -107,6 +107,7 @@ export class QueryBuilder<T extends Record<string, any>> {
   protected modelName: string;
   protected dir: string;
   protected schema: Record<string, any> | any;
+  protected _wrapEntity?: (record: T) => T;
 
   constructor(
     table: string,
@@ -114,7 +115,7 @@ export class QueryBuilder<T extends Record<string, any>> {
     exec: ExecFn,
     modelName: string,
     schema: Record<string, any>,
-    orm?: { dialect?: string }
+    orm?: { dialect?: string; wrapEntity?: (record: T) => T }
   ) {
     if (!dir) throw new Error("QueryBuilder requires a valid directory for schema.");
     this.table = table;
@@ -123,6 +124,7 @@ export class QueryBuilder<T extends Record<string, any>> {
     this.dir = dir;
     this.schema = schema;
     this.modelName = modelName;
+    this._wrapEntity = orm?.wrapEntity;
     if (!schema) throw new Error("Schema not found");
     if (!this.modelName) throw new Error("modelName not found");
   }
@@ -710,6 +712,11 @@ export class QueryBuilder<T extends Record<string, any>> {
       for (const hook of this._afterFindHooks) {
         rows = await hook(rows);
       }
+    }
+
+    // Attach entity methods (update/delete/refresh/toJSON) when a wrapper is set
+    if (this._wrapEntity) {
+      rows = rows.map((r) => this._wrapEntity!(r));
     }
 
     return rows;

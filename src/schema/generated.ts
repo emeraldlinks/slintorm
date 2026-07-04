@@ -1,7 +1,7 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
 // Schema Hash: 8625db84d72e0d98
-// Source Hash: 454d8a810e3befb2
+// Source Hash: 4ac36544f9f04cd2
 
 export interface User {
   id?: number;

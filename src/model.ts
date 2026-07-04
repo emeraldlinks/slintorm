@@ -273,6 +273,22 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       if (emitGlobal) await emitGlobal({ type, model: name, table: tableName, data, filter });
     };
 
+    function filterFromRecord(record: Partial<T>): Partial<T> {
+      const pkField = modelSchema?.primaryKey || "id";
+      const pkValue = (record as any)[pkField];
+      return pkValue !== undefined ? { [pkField]: pkValue } as Partial<T> : {} as Partial<T>;
+    }
+
+    function attachEntityMethods(record: T, stableFilter: Partial<T>, ctx: any): EntityWithUpdate<T> {
+      Object.defineProperties(record, {
+        update: { value: async (data: Partial<T>) => ctx.update(stableFilter, data), enumerable: false, writable: true },
+        delete: { value: async () => ctx.delete(stableFilter), enumerable: false, writable: true },
+        refresh: { value: async () => ctx.get(stableFilter), enumerable: false, writable: true },
+        toJSON: { value: () => ({ ...record } as T), enumerable: false, writable: true },
+      });
+      return record as EntityWithUpdate<T>;
+    }
+
     function detectPolyFields() {
       const fields = modelSchema?.fields || {};
       let typeF: string | null = null;
@@ -453,55 +469,35 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         record = mapBooleans(record, modelSchema.fields);
         record = mapJson(record, modelSchema.fields);
 
-        const self = this;
-
-        // ── BUG FIX #1: entity.refresh() / entity.update() / entity.delete()
-        // We close over the PRIMARY KEY value (not the original filter) so that
-        // entity.refresh() still works after calling entity.update() with new
-        // non-PK field values.
         const pkField = modelSchema?.primaryKey || "id";
         const pkValue = (record as any)[pkField];
         const stableFilter: Partial<T> = pkValue !== undefined
           ? { [pkField]: pkValue } as Partial<T>
           : filter;
 
-        Object.defineProperties(record, {
-          update: {
-            value: async (data: Partial<T>) => self.update(stableFilter, data),
-            enumerable: false, writable: true,
-          },
-          delete: {
-            value: async () => self.delete(stableFilter),
-            enumerable: false, writable: true,
-          },
-          refresh: {
-            value: async () => self.get(stableFilter),
-            enumerable: false, writable: true,
-          },
-          toJSON: {
-            value: () => ({ ...record } as T),
-            enumerable: false, writable: true,
-          },
-        });
-
-        return record as EntityWithUpdate<T>;
+        return attachEntityMethods(record, stableFilter, this);
       },
 
       async getAll() {
         const res = driver === "mongodb"
           ? await adapter.exec(JSON.stringify({ collection: tableName, action: "find" }))
           : await adapter.exec(`SELECT * FROM ${tableName}`);
-        return res.rows.map((r: T) => mapJson(mapBooleans(r, modelSchema.fields), modelSchema.fields));
+        const rows = res.rows.map((r: T) => mapJson(mapBooleans(r, modelSchema.fields), modelSchema.fields));
+        return rows.map((r) => attachEntityMethods(r, filterFromRecord(r), this));
       },
 
       query(): ExtendedQueryBuilder<T> {
+        const self = this;
         return new ExtendedQueryBuilder<T>(
           tableName,
           adapter.dir!,
           adapter.exec.bind(adapter),
           name,
           schemas,
-          { dialect: adapter.driver }
+          {
+            dialect: adapter.driver,
+            wrapEntity: (r: T) => attachEntityMethods(r, filterFromRecord(r), self),
+          }
         );
       },
 
