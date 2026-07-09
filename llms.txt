@@ -565,6 +565,28 @@ interface User {
   commentableType: string;
   // @polymorphicId
   commentableId: number;
+  // @mask:ssn
+  ssn?: string;
+  // @mask:creditcard
+  creditCard?: string;
+  // @mask:email
+  maskedEmail?: string;
+  // @mask:phone
+  phoneNumber?: string;
+  // @mask:showFirst:4
+  showFirst4?: string;
+  // @mask:showLast:4
+  showLast4?: string;
+  // @mask:char:*
+  starMasked?: string;
+  // @mask:pattern:###-##-####
+  patternMasked?: string;
+  // @omitdb
+  internalNote?: string;
+  // @omitjson
+  auditData?: string;
+  // @omitmigrate
+  tempField?: string;
 }
 ```
 
@@ -659,11 +681,43 @@ try {
 13. **Schema generator rejects certain field names** — Keywords like `?`, `:`, `;`, `{`, `}`, `[`, `]`, `<`, `>`, quoted keys, numeric keys all produce clear warnings with the interface name
 14. **Bug #1 fixed**: entity.refresh()/update()/delete() close over PK value, not the original filter — so calling entity.update({ name: "new" }) followed by entity.refresh() works
 
+## Annotations
+
+### @mask — output masking on read
+
+| Directive | Effect |
+|---|---|
+| `@mask:ssn` | Shows last 4: `***-**-6789` |
+| `@mask:creditcard` | Shows last 4: `****-****-****-1234` |
+| `@mask:email` | Shows domain, masks local part: `j***@example.com` |
+| `@mask:phone` | Shows last 4: `***-***-7890` |
+| `@mask:showFirst:N` | Shows first N chars, masks remainder |
+| `@mask:showLast:N` | Shows last N chars, masks remainder |
+| `@mask:showBoth:F,L` | Shows first F and last L chars |
+| `@mask:char:X` | Replaces each masked char with X |
+| `@mask:pattern:...` | `#`=kept, everything else=literal: `###-##-####` → `123-**-6789` |
+
+Bypass with `.withoutMasking()` on the query builder.
+
+### @omit family — visibility control
+
+| Annotation | Storage | Read visibility |
+|---|---|---|
+| `@omitdb` | Not stored | Never returned |
+| `@omitjson` | Stored in DB | Stripped from reads (returned on `.select()`) |
+| `@omitmigrate` | Manual DDL | Full visibility |
+
+## Interfaces
+
+All model interfaces live in a single file: `src/interfaces.ts`. Import types from `./interfaces.js`:
+- `example.ts`, `test.ts`, `slintorm.test.ts` all import from `./interfaces.js`
+- The schema generator (`generator.ts`) scans `interfaces.ts` for model definitions
+
 ## Scripts
 
 ```bash
 npm run test          # Original example walkthrough (tsx src/example.ts)
-npm run test:suite    # 57-test runtime suite
+npm run test:suite    # 77-test runtime suite
 npm run test:types    # Compile-time type safety check (tsc --noEmit)
 npm run build         # tsc + tsc-alias
 npm run cli           # tsx src/bin/cli.ts

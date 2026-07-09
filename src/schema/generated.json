@@ -76,15 +76,21 @@
           "@json": true
         }
       },
-      "createdAt": {
+      "score": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
+      "category": {
         "type": "string | undefined",
         "originalType": "string",
         "optional": true,
         "meta": {}
       },
-      "updatedAt": {
-        "type": "string | undefined",
-        "originalType": "string",
+      "isActive": {
+        "type": "boolean | undefined",
+        "originalType": "boolean",
         "optional": true,
         "meta": {}
       },
@@ -175,6 +181,24 @@
         "meta": {
           "@omitmigrate": true
         }
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "deletedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
       },
       "payments": {
         "type": "Payment[] | undefined",
@@ -474,13 +498,10 @@
         "meta": {}
       },
       "updatedAt": {
-        "type": "string",
+        "type": "string | undefined",
         "originalType": "string",
         "optional": true,
-        "meta": {
-          "index": true,
-          "default": "CURRENT_TIMESTAMP"
-        }
+        "meta": {}
       }
     },
     "relations": [],
@@ -2678,9 +2699,7 @@
         "type": "string | undefined",
         "originalType": "string",
         "optional": true,
-        "meta": {
-          "e.g., \"login\", \"logout\", \"page_view\", \"form_submit\"": true
-        }
+        "meta": {}
       },
       "method": {
         "type": "string | undefined",

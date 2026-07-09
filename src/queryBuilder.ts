@@ -7,7 +7,7 @@
 //   parameterized subqueries don't silently lose their bound values.
 
 import type { ExecFn, OpComparison, AfterFindHook } from "./types.ts";
-import { parseMaskAnnotation, applyMask, isMasked } from "./mask.ts";
+import { parseMaskAnnotation, applyMask, isMasked } from "./mask.js";
 
 type RelationMeta = {
   fieldName: string;

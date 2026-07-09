@@ -1,7 +1,7 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: 84f6146221874381
-// Source Hash: 83c248a636038e05
+// Schema Hash: 62001f6be7e0af33
+// Source Hash: 40a42917462e39f8
 
 export interface User {
   id?: number;
@@ -16,8 +16,9 @@ export interface User {
   city?: string;
   country?: string;
   meta?: Record <string ,any >;
-  createdAt?: string;
-  updatedAt?: string;
+  score?: number;
+  category?: string;
+  isActive?: boolean;
   ssn?: string;
   creditCard?: string;
   maskedEmail?: string;
@@ -29,6 +30,9 @@ export interface User {
   internalNote?: string;
   auditData?: string;
   tempField?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  deletedAt?: string;
   payments?: Payment[];
   enrollments?: Enrollment[];
 }
@@ -595,15 +599,21 @@ export const schema = {
           "@json": true
         }
       },
-      "createdAt": {
+      "score": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
+      "category": {
         "type": "string | undefined",
         "originalType": "string",
         "optional": true,
         "meta": {}
       },
-      "updatedAt": {
-        "type": "string | undefined",
-        "originalType": "string",
+      "isActive": {
+        "type": "boolean | undefined",
+        "originalType": "boolean",
         "optional": true,
         "meta": {}
       },
@@ -694,6 +704,24 @@ export const schema = {
         "meta": {
           "@omitmigrate": true
         }
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "deletedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
       },
       "payments": {
         "type": "Payment[] | undefined",
@@ -993,13 +1021,10 @@ export const schema = {
         "meta": {}
       },
       "updatedAt": {
-        "type": "string",
+        "type": "string | undefined",
         "originalType": "string",
         "optional": true,
-        "meta": {
-          "index": true,
-          "default": "CURRENT_TIMESTAMP"
-        }
+        "meta": {}
       }
     },
     "relations": [],
@@ -3197,9 +3222,7 @@ export const schema = {
         "type": "string | undefined",
         "originalType": "string",
         "optional": true,
-        "meta": {
-          "e.g., \"login\", \"logout\", \"page_view\", \"form_submit\"": true
-        }
+        "meta": {}
       },
       "method": {
         "type": "string | undefined",

@@ -186,6 +186,10 @@ interface Team {
 | `@nullable` | Column allows NULL |
 | `@not null` | Column is required |
 | `@length:N` | VARCHAR length |
+| `@mask:preset` | Mask output on read: ssn, creditcard, email, phone, showFirst:N, showLast:N, showBoth:F,L, char:X, pattern:... Bypass with `.withoutMasking()` |
+| `@omitdb` | Field never stored in database — excluded from INSERT/UPDATE/reads |
+| `@omitjson` | Stored in DB but stripped from all read results unless `.select()`ed |
+| `@omitmigrate` | No column created by migrator — manual DDL; field still usable in queries |
 | `@json` | Serialize/deserialize this field as JSON automatically |
 | `@softDelete` | Marks the field (e.g. `deletedAt`) used for soft deletes; enables `withTrashed()`/`onlyTrashed()`/`restore()` |
 | `@enum:(a,b,c)` | Restrict to a set of string values |

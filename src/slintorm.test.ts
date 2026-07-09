@@ -2,6 +2,8 @@ import ORMManager from "./index.js";
 import { type ModelAPI } from "./model.js";
 import { SqlExpr } from "./types.js";
 import { proxyExec } from "./proxy.js";
+import type { User } from "./interfaces.js";
+
 
 // ── Mini test runner ────────────────────────────────────────────────────
 
@@ -175,22 +177,7 @@ async function ensureUsersExist() {
   }
 }
 
-// ── Test models ──────────────────────────────────────────────────────────
-
-interface User {
-  id?: number;
-  name: string;
-  email?: string;
-  score?: number;
-  status?: string;
-  category?: string;
-  isActive?: boolean;
-  // @json
-  meta?: Record<string, any>;
-  deletedAt?: string | null;
-  createdAt?: string;
-  updatedAt?: string;
-}
+// ── Test models ─────────────────────────────────────────────────────────
 
 interface Profile {
   id?: number;
