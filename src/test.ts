@@ -23,6 +23,26 @@ export interface User {
   updatedAt?: string;
   // @mask:ssn
   ssn?: string;
+  // @mask:creditcard
+  creditCard?: string;
+  // @mask:email
+  maskedEmail?: string;
+  // @mask:phone
+  phoneNumber?: string;
+  // @mask:showFirst:4
+  showFirst4?: string;
+  // @mask:showLast:4
+  showLast4?: string;
+  // @mask:char:*
+  starMasked?: string;
+  // @mask:pattern:###-##-####
+  patternMasked?: string;
+  // @omitdb
+  internalNote?: string;
+  // @omitjson
+  auditData?: string;
+  // @omitmigrate
+  tempField?: string;
   
   // @relation onetomany:Payment;foreignKey:userId
   payments?: Payment[];

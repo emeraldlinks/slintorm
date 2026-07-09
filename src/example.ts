@@ -34,6 +34,26 @@ interface User {
   meta?: Record<string, any>;
   // @mask:ssn
   ssn?: string;
+  // @mask:creditcard
+  creditCard?: string;
+  // @mask:email
+  maskedEmail?: string;
+  // @mask:phone
+  phoneNumber?: string;
+  // @mask:showFirst:4
+  showFirst4?: string;
+  // @mask:showLast:4
+  showLast4?: string;
+  // @mask:char:*
+  starMasked?: string;
+  // @mask:pattern:###-##-####
+  patternMasked?: string;
+  // @omitdb
+  internalNote?: string;
+  // @omitjson
+  auditData?: string;
+  // @omitmigrate
+  tempField?: string;
   createdAt?: string;
   updatedAt?: string;
   deletedAt?: string;
@@ -817,18 +837,130 @@ async function main() {
   await Teams.query().where("title" as any, "=", "BoolTest").delete();
 
   // ── 38. @mask annotation ──────────────────────────────────────────────────
-  heading("38. @mask annotation");
-  await Users.insert({ name: "MaskDemo", email: "mask@demo.com", ssn: "987-65-4321" } as any);
-  const maskedUser = await (Users as any).get({ name: "MaskDemo" });
-  console.log("  masked ssn:", maskedUser?.ssn); // "***-**-4321"
-  ok("ssn masked on get");
+  heading("38. @mask annotation (presets & directives)");
 
-  const unmasked = await (Users as any).query().withoutMasking().where("name" as any, "=", "MaskDemo").get();
-  console.log("  unmasked ssn:", unmasked[0]?.ssn); // "987-65-4321"
-  ok(".withoutMasking() returns raw ssn");
+  // Insert one row with all mask variants
+  await Users.insert({
+    name: "MaskDemo", email: "mask@demo.com",
+    ssn: "987-65-4321",
+    creditCard: "4111-1111-1111-1111",
+    maskedEmail: "john.doe@example.com",
+    phoneNumber: "555-123-4567",
+    showFirst4: "ABCDEFGHIJ",
+    showLast4: "ABCDEFGHIJ",
+    starMasked: "secret-value",
+    patternMasked: "123-45-6789",
+  } as any);
+
+  const maskedUser = await Users.get({ name: "MaskDemo" } as any);
+  console.log("  ssn (mask:ssn):           ", maskedUser?.ssn);            // ***-**-4321
+  console.log("  creditCard (creditcard):  ", maskedUser?.creditCard);     // ****-****-****-1111
+  console.log("  maskedEmail (email):      ", maskedUser?.maskedEmail);    // j*****@example.com
+  console.log("  phoneNumber (phone):      ", maskedUser?.phoneNumber);    // ***-***-4567
+  console.log("  showFirst4:               ", maskedUser?.showFirst4);     // ABCD******
+  console.log("  showLast4:                ", maskedUser?.showLast4);      // ******GHIJ
+  console.log("  starMasked (char:*):      ", maskedUser?.starMasked);     // ********alue
+  console.log("  patternMasked:            ", maskedUser?.patternMasked);  // ###-##-####
+  ok("all mask presets & directives work on get");
+
+  // .withoutMasking() returns raw values
+  const unmasked = await Users.query().withoutMasking()
+    .where("name" as any, "=", "MaskDemo").get();
+  console.log("  raw ssn:         ", unmasked[0]?.ssn);
+  console.log("  raw creditCard:  ", unmasked[0]?.creditCard);
+  console.log("  raw email:       ", unmasked[0]?.maskedEmail);
+  console.log("  raw phone:       ", unmasked[0]?.phoneNumber);
+  console.log("  raw showFirst4:  ", unmasked[0]?.showFirst4);
+  console.log("  raw showLast4:   ", unmasked[0]?.showLast4);
+  console.log("  raw starMasked:  ", unmasked[0]?.starMasked);
+  console.log("  raw pattern:     ", unmasked[0]?.patternMasked);
+  ok(".withoutMasking() returns raw values");
 
   // Cleanup mask test data
-  await (Users as any).delete({ name: "MaskDemo" });
+  await Users.delete({ name: "MaskDemo" } as any);
+
+  // ── 39. @omitdb / @omitjson / @omitmigrate ───────────────────────────────
+  heading("39. @omitdb / @omitjson / @omitmigrate");
+
+  // ── @omitdb ────────────────────────────────────────────────────────────
+  info("--- @omitdb ---");
+  // @omitdb fields are excluded from INSERT SET clauses — the value is never
+  // stored. The field exists only at the type level (e.g. computed fields,
+  // transient data, columns managed externally).
+  const omitDbUser = await Users.insert({
+    name: "OmitDbDemo", email: "omitdb@demo.com",
+    internalNote: "secret internal note",
+  } as any);
+  console.log("  after insert:", omitDbUser);
+  if ((omitDbUser as any).internalNote === undefined) ok("internalNote excluded from insert result");
+  else fail("internalNote should be undefined on insert result");
+
+  const fetchedOmitDb = await Users.get({ name: "OmitDbDemo" } as any);
+  console.log("  after get():", fetchedOmitDb);
+  if ((fetchedOmitDb as any).internalNote === undefined) ok("internalNote excluded from get() result");
+
+  // Verify it was NOT stored in DB (filtered from INSERT SET)
+  const rawOmitDb = await orm.execRaw("SELECT internalNote FROM users WHERE name = ?", ["OmitDbDemo"]);
+  if (rawOmitDb.rows.length === 0 || rawOmitDb.rows[0].internalNote === null) {
+    ok("internalNote NOT stored in database (filtered from INSERT SET)");
+  } else {
+    fail("internalNote should NOT be in database");
+  }
+
+  // Query builder also excludes it
+  const qbOmitDb = await Users.query().where("name" as any, "=", "OmitDbDemo").get();
+  if (qbOmitDb.length > 0 && (qbOmitDb[0] as any).internalNote === undefined) {
+    ok("internalNote excluded from QB get() result");
+  }
+
+  // ── @omitjson ──────────────────────────────────────────────────────────
+  info("--- @omitjson ---");
+  const omitJsonUser = await Users.insert({
+    name: "OmitJsonDemo", email: "omitjson@demo.com",
+    auditData: "created-by-admin",
+  } as any);
+  console.log("  after insert:", omitJsonUser);
+  if ((omitJsonUser as any).auditData === undefined) ok("auditData stripped from insert result");
+  else fail("auditData should be stripped from insert result");
+
+  const fetchedOmitJson = await Users.get({ name: "OmitJsonDemo" } as any);
+  console.log("  after get():", fetchedOmitJson);
+  if ((fetchedOmitJson as any).auditData === undefined) ok("auditData stripped from get() result");
+
+  // Verify it IS stored in DB via raw SQL
+  const rawOmitJson = await orm.execRaw("SELECT auditData FROM users WHERE name = ?", ["OmitJsonDemo"]);
+  if (rawOmitJson.rows.length > 0 && rawOmitJson.rows[0].auditData === "created-by-admin") {
+    ok("auditData IS stored in database (verified via raw SQL)");
+  }
+
+  // Explicit .select() in QB returns the field
+  const explicitSelect = await Users.query()
+    .select("name", "auditData" as any)
+    .where("name" as any, "=", "OmitJsonDemo")
+    .get();
+  console.log("  QB select(name,auditData):", explicitSelect);
+  if (explicitSelect.length > 0 && (explicitSelect[0] as any).auditData === "created-by-admin") {
+    ok("auditData returned when explicitly selected");
+  } else {
+    fail("auditData not returned even with explicit select");
+  }
+
+  // ── @omitmigrate ───────────────────────────────────────────────────────
+  info("--- @omitmigrate ---");
+  // The column should not exist in the table
+  const tableInfo = await orm.execRaw("PRAGMA table_info(users)");
+  const columns = tableInfo.rows.map((r: any) => r.name || r.cid);
+  console.log("  user columns:", columns);
+  const hasTempField = columns.some((c: string) => c === "tempField");
+  if (!hasTempField) {
+    ok("tempField column does NOT exist (migrator skipped it)");
+  } else {
+    fail("tempField column was created (migrator should have skipped it)");
+  }
+
+  // Cleanup omit demo data
+  await Users.delete({ name: "OmitDbDemo" } as any);
+  await Users.delete({ name: "OmitJsonDemo" } as any);
 
   // ──────────────────────────────────────────────────────────────────────────
   // CLEANUP

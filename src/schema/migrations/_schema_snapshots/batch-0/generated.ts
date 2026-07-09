@@ -1,7 +1,7 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: 431afa20f87d5217
-// Source Hash: 4f48b68b7b6b4379
+// Schema Hash: 84f6146221874381
+// Source Hash: 52d83d6d6337cb89
 
 export interface User {
   id?: number;
@@ -19,6 +19,16 @@ export interface User {
   createdAt?: string;
   updatedAt?: string;
   ssn?: string;
+  creditCard?: string;
+  maskedEmail?: string;
+  phoneNumber?: string;
+  showFirst4?: string;
+  showLast4?: string;
+  starMasked?: string;
+  patternMasked?: string;
+  internalNote?: string;
+  auditData?: string;
+  tempField?: string;
   payments?: Payment[];
   enrollments?: Enrollment[];
 }
@@ -603,6 +613,86 @@ export const schema = {
         "optional": true,
         "meta": {
           "@mask": "ssn"
+        }
+      },
+      "creditCard": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@mask": "creditcard"
+        }
+      },
+      "maskedEmail": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@mask": "email"
+        }
+      },
+      "phoneNumber": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@mask": "phone"
+        }
+      },
+      "showFirst4": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@mask": "showFirst:4"
+        }
+      },
+      "showLast4": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@mask": "showLast:4"
+        }
+      },
+      "starMasked": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@mask": "char:*"
+        }
+      },
+      "patternMasked": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@mask": "pattern:###-##-####"
+        }
+      },
+      "internalNote": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@omitdb": true
+        }
+      },
+      "auditData": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@omitjson": true
+        }
+      },
+      "tempField": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@omitmigrate": true
         }
       },
       "payments": {

@@ -211,6 +211,13 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       }
       return row;
     }
+    function stripOmitDb<T extends Record<string, any>>(row: T, schemaFields: Record<string, any>): T {
+      if (!schemaFields) return row;
+      for (const k of Object.keys(schemaFields)) {
+        if (isOmitDb(schemaFields[k])) delete (row as any)[k];
+      }
+      return row;
+    }
     function stripOmitJson<T extends Record<string, any>>(row: T, schemaFields: Record<string, any>): T {
       if (!schemaFields) return row;
       for (const k of Object.keys(schemaFields)) {
@@ -496,6 +503,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         if (!record) return null;
         record = mapBooleans(record, modelSchema.fields);
         record = mapJson(record, modelSchema.fields);
+        record = stripOmitDb(record, modelSchema.fields);
         record = stripOmitJson(record, modelSchema.fields);
         record = applyMasks(record, modelSchema.fields);
 
@@ -514,7 +522,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           : await adapter.exec(`SELECT * FROM ${tableName}`);
         const rows = res.rows.map((r: T) => {
           const row = mapJson(mapBooleans(r, modelSchema.fields), modelSchema.fields);
-          return applyMasks(stripOmitJson(row, modelSchema.fields), modelSchema.fields);
+          return applyMasks(stripOmitJson(stripOmitDb(row, modelSchema.fields), modelSchema.fields), modelSchema.fields);
         });
         return rows.map((r) => attachEntityMethods(r, filterFromRecord(r), this));
       },
