@@ -21,6 +21,8 @@ export interface User {
   meta?: Record<string, any>;
   createdAt?: string;
   updatedAt?: string;
+  // @mask:ssn
+  ssn?: string;
   
   // @relation onetomany:Payment;foreignKey:userId
   payments?: Payment[];

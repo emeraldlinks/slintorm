@@ -46,6 +46,10 @@ interface FieldMeta {
   check?: string;
   jsonDefault?: any;
   uniqueComposite?: string[][];
+  omitdb?: boolean;
+  omitjson?: boolean;
+  omitmigrate?: boolean;
+  mask?: string | boolean;
 }
 
 // ── SqlExpr: embed raw SQL expressions in field values ──────────────────

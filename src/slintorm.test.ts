@@ -211,6 +211,9 @@ const schema = {
       status: { type: "TEXT", optional: true, meta: {} },
       category: { type: "TEXT", optional: true, meta: {} },
       isActive: { type: "boolean", optional: true, meta: {} },
+      ssn: { type: "TEXT", optional: true, meta: { mask: "ssn" } },
+      internalNote: { type: "TEXT", optional: true, meta: { omitdb: true } },
+      auditData: { type: "TEXT", optional: true, meta: { omitjson: true } },
       meta: { type: "TEXT", optional: true, meta: { json: true } },
       deletedAt: { type: "TEXT", optional: true, meta: { softDelete: true } },
       createdAt: { type: "TEXT", optional: true, meta: {} },
@@ -1008,6 +1011,148 @@ describe("Truncate", () => {
     await Users.truncate();
     const all = await Users.getAll();
     expect(all.length).toBe(0);
+  });
+});
+
+// ── 28. @omitdb / @omitjson annotation ─────────────────────────────────────
+
+describe("@omitdb / @omitjson", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+  });
+
+  it("@omitdb excludes field from insert and read results", async () => {
+    const user = await Users.insert({
+      name: "OmitTest",
+      email: "omit@t.com",
+      internalNote: "secret-stuff",
+      createdAt: new Date().toISOString(),
+    } as any);
+    expect(user).notToBeNull();
+    expect((user as any).internalNote).toBe(undefined);
+
+    const fetched = await Users.get({ id: user!.id } as any);
+    expect(fetched).notToBeNull();
+    expect((fetched as any).internalNote).toBe(undefined);
+  });
+
+  it("@omitdb excluded from query builder results", async () => {
+    await Users.insert({
+      name: "QB-Omit",
+      email: "qb-omit@t.com",
+      internalNote: "qb-secret",
+      createdAt: new Date().toISOString(),
+    } as any);
+
+    const rows = await Users.query().where("name", "=", "QB-Omit").get();
+    expect(rows.length).toBe(1);
+    expect((rows[0] as any).internalNote).toBe(undefined);
+  });
+
+  it("@omitdb excluded from update SET", async () => {
+    const user = await Users.insert({
+      name: "UpdOmit",
+      email: "updomit@t.com",
+      internalNote: "ignore-me",
+      createdAt: new Date().toISOString(),
+    } as any);
+    expect(user).notToBeNull();
+
+    await Users.update({ id: user!.id } as any, {
+      name: "UpdOmitRenamed",
+      internalNote: "should-not-reach-db",
+    } as any);
+
+    const fetched = await Users.get({ id: user!.id } as any);
+    expect(fetched).notToBeNull();
+    expect((fetched as any).name).toBe("UpdOmitRenamed");
+    expect((fetched as any).internalNote).toBe(undefined);
+  });
+
+  it("@omitjson stores in DB but strips from read results", async () => {
+    const user = await Users.insert({
+      name: "OmitJsonTest",
+      email: "oj@t.com",
+      auditData: JSON.stringify({ createdBy: 42, ip: "127.0.0.1" }),
+      createdAt: new Date().toISOString(),
+    } as any);
+    expect(user).notToBeNull();
+    expect((user as any).auditData).toBe(undefined);
+
+    const fetched = await Users.get({ id: user!.id } as any);
+    expect(fetched).notToBeNull();
+    expect((fetched as any).auditData).toBe(undefined);
+
+    const rows = await Users.query().where("name", "=", "OmitJsonTest").get();
+    expect(rows.length).toBe(1);
+    expect((rows[0] as any).auditData).toBe(undefined);
+  });
+
+  it("@omitjson returns value when explicitly selected", async () => {
+    const user = await Users.insert({
+      name: "OmitJsonSelect",
+      email: "ojs@t.com",
+      auditData: JSON.stringify({ createdBy: 99 }),
+      createdAt: new Date().toISOString(),
+    } as any);
+    expect(user).notToBeNull();
+
+    const rows = await Users.query()
+      .select("id", "auditData")
+      .where("name", "=", "OmitJsonSelect")
+      .get();
+    expect(rows.length).toBe(1);
+    expect((rows[0] as any).auditData).notToBeNull();
+    const parsed = typeof rows[0].auditData === "string"
+      ? JSON.parse(rows[0].auditData)
+      : rows[0].auditData;
+    expect(parsed.createdBy).toBe(99);
+  });
+});
+
+// ── 29. @mask annotation ──────────────────────────────────────────────────
+
+describe("@mask", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+    await Users.insert({
+      name: "MaskTest",
+      email: "mask@t.com",
+      ssn: "123-45-6789",
+      createdAt: new Date().toISOString(),
+    } as any);
+  });
+
+  it("masks field with @mask:ssn preset", async () => {
+    const user = await Users.get({ name: "MaskTest" } as any);
+    expect(user).notToBeNull();
+    expect((user as any).ssn).toBe("***-**-6789");
+  });
+
+  it("masks field in query builder results", async () => {
+    const rows = await Users.query().where("name", "=", "MaskTest").get();
+    expect(rows.length).toBe(1);
+    expect(rows[0].ssn).toBe("***-**-6789");
+  });
+
+  it(".withoutMasking() returns raw value", async () => {
+    const rows = await Users.query()
+      .withoutMasking()
+      .where("name", "=", "MaskTest")
+      .get();
+    expect(rows.length).toBe(1);
+    expect(rows[0].ssn).toBe("123-45-6789");
+  });
+
+  it("does not mask null ssn", async () => {
+    await Users.insert({
+      name: "NoSsn",
+      email: "nos@t.com",
+      createdAt: new Date().toISOString(),
+    } as any);
+    const user = await Users.get({ name: "NoSsn" } as any);
+    expect(user).notToBeNull();
+    expect((user as any).ssn).toBe(null);
   });
 });
 

@@ -32,6 +32,8 @@ interface User {
   email?: string;
   // @json
   meta?: Record<string, any>;
+  // @mask:ssn
+  ssn?: string;
   createdAt?: string;
   updatedAt?: string;
   deletedAt?: string;
@@ -813,6 +815,20 @@ async function main() {
 
   // Cleanup boolean test data
   await Teams.query().where("title" as any, "=", "BoolTest").delete();
+
+  // ── 38. @mask annotation ──────────────────────────────────────────────────
+  heading("38. @mask annotation");
+  await Users.insert({ name: "MaskDemo", email: "mask@demo.com", ssn: "987-65-4321" } as any);
+  const maskedUser = await (Users as any).get({ name: "MaskDemo" });
+  console.log("  masked ssn:", maskedUser?.ssn); // "***-**-4321"
+  ok("ssn masked on get");
+
+  const unmasked = await (Users as any).query().withoutMasking().where("name" as any, "=", "MaskDemo").get();
+  console.log("  unmasked ssn:", unmasked[0]?.ssn); // "987-65-4321"
+  ok(".withoutMasking() returns raw ssn");
+
+  // Cleanup mask test data
+  await (Users as any).delete({ name: "MaskDemo" });
 
   // ──────────────────────────────────────────────────────────────────────────
   // CLEANUP

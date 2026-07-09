@@ -88,6 +88,14 @@
         "optional": true,
         "meta": {}
       },
+      "ssn": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@mask": "ssn"
+        }
+      },
       "payments": {
         "type": "Payment[] | undefined",
         "originalType": "Payment[]",

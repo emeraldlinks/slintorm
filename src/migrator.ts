@@ -183,6 +183,11 @@ export class Migrator {
       // Skip relation placeholder fields (user?: User, posts?: Post[], etc.)
       if (this.isRelationPlaceholder(info)) continue;
 
+      // Skip fields annotated with @omitdb or @omitmigrate — they exist only
+      // at the type level, not as database columns (computed / runtime-only
+      // fields, or columns managed externally).
+      if (this.hasM(info.meta, "omitdb") || this.hasM(info.meta, "omitmigrate")) continue;
+
       // Skip generator artefacts where the field's type is a bare number
       // (e.g. a stray `length` field produced by `@length:255`)
       const typeStr = String(info.type).trim();

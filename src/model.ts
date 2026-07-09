@@ -1,6 +1,7 @@
 import { DBAdapter } from "./dbAdapter.js";
 import { Migrator } from "./migrator.js";
 import { QueryBuilder, mapBooleans } from "./queryBuilder.js";
+import { parseMaskAnnotation, applyMask } from "./mask.ts";
 import type { RelationDef, EntityWithUpdate } from "./types.js";
 import { AdvancedQueryBuilder } from "./extra_clauses.js";
 import { ExtendedQueryBuilder, Validator, ValidationError } from "./extensions.js";
@@ -192,6 +193,31 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
     }
 
     function isJsonMeta(meta: any) { return !!(meta?.json || meta?.["@json"]); }
+    function isOmitDb(fieldDef: any): boolean {
+      const meta = fieldDef?.meta;
+      return !!(meta?.omitdb || meta?.["@omitdb"] || meta?.omit || meta?.["@omit"]);
+    }
+    function isOmitJson(fieldDef: any): boolean {
+      const meta = fieldDef?.meta;
+      return !!(meta?.omitjson || meta?.["@omitjson"]);
+    }
+    function applyMasks<T extends Record<string, any>>(row: T, schemaFields: Record<string, any>): T {
+      if (!schemaFields) return row;
+      for (const k of Object.keys(schemaFields)) {
+        const fMeta = schemaFields[k]?.meta;
+        if (fMeta?.mask || fMeta?.["@mask"]) {
+          (row as any)[k] = applyMask((row as any)[k], parseMaskAnnotation(fMeta.mask ?? fMeta["@mask"]));
+        }
+      }
+      return row;
+    }
+    function stripOmitJson<T extends Record<string, any>>(row: T, schemaFields: Record<string, any>): T {
+      if (!schemaFields) return row;
+      for (const k of Object.keys(schemaFields)) {
+        if (isOmitJson(schemaFields[k])) delete (row as any)[k];
+      }
+      return row;
+    }
 
     function serializeValue(col: string, value: any): any {
       if (value === undefined) return null;
@@ -333,6 +359,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
             return typeof val === "object" && val !== null && !Array.isArray(val) && !(val instanceof Date);
           };
           const cols = Object.keys(item).filter((c) => {
+            if (isOmitDb(modelSchema.fields?.[c])) return false;
             const value = itemValue(c);
             if (value === undefined) return false;
             if (value === null || value instanceof Date) return true;
@@ -401,7 +428,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           await adapter.exec(JSON.stringify({ collection: tableName, action: "update", filter: where, data }));
         } else {
           const isPg = driver === "postgres";
-          let setCols = Object.keys(data);
+          let setCols = Object.keys(data).filter((c) => !isOmitDb(modelSchema.fields?.[c]));
           const whereCols = Object.keys(where);
 
           // Optimistic locking: auto-increment version field
@@ -469,6 +496,8 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         if (!record) return null;
         record = mapBooleans(record, modelSchema.fields);
         record = mapJson(record, modelSchema.fields);
+        record = stripOmitJson(record, modelSchema.fields);
+        record = applyMasks(record, modelSchema.fields);
 
         const pkField = modelSchema?.primaryKey || "id";
         const pkValue = (record as any)[pkField];
@@ -483,7 +512,10 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         const res = driver === "mongodb"
           ? await adapter.exec(JSON.stringify({ collection: tableName, action: "find" }))
           : await adapter.exec(`SELECT * FROM ${tableName}`);
-        const rows = res.rows.map((r: T) => mapJson(mapBooleans(r, modelSchema.fields), modelSchema.fields));
+        const rows = res.rows.map((r: T) => {
+          const row = mapJson(mapBooleans(r, modelSchema.fields), modelSchema.fields);
+          return applyMasks(stripOmitJson(row, modelSchema.fields), modelSchema.fields);
+        });
         return rows.map((r) => attachEntityMethods(r, filterFromRecord(r), this));
       },
 
@@ -546,7 +578,10 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           return prepared.length;
         }
 
-        const cols = Object.keys(prepared[0]).filter((c) => prepared[0][c] !== undefined);
+        const cols = Object.keys(prepared[0]).filter((c) => {
+          if (isOmitDb(modelSchema.fields?.[c])) return false;
+          return prepared[0][c] !== undefined;
+        });
         const w = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
 
         if (driver === "sqlite") {
@@ -590,7 +625,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
         const isPg = driver === "postgres";
         const w = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
-        const setCols = Object.keys(data);
+        const setCols = Object.keys(data).filter((c) => !isOmitDb(modelSchema.fields?.[c]));
         const whereCols = Object.keys(filter);
         const setClause = setCols.map((c, i) => `${w(c)} = ${isPg ? `$${i + 1}` : "?"}`).join(", ");
         const whereClause = whereCols.map((c, i) => `${w(c)} = ${isPg ? `$${setCols.length + i + 1}` : "?"}`).join(" AND ");
@@ -627,7 +662,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           return "inserted" as const;
         }
         if (driver === "postgres") {
-          const cols = Object.keys(data);
+          const cols = Object.keys(data).filter((c) => !isOmitDb(modelSchema.fields?.[c]));
           const filterCols = Object.keys(filter);
           const row = { ...data } as any;
           fillRandomFields(row);
@@ -645,7 +680,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           return "inserted" as const;
         }
         if (driver === "mysql") {
-          const cols = Object.keys(data);
+          const cols = Object.keys(data).filter((c) => !isOmitDb(modelSchema.fields?.[c]));
           const row = { ...data } as any;
           fillRandomFields(row);
           const now = new Date().toISOString();

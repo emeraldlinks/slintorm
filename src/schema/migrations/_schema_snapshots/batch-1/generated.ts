@@ -1,7 +1,7 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: 1fffe11c6c866840
-// Source Hash: d2571f068d2ab670
+// Schema Hash: 431afa20f87d5217
+// Source Hash: 4f48b68b7b6b4379
 
 export interface User {
   id?: number;
@@ -18,6 +18,7 @@ export interface User {
   meta?: Record <string ,any >;
   createdAt?: string;
   updatedAt?: string;
+  ssn?: string;
   payments?: Payment[];
   enrollments?: Enrollment[];
 }
@@ -595,6 +596,14 @@ export const schema = {
         "originalType": "string",
         "optional": true,
         "meta": {}
+      },
+      "ssn": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@mask": "ssn"
+        }
       },
       "payments": {
         "type": "Payment[] | undefined",

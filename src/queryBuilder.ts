@@ -7,6 +7,7 @@
 //   parameterized subqueries don't silently lose their bound values.
 
 import type { ExecFn, OpComparison, AfterFindHook } from "./types.ts";
+import { parseMaskAnnotation, applyMask, isMasked } from "./mask.ts";
 
 type RelationMeta = {
   fieldName: string;
@@ -100,6 +101,7 @@ export class QueryBuilder<T extends Record<string, any>> {
   protected _afterFindHooks: AfterFindHook<T>[] = [];
   protected _hints: string[] = [];
   protected _dryRun = false;
+  protected _withoutMasking = false;
 
   protected table: string;
   protected exec: ExecFn;
@@ -653,6 +655,11 @@ export class QueryBuilder<T extends Record<string, any>> {
     return this;
   }
 
+  withoutMasking() {
+    this._withoutMasking = true;
+    return this;
+  }
+
   afterFind(hook: AfterFindHook<T>) {
     this._afterFindHooks.push(hook);
     return this;
@@ -697,7 +704,34 @@ export class QueryBuilder<T extends Record<string, any>> {
     }
 
     const schemaFields = this.schema![this.modelName]?.fields ?? {};
-    rows = rows.map((r) => this.mapJson(mapBooleans(r, schemaFields), schemaFields)) as T[];
+    const explicitSelects = this._selects ? new Set(this._selects as string[]) : null;
+    rows = rows.map((r) => {
+      let row: Record<string, any> = this.mapJson(mapBooleans(r, schemaFields), schemaFields);
+      // Strip @omitdb and @omitjson fields from result
+      // (omtdb: belt-and-suspenders — column doesn't exist anyway)
+      // (omitjson: stripped unless explicitly selected)
+      for (const [k, v] of Object.entries(schemaFields)) {
+        const meta = (v as any)?.meta;
+        if (meta?.omitdb || meta?.["@omitdb"] || meta?.omit || meta?.["@omit"]) {
+          delete row[k];
+        } else if (meta?.omitjson || meta?.["@omitjson"]) {
+          if (!explicitSelects || !explicitSelects.has(k)) {
+            delete row[k];
+          }
+        }
+      }
+      // Apply @mask unless .withoutMasking() was called
+      if (!this._withoutMasking) {
+        for (const [k, v] of Object.entries(schemaFields)) {
+          const meta = (v as any)?.meta;
+          const maskVal = meta?.mask ?? meta?.["@mask"];
+          if (maskVal !== undefined && maskVal !== false && k in row) {
+            row[k] = applyMask(row[k], parseMaskAnnotation(maskVal));
+          }
+        }
+      }
+      return row as T;
+    }) as T[];
 
     if (this._exclude.length) {
       rows = rows.map((r) => {
