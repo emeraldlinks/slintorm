@@ -1,0 +1,29 @@
+
+  ┃  [schema-generator] ⚠️b  UNSUPPORTED FIELD NAME at line 9:3
+  ┃    Interface: ChatMessage
+  ┃    Token type : "comment-line"  (value: "// @json")
+  ┃    This token cannot be used as a field name by the
+  ┃  schema generator.
+  ┃    The field has been skipped and will NOT appear in the
+  ┃  generated schema.
+  ┃
+  ┃    What you can do:
+  ┃      • Rename the field to a plain camelCase identifier.
+  ┃        e.g.  default: string   →   defaultValue: string
+  ┃              "quoted-key": number  →   quotedKey: number
+  ┃              123: boolean          →   field123: boolean
+  ┃      • Index-signature fields ( [key: string]: any ) are
+  ┃  not supported;
+  ┃        remove them or move them to a separate non-model
+  ┃  interface.
+  ┃
+  ┃
+  ┃  [schema-generator] ⚠️e  UNSUPPORTED FIELD NAME at line 20:
+  ┃  3
+  ┃    Interface: Founder
+  ┃    Token type : "comment-line"  (value: "// @enum:(
+  ┃  identity,founder,investor,community)")
+  ┃    This token cannot be used as a field name by the
+  ┃  schema generator.
+
+  ┃same as all the annotations, they all error

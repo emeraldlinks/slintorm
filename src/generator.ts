@@ -409,27 +409,33 @@ class InterfaceTokenParser {
       return "";
     }
 
-    const commentToken = this.tokens[j];
-    j++;
-
-    while (j < this.tokens.length && (this.tokens[j].type === 'whitespace' || this.tokens[j].type === 'newline')) {
+    // Collect all stacked comment lines
+    const comments: Token[] = [];
+    while (j < this.tokens.length && this.tokens[j].type === 'comment-line') {
+      comments.push(this.tokens[j]);
       j++;
+      while (j < this.tokens.length && (this.tokens[j].type === 'whitespace' || this.tokens[j].type === 'newline')) {
+        j++;
+      }
     }
 
     if (j >= this.tokens.length) return "";
     const next = this.tokens[j];
     if (!isFieldNameToken(next) && next.type !== 'brace-close') return "";
 
-    while (this.i <= this.tokens.length) {
-      const t = this.tokens[this.i];
-      if (t === commentToken) {
+    // Consume all collected comments
+    for (const ct of comments) {
+      while (this.i <= this.tokens.length) {
+        const t = this.tokens[this.i];
+        if (t === ct) {
+          this.next();
+          break;
+        }
         this.next();
-        break;
       }
-      this.next();
     }
 
-    return commentToken.value.replace(/^\/\/\s?/, "").trim();
+    return comments.map(c => c.value.replace(/^\/\/\s?/, "").trim()).filter(Boolean).join(";");
   }
 
   private parseInterfaceDeclaration(): boolean {
@@ -487,6 +493,11 @@ class InterfaceTokenParser {
       // Detect tokens that are impossible to handle as field names and warn loudly.
       const peeked = this.peek();
       if (peeked && BREAKING_KEYWORDS.has(peeked.type)) {
+        // Comment tokens that didn't precede a field are harmless — skip silently.
+        if (peeked.type === 'comment-line' || peeked.type === 'comment-block') {
+          this.next();
+          continue;
+        }
         console.error(
           `\n[schema-generator] ⚠️  UNSUPPORTED FIELD NAME at line ${peeked.line}:${peeked.column}\n` +
           `  Interface: ${name}\n` +
@@ -563,10 +574,28 @@ class InterfaceTokenParser {
 
     this.consume('semicolon');
 
+    // Check for inline comment after the semicolon (before next newline)
+    let mergedComment = comment;
+    let look = this.i;
+    while (look < this.tokens.length && this.tokens[look].type === 'whitespace') look++;
+    if (look < this.tokens.length && (this.tokens[look].type === 'comment-line' || this.tokens[look].type === 'comment-block')) {
+      const inlineToken = this.tokens[look];
+      if (/@/.test(inlineToken.value)) {
+        if (!mergedComment) {
+          console.warn(`  [generator] Inline annotation on "${propName}" (line ${inlineToken.line}) — prefer annotations on the line above the field for consistency`);
+        }
+        const inline = inlineToken.value.replace(/^\/\/\s?/, "").replace(/^\/\*+\s?/, "").replace(/\s?\*+\/$/, "").trim();
+        mergedComment = mergedComment ? `${mergedComment};${inline}` : inline;
+        // Consume the inline comment so the main loop doesn't see it
+        while (this.i < this.tokens.length && this.tokens[this.i].type !== 'comment-line' && this.tokens[this.i].type !== 'comment-block') this.next();
+        if (this.i < this.tokens.length) this.next();
+      }
+    }
+
     const type = this.reconstructType(typeTokens, isOptional);
     const originalType = this.reconstructType(typeTokens, false);
 
-    const meta = this.parseMetadata(comment);
+    const meta = this.parseMetadata(mergedComment);
 
     if (/@(?:relation|relationship)/i.test(comment)) {
       const relationData = this.parseRelationDirective(comment, propName, interfaceName);
