@@ -606,6 +606,23 @@ npx slintorm generate
 import schema from "./src/schema/generated.json" assert { type: "json" };
 ```
 
+### Environment variables in config
+
+The CLI auto-loads any `.env*` files found in the project root (`.env`, `.env.local`, `.env.production`, etc.) before evaluating the config file. Files are loaded with `.env` lowest priority and `.env.local` highest. Shell-exported environment variables always take precedence.
+
+```bash
+# .env.local
+DATABASE_URL=postgresql://user:pass@host:5432/mydb
+```
+
+```typescript
+// slintorm.config.js — process.env is populated before this runs
+export default {
+  driver: "postgres",
+  databaseUrl: process.env.DATABASE_URL,
+};
+```
+
 ## Edge / Serverless Drivers
 
 ### HTTP exec drivers (direct provider API)

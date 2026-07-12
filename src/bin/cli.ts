@@ -93,6 +93,48 @@ const CREATE_MIGRATIONS_TABLE: Record<string, string> = {
              )`,
 };
 
+// ─── .env loader ──────────────────────────────────────────────────────────────
+// Loads any .env* files from the project root so that process.env.* values are
+// available when the config module is imported. Shell-exported vars always win.
+// Priority (lowest → highest): sorted alphabetically so .env.local beats .env.
+
+function loadEnvFiles(): void {
+  const cwd = process.cwd();
+  const shellKeys = new Set(Object.keys(process.env));
+
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(cwd).filter(f => f.startsWith(".env"));
+  } catch {
+    return; // cwd not readable
+  }
+  // Sort: .env first, .env.xxx middle, .env.local last (so local overrides env)
+  const score = (f: string) => {
+    if (f === ".env") return 0;
+    if (f === ".env.local") return 2;
+    return 1;
+  };
+  entries.sort((a, b) => score(a) - score(b));
+
+  for (const file of entries) {
+    const text = fs.readFileSync(path.join(cwd, file), "utf8");
+    for (const rawLine of text.split("\n")) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("#")) continue;
+      const stripped = line.startsWith("export ") ? line.slice(7).trimStart() : line;
+      const eqIdx = stripped.indexOf("=");
+      if (eqIdx === -1) continue;
+      const key = stripped.slice(0, eqIdx).trim();
+      if (!key) continue;
+      let val = stripped.slice(eqIdx + 1).trim();
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      if (!shellKeys.has(key)) process.env[key] = val;
+    }
+  }
+}
+
 // ─── Config loader ───────────────────────────────────────────────────────────
 
 interface ORMConfig {
@@ -104,6 +146,7 @@ interface ORMConfig {
 }
 
 async function loadConfig(): Promise<ORMConfig> {
+  loadEnvFiles();
   const cwd = process.cwd();
 
   const primaryCandidates = [
