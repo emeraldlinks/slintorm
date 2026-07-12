@@ -714,7 +714,7 @@ export class QueryBuilder<T extends Record<string, any>> {
         const meta = (v as any)?.meta;
         if (meta?.omitdb || meta?.["@omitdb"] || meta?.omit || meta?.["@omit"]) {
           delete row[k];
-        } else if (meta?.omitjson || meta?.["@omitjson"]) {
+        } else if (meta?.omitjson || meta?.["@omitjson"] || meta?.secret || meta?.["@secret"]) {
           if (!explicitSelects || !explicitSelects.has(k)) {
             delete row[k];
           }

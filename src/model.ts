@@ -4,6 +4,7 @@ import { QueryBuilder, mapBooleans } from "./queryBuilder.js";
 import { parseMaskAnnotation, applyMask } from "./mask.js";
 import { getRandomMeta, generateRandomFromAnnotation } from "./annotations.js";
 import { validateItem } from "./validations.js";
+import { applySecurityOnWrite, applySecurityOnRead } from "./security.js";
 import type { RelationDef, EntityWithUpdate } from "./types.js";
 import { AdvancedQueryBuilder } from "./extra_clauses.js";
 import { ExtendedQueryBuilder, Validator, ValidationError } from "./extensions.js";
@@ -107,7 +108,7 @@ async function loadSchema(adapterDir: string) {
 
 let cachedSchema: Record<string, any> | null = null;
 
-export async function createModelFactory(adapter: DBAdapter, schema?: Record<string, any>, emitGlobal?: (event: any) => Promise<void>, resolveNamedDb?: (name: string) => { adapter?: DBAdapter; exec: any; driver?: string } | undefined) {
+export async function createModelFactory(adapter: DBAdapter, schema?: Record<string, any>, emitGlobal?: (event: any) => Promise<void>, resolveNamedDb?: (name: string) => { adapter?: DBAdapter; exec: any; driver?: string } | undefined, encryptionKey?: string) {
   const schemas =
     schema ??
     adapter.schema ??
@@ -201,7 +202,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
     }
     function isOmitJson(fieldDef: any): boolean {
       const meta = fieldDef?.meta;
-      return !!(meta?.omitjson || meta?.["@omitjson"]);
+      return !!(meta?.omitjson || meta?.["@omitjson"] || meta?.secret || meta?.["@secret"]);
     }
     function applyMasks<T extends Record<string, any>>(row: T, schemaFields: Record<string, any>): T {
       if (!schemaFields) return row;
@@ -321,6 +322,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         }
 
         validateItem(item, modelSchema?.fields);
+        item = await applySecurityOnWrite(item, modelSchema?.fields, encryptionKey);
 
         let insertedId: number | undefined;
 
@@ -405,6 +407,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         }
 
         validateItem(data, modelSchema?.fields);
+        data = await applySecurityOnWrite(data, modelSchema?.fields, encryptionKey) as Partial<T>;
 
         if (driver === "mongodb") {
           await adapter.exec(JSON.stringify({ collection: tableName, action: "update", filter: where, data }));
@@ -481,6 +484,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         record = stripOmitDb(record, modelSchema.fields);
         record = stripOmitJson(record, modelSchema.fields);
         record = applyMasks(record, modelSchema.fields);
+        record = await applySecurityOnRead(record as any, modelSchema.fields, encryptionKey) as T;
 
         const pkField = modelSchema?.primaryKey || "id";
         const pkValue = (record as any)[pkField];
@@ -495,10 +499,11 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         const res = driver === "mongodb"
           ? await adapter.exec(JSON.stringify({ collection: tableName, action: "find" }))
           : await adapter.exec(`SELECT * FROM ${tableName}`);
-        const rows = res.rows.map((r: T) => {
+        const rows = await Promise.all(res.rows.map(async (r: T) => {
           const row = mapJson(mapBooleans(r, modelSchema.fields), modelSchema.fields);
-          return applyMasks(stripOmitJson(stripOmitDb(row, modelSchema.fields), modelSchema.fields), modelSchema.fields);
-        });
+          const cleaned = applyMasks(stripOmitJson(stripOmitDb(row, modelSchema.fields), modelSchema.fields), modelSchema.fields);
+          return await applySecurityOnRead(cleaned, modelSchema.fields, encryptionKey) as T;
+        }));
         return rows.map((r) => attachEntityMethods(r, filterFromRecord(r), this));
       },
 
@@ -558,6 +563,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
         for (const row of prepared) {
           validateItem(row, modelSchema?.fields);
+          await applySecurityOnWrite(row, modelSchema?.fields, encryptionKey);
         }
 
         if (driver === "mongodb") {
@@ -606,6 +612,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         if ((data as any).updatedAt === undefined) (data as any).updatedAt = now;
 
         validateItem(data, modelSchema?.fields);
+        data = await applySecurityOnWrite(data, modelSchema?.fields, encryptionKey) as Partial<T>;
 
         if (driver === "mongodb") {
           const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "update", filter, data }));

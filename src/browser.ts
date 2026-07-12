@@ -30,6 +30,13 @@ export {
 export { type ModelAPI } from "./model.js";
 export { ORMError } from "./db-error.js";
 export { ValidationError } from "./extensions.js";
+export {
+  hashPassword,
+  verifyPassword,
+  encryptField,
+  decryptField,
+  deriveEncryptionKey,
+} from "./security.js";
 
 // Edge-compatible drivers — fetch-based, no TCP required
 export { http } from "./http-driver.js";

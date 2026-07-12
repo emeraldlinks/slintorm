@@ -35,6 +35,11 @@ export type ORMManagerConfig<TModelMap extends AnyModelMap = AnyModelMap> = {
    *  Use in edge/serverless to tunnel SQL through HTTP via proxyExec()
    *  from "slintorm/proxy" or any other fetch-based ExecFn. */
   exec?: ExecFn;
+  /** Master encryption key for @encrypt annotations (AES-256-GCM).
+   *  Must be at least 32 characters long. Pass the same key to all
+   *  instances that share a database — key rotation requires re-encrypting
+   *  all @encrypt fields. */
+  encryptionKey?: string;
 };
 
 export type ModelHooks<T extends object> = {
@@ -95,7 +100,7 @@ export async function createORM<TModelMap extends AnyModelMap = AnyModelMap>(
 
   const defineModel = await createModelFactory(adapter, cfg.schema, async (event: any) => {
     // No global hooks available in functional API
-  });
+  }, undefined, cfg.encryptionKey);
   return { adapter, defineModel };
 }
 
@@ -226,7 +231,8 @@ export default class ORMManager<
       this.adapter,
       this.cfg.schema,
       async (event: any) => self._emitGlobal(event),
-      (name: string) => self._databases.get(name)
+      (name: string) => self._databases.get(name),
+      this.cfg.encryptionKey
     );
     const model = defineModel<T>(table, modelName, hooks);
 
