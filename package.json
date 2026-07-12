@@ -30,7 +30,7 @@
     "url": "git+https://github.com/emeraldlinks/slintorm.git"
   },
   "bin": {
-    "slintorm": "./dist/src/bin/cli.js"
+    "slintorm": "dist/src/bin/cli.js"
   },
   "scripts": {
     "build": "tsc && tsc-alias",
