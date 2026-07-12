@@ -20,7 +20,7 @@ build/
 tmp_*.ts
 verify-all.ts
 src/schema/
-ROADMAP.md
+
 
 # OS
 .DS_Store
