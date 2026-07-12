@@ -18,11 +18,19 @@ export interface Post {
 
 export interface User {
   id?: number;
+  // @minLength:2;@maxLength:100
   name: string;
+  // @email
   email?: string;
   password?: string;
+  // @phone
   phone?: string;
+  // @url
+  url?: string;
+  // @uuid
+  uuid?: string;
   role?:string
+  // @pattern:^[A-Za-z0-9_-]+$
   status?: string
   avatarUrl?: string;
   bio?: string;
@@ -30,6 +38,7 @@ export interface User {
   country?: string;
   // @json
   meta?: Record<string, any>;
+  // @min:0;@max:100
   score?: number;
   category?: string;
   isActive?: boolean;

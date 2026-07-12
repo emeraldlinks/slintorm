@@ -3,6 +3,7 @@ import { Migrator } from "./migrator.js";
 import { QueryBuilder, mapBooleans } from "./queryBuilder.js";
 import { parseMaskAnnotation, applyMask } from "./mask.js";
 import { getRandomMeta, generateRandomFromAnnotation } from "./annotations.js";
+import { validateItem } from "./validations.js";
 import type { RelationDef, EntityWithUpdate } from "./types.js";
 import { AdvancedQueryBuilder } from "./extra_clauses.js";
 import { ExtendedQueryBuilder, Validator, ValidationError } from "./extensions.js";
@@ -319,6 +320,8 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           if (modified !== undefined) item = modified as T;
         }
 
+        validateItem(item, modelSchema?.fields);
+
         let insertedId: number | undefined;
 
         const pkFieldName = modelSchema?.primaryKey || "id";
@@ -400,6 +403,8 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           const modified = await hooks.onUpdateBefore(before, data);
           if (modified !== undefined) data = modified as Partial<T>;
         }
+
+        validateItem(data, modelSchema?.fields);
 
         if (driver === "mongodb") {
           await adapter.exec(JSON.stringify({ collection: tableName, action: "update", filter: where, data }));
@@ -551,6 +556,10 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           return row;
         });
 
+        for (const row of prepared) {
+          validateItem(row, modelSchema?.fields);
+        }
+
         if (driver === "mongodb") {
           await adapter.exec(JSON.stringify({ collection: tableName, action: "insert", data: prepared }));
           return prepared.length;
@@ -595,6 +604,8 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         if (!Object.keys(data).length) throw new Error("updateMany data cannot be empty");
         const now = new Date().toISOString();
         if ((data as any).updatedAt === undefined) (data as any).updatedAt = now;
+
+        validateItem(data, modelSchema?.fields);
 
         if (driver === "mongodb") {
           const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "update", filter, data }));
@@ -647,6 +658,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           const now = new Date().toISOString();
           if (row.createdAt === undefined) row.createdAt = now;
           if (row.updatedAt === undefined) row.updatedAt = now;
+          validateItem(row, modelSchema?.fields);
           const values = cols.map((c) => serializeValue(c, row[c]));
           const conflictCols = filterCols.map((c) => `"${c}"`).join(", ");
           const updateSet = cols.filter((c) => !filterCols.includes(c)).map((c) => `"${c}" = EXCLUDED."${c}"`).join(", ");
@@ -664,6 +676,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           const now = new Date().toISOString();
           if (row.createdAt === undefined) row.createdAt = now;
           if (row.updatedAt === undefined) row.updatedAt = now;
+          validateItem(row, modelSchema?.fields);
           const values = cols.map((c) => serializeValue(c, row[c]));
           const updateSet = cols.map((c) => `\`${c}\` = VALUES(\`${c}\`)`).join(", ");
           await adapter.exec(

@@ -1,29 +1,66 @@
+Skip to content
+slintorm
+Repository navigation
+Code
+Issues
+Pull requests
+Publish
+ci: add GitHub Actions workflow for auto-publish on push to main #1
+Annotations
+1 error and 1 warning
+publish
+failed 8 minutes ago in 18s
+1s
+0s
+4s
+7s
+3s
+1s
+Run npm run test:suite
 
-  ┃  [schema-generator] ⚠️b  UNSUPPORTED FIELD NAME at line 9:3
-  ┃    Interface: ChatMessage
-  ┃    Token type : "comment-line"  (value: "// @json")
-  ┃    This token cannot be used as a field name by the
-  ┃  schema generator.
-  ┃    The field has been skipped and will NOT appear in the
-  ┃  generated schema.
-  ┃
-  ┃    What you can do:
-  ┃      • Rename the field to a plain camelCase identifier.
-  ┃        e.g.  default: string   →   defaultValue: string
-  ┃              "quoted-key": number  →   quotedKey: number
-  ┃              123: boolean          →   field123: boolean
-  ┃      • Index-signature fields ( [key: string]: any ) are
-  ┃  not supported;
-  ┃        remove them or move them to a separate non-model
-  ┃  interface.
-  ┃
-  ┃
-  ┃  [schema-generator] ⚠️e  UNSUPPORTED FIELD NAME at line 20:
-  ┃  3
-  ┃    Interface: Founder
-  ┃    Token type : "comment-line"  (value: "// @enum:(
-  ┃  identity,founder,investor,community)")
-  ┃    This token cannot be used as a field name by the
-  ┃  schema generator.
+> slintorm@1.6.0 test:suite
+> node --import tsx/esm src/slintorm.test.ts
 
-  ┃same as all the annotations, they all error
+
+  CRUD
+    ✗ inserts a record
+      No SQLite driver found.
+
+  Your Node version: v20.20.2
+
+Install one of:
+  npm install better-sqlite3    (recommended)
+  npm install sqlite3 sqlite     (async wrapper)
+  # Or upgrade to Node 22.5+ to use the built-in driver.
+
+Original error: No such built-in module: node:sqlite
+    ✗ gets a record by filter
+      No SQLite driver found.
+
+  Your Node version: v20.20.2
+
+Install one of:
+  npm install better-sqlite3    (recommended)
+  npm install sqlite3 sqlite     (async wrapper)
+  # Or upgrade to Node 22.5+ to use the built-in driver.
+
+Original error: No such built-in module: node:sqlite
+    ✗ gets all records
+      No SQLite driver found.
+
+  Your Node version: v20.20.2
+
+Install one of:
+  npm install better-sqlite3    (recommended)
+  npm install sqlite3 sqlite     (async wrapper)
+  # Or upgrade to Node 22.5+ to use the built-in driver.
+
+Original error: No such built-in module: node:sqlite
+    ✗ updates a record
+      No SQLite driver found.
+
+  Your Node version: v20.20.2
+0s
+0s
+0s
+0s

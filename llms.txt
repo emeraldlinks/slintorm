@@ -765,6 +765,45 @@ Append `pfx=...` and/or `sfx=...` to any variant:
 - Supports both `@random:` and `@random(...)` comment syntax
 - Works with any field type (use `INTEGER` for numeric fields with `@random:number`)
 
+### @email / @url / @uuid / @phone — format validators
+
+Validates field value at insert/update time. Throws `ValidationError` on mismatch.
+
+| Annotation | Validates |
+|---|---|
+| `@email` | RFC 5322-ish email (`user@example.com`) |
+| `@url` | URL with http/https protocol |
+| `@uuid` | UUID v4 format (`550e8400-...`) |
+| `@phone` | Phone number (7–15 digits after stripping non-digits) |
+
+### @min / @max — numeric range
+
+| Annotation | Behavior |
+|---|---|
+| `@min:N` | Value must be ≥ N (coerces strings to Number) |
+| `@max:N` | Value must be ≤ N |
+
+### @minLength / @maxLength — string length
+
+| Annotation | Behavior |
+|---|---|
+| `@minLength:N` | String must be ≥ N characters |
+| `@maxLength:N` | String must be ≤ N characters |
+
+### @pattern — custom regex
+
+| Annotation | Behavior |
+|---|---|
+| `@pattern:regex` | String must match the given regex (`new RegExp(pattern)`) |
+
+**Behavior notes:**
+- Validation runs automatically on `insert()`, `insertMany()`, `update()`, `updateMany()`, and `upsert()`
+- Throws `ValidationError` with an `errors` map (`Record<string, string>`) — field → message
+- Optional fields with no value (`undefined`/`null`) skip validation
+- `SqlExpr.raw()` values skip validation (raw SQL bypasses validation)
+- Multiple validators on one field: all run, first failure wins
+- `@pattern` with an invalid regex: silently skipped (logged as warning)
+
 ## Interfaces
 
 All model interfaces live in a single file: `src/interfaces.ts`. Import types from `./interfaces.js`:
@@ -775,7 +814,7 @@ All model interfaces live in a single file: `src/interfaces.ts`. Import types fr
 
 ```bash
 npm run test          # Original example walkthrough (tsx src/example.ts)
-npm run test:suite    # 77-test runtime suite
+npm run test:suite    # 105-test runtime suite
 npm run test:types    # Compile-time type safety check (tsc --noEmit)
 npm run build         # tsc + tsc-alias
 npm run cli           # tsx src/bin/cli.ts

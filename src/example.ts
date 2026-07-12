@@ -882,6 +882,60 @@ async function main() {
   await Users.delete({ name: "OmitJsonDemo" } as any);
 
   // ──────────────────────────────────────────────────────────────────────────
+  // 42. VALIDATION ANNOTATIONS — @email, @url, @uuid, @min, @max, @pattern
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("42. Validation annotations");
+
+  // Valid insert — all annotations pass
+  const validUser = await Users.insert({
+    name: "ValidPerson",
+    email: "person@example.com",
+    score: 85,
+    url: "https://example.com",
+    uuid: "550e8400-e29b-41d4-a716-446655440000",
+    phone: "+1-555-123-4567",
+    status: "ACTIVE",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  info(`valid insert: id=${validUser?.id} email=${validUser?.email}`);
+  ok("@email passes valid email");
+
+  // Invalid insert — throws ValidationError
+  try {
+    await Users.insert({
+      name: "X",              // fails @minLength:2
+      email: "bad",           // fails @email
+      score: 999,             // fails @max:100
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    fail("should have thrown ValidationError");
+  } catch (err: unknown) {
+    const ve = err as { message: string; errors?: Record<string, string> };
+    info(`ValidationError: ${ve.message}`);
+    if (ve.errors) info(`  fields: ${Object.keys(ve.errors).join(", ")}`);
+    ok("@email/@minLength/@max reject invalid data");
+  }
+
+  // Valid update with validation
+  const updUser = await Users.get({ name: "ValidPerson" });
+  if (updUser) {
+    const updated = await Users.update({ id: updUser.id! }, { score: 42 });
+    info(`valid update: score=42`);
+    ok("update passes validation");
+  }
+
+  // Invalid update — throws
+  try {
+    await Users.update({ name: "ValidPerson" }, { email: "not-an-email" });
+    fail("should have thrown on bad email update");
+  } catch (err: unknown) {
+    info(`update blocked: ${(err as Error).message}`);
+    ok("@email blocks invalid update");
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
   // CLEANUP
   // ──────────────────────────────────────────────────────────────────────────
   try { await (Posts as any).delete({ id: newPost?.id! }); } catch {}

@@ -192,12 +192,15 @@ const schema = {
     table: "users",
     fields: {
       id: { type: "INTEGER", meta: { primaryKey: true, auto: true } },
-      name: { type: "TEXT", optional: false, meta: {} },
-      email: { type: "TEXT", optional: true, meta: {} },
-      score: { type: "INTEGER", optional: true, meta: {} },
-      status: { type: "TEXT", optional: true, meta: {} },
+      name: { type: "TEXT", optional: false, meta: { minLength: "2", maxLength: "100" } },
+      email: { type: "TEXT", optional: true, meta: { email: true } },
+      score: { type: "INTEGER", optional: true, meta: { min: "0", max: "100" } },
+      status: { type: "TEXT", optional: true, meta: { pattern: "^[A-Za-z0-9_-]+$" } },
       category: { type: "TEXT", optional: true, meta: {} },
       isActive: { type: "boolean", optional: true, meta: {} },
+      url: { type: "TEXT", optional: true, meta: { url: true } },
+      uuid: { type: "TEXT", optional: true, meta: { uuid: true } },
+      phone: { type: "TEXT", optional: true, meta: { phone: true } },
       ssn: { type: "TEXT", optional: true, meta: { mask: "ssn" } },
       internalNote: { type: "TEXT", optional: true, meta: { omitdb: true } },
       auditData: { type: "TEXT", optional: true, meta: { omitjson: true } },
@@ -1290,6 +1293,121 @@ describe("@random annotation", () => {
       values.add(r.hexStr);
     }
     expect(values.size).toBe(10);
+  });
+});
+
+// ── 28. Validation annotations ──────────────────────────────────────────
+
+describe("Validation annotations", () => {
+  beforeEach(async () => {
+    await Users.truncate();
+  });
+
+  it("passes valid email", async () => {
+    const u = await Users.insert({ name: "Valid", email: "user@example.com", createdAt: new Date().toISOString() });
+    expect(u).notToBeNull();
+  });
+
+  it("rejects invalid email", async () => {
+    let err: unknown;
+    try {
+      await Users.insert({ name: "BadEmail", email: "not-an-email", createdAt: new Date().toISOString() });
+    } catch (e) { err = e; }
+    expect(err).notToBeNull();
+  });
+
+  it("passes valid url", async () => {
+    const u = await Users.insert({ name: "ValidUrl", email: "u@t.com", url: "https://example.com", createdAt: new Date().toISOString() });
+    expect(u).notToBeNull();
+  });
+
+  it("rejects invalid url", async () => {
+    let err: unknown;
+    try {
+      await Users.insert({ name: "BadUrl", email: "u@t.com", url: "ftp://bad", createdAt: new Date().toISOString() });
+    } catch (e) { err = e; }
+    expect(err).notToBeNull();
+  });
+
+  it("passes valid uuid", async () => {
+    const u = await Users.insert({ name: "ValidUuid", email: "u@t.com", uuid: "550e8400-e29b-41d4-a716-446655440000", createdAt: new Date().toISOString() });
+    expect(u).notToBeNull();
+  });
+
+  it("rejects invalid uuid", async () => {
+    let err: unknown;
+    try {
+      await Users.insert({ name: "BadUuid", email: "u@t.com", uuid: "not-a-uuid", createdAt: new Date().toISOString() });
+    } catch (e) { err = e; }
+    expect(err).notToBeNull();
+  });
+
+  it("passes valid phone", async () => {
+    const u = await Users.insert({ name: "ValidPhone", email: "u@t.com", phone: "+1-555-123-4567", createdAt: new Date().toISOString() });
+    expect(u).notToBeNull();
+  });
+
+  it("passes min/max score", async () => {
+    const u = await Users.insert({ name: "ScoreOk", email: "u@t.com", score: 50, createdAt: new Date().toISOString() });
+    expect(u).notToBeNull();
+  });
+
+  it("rejects score below min", async () => {
+    let err: unknown;
+    try {
+      await Users.insert({ name: "ScoreLow", email: "u@t.com", score: -1, createdAt: new Date().toISOString() });
+    } catch (e) { err = e; }
+    expect(err).notToBeNull();
+  });
+
+  it("rejects score above max", async () => {
+    let err: unknown;
+    try {
+      await Users.insert({ name: "ScoreHigh", email: "u@t.com", score: 999, createdAt: new Date().toISOString() });
+    } catch (e) { err = e; }
+    expect(err).notToBeNull();
+  });
+
+  it("rejects name too short (minLength)", async () => {
+    let err: unknown;
+    try {
+      await Users.insert({ name: "X", email: "u@t.com", createdAt: new Date().toISOString() });
+    } catch (e) { err = e; }
+    expect(err).notToBeNull();
+  });
+
+  it("rejects name too long (maxLength)", async () => {
+    let err: unknown;
+    try {
+      await Users.insert({ name: "A".repeat(101), email: "u@t.com", createdAt: new Date().toISOString() });
+    } catch (e) { err = e; }
+    expect(err).notToBeNull();
+  });
+
+  it("passes valid pattern", async () => {
+    const u = await Users.insert({ name: "Pat1", email: "u@t.com", status: "ABC123", createdAt: new Date().toISOString() });
+    expect(u).notToBeNull();
+  });
+
+  it("rejects invalid update data", async () => {
+    const u = await Users.insert({ name: "UpdateTest", email: "u@t.com", createdAt: new Date().toISOString() });
+    let err: unknown;
+    try {
+      if (u) await Users.update({ id: u.id! }, { email: "bad" });
+    } catch (e) { err = e; }
+    expect(err).notToBeNull();
+  });
+
+  it("skips validation for SqlExpr.raw values", async () => {
+    const nameExpr = SqlExpr.raw("'RawName'") as unknown as string;
+    const createdAtExpr = SqlExpr.raw("datetime('now')") as unknown as string;
+    const u = await Users.insert({ name: nameExpr, email: "raw@t.com", createdAt: createdAtExpr });
+    expect(u).notToBeNull();
+  });
+
+  it("optional fields with no value skip validation", async () => {
+    const u = await Users.insert({ name: "NoOpt", email: "u@t.com", createdAt: new Date().toISOString() });
+    expect(u).notToBeNull();
   });
 });
 

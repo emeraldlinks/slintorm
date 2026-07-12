@@ -1,7 +1,7 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: 15121211480f62b4
-// Source Hash: bf04b9852c5a3790
+// Schema Hash: 272460b34c1a18ff
+// Source Hash: 27e9c00f422984e2
 
 export interface User {
   id?: number;
@@ -9,6 +9,8 @@ export interface User {
   email?: string;
   password?: string;
   phone?: string;
+  url?: string;
+  uuid?: string;
   role?: string;
   status?: string;
   avatarUrl?: string;
@@ -545,13 +547,18 @@ export const schema = {
         "type": "string",
         "originalType": "string",
         "optional": false,
-        "meta": {}
+        "meta": {
+          "@minLength": "2",
+          "@maxLength": "100"
+        }
       },
       "email": {
         "type": "string | undefined",
         "originalType": "string",
         "optional": true,
-        "meta": {}
+        "meta": {
+          "@email": true
+        }
       },
       "password": {
         "type": "string | undefined",
@@ -563,7 +570,25 @@ export const schema = {
         "type": "string | undefined",
         "originalType": "string",
         "optional": true,
-        "meta": {}
+        "meta": {
+          "@phone": true
+        }
+      },
+      "url": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@url": true
+        }
+      },
+      "uuid": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@uuid": true
+        }
       },
       "role": {
         "type": "string | undefined",
@@ -575,7 +600,9 @@ export const schema = {
         "type": "string | undefined",
         "originalType": "string",
         "optional": true,
-        "meta": {}
+        "meta": {
+          "@pattern": "^[A-Za-z0-9_-]+$"
+        }
       },
       "avatarUrl": {
         "type": "string | undefined",
@@ -613,7 +640,10 @@ export const schema = {
         "type": "number | undefined",
         "originalType": "number",
         "optional": true,
-        "meta": {}
+        "meta": {
+          "@min": "0",
+          "@max": "100"
+        }
       },
       "category": {
         "type": "string | undefined",

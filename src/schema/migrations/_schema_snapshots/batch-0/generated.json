@@ -12,13 +12,18 @@
         "type": "string",
         "originalType": "string",
         "optional": false,
-        "meta": {}
+        "meta": {
+          "@minLength": "2",
+          "@maxLength": "100"
+        }
       },
       "email": {
         "type": "string | undefined",
         "originalType": "string",
         "optional": true,
-        "meta": {}
+        "meta": {
+          "@email": true
+        }
       },
       "password": {
         "type": "string | undefined",
@@ -30,7 +35,25 @@
         "type": "string | undefined",
         "originalType": "string",
         "optional": true,
-        "meta": {}
+        "meta": {
+          "@phone": true
+        }
+      },
+      "url": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@url": true
+        }
+      },
+      "uuid": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@uuid": true
+        }
       },
       "role": {
         "type": "string | undefined",
@@ -42,7 +65,9 @@
         "type": "string | undefined",
         "originalType": "string",
         "optional": true,
-        "meta": {}
+        "meta": {
+          "@pattern": "^[A-Za-z0-9_-]+$"
+        }
       },
       "avatarUrl": {
         "type": "string | undefined",
@@ -80,7 +105,10 @@
         "type": "number | undefined",
         "originalType": "number",
         "optional": true,
-        "meta": {}
+        "meta": {
+          "@min": "0",
+          "@max": "100"
+        }
       },
       "category": {
         "type": "string | undefined",
