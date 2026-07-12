@@ -724,6 +724,47 @@ Bypass with `.withoutMasking()` on the query builder.
 | `@omitjson` | Stored in DB | Stripped from reads (returned on `.select()`) |
 | `@omitmigrate` | Manual DDL | Full visibility |
 
+### @random — auto-generated field values on insert
+
+Generates a random value when no explicit value is provided on insert.
+
+**Basic syntax:**
+
+| Annotation | Output | Example |
+|---|---|---|
+| `@random:string:N` | Alphanumeric string of length N | `@random:string:16` → `"aX3kP9mQ2vR7tW1z"` |
+| `@random:string(N)` | Same, paren syntax | `@random:string(24)` → `"bY4lQ0nR3wS8uX2y"` |
+| `@random:number:N` | Numeric string of N digits | `@random:number:4` → `"8392"` |
+
+**Variants (paren syntax):**
+
+| Annotation | Output | Example |
+|---|---|---|
+| `@random:alnum(N)` | Mixed-case alphanumeric of length N | `@random:alnum(10)` |
+| `@random:alnum(N, upper)` | Uppercase alphanumeric | `@random:alnum(10, upper)` → `"A7K2X9P4M1"` |
+| `@random:alnum(N, lower)` | Lowercase alphanumeric | `@random:alnum(10, lower)` → `"a7k2x9p4m1"` |
+| `@random:lower(N)` | Only lowercase letters | `@random:lower(12)` → `"qwertyasdfgh"` |
+| `@random:upper(N)` | Only uppercase letters | `@random:upper(8)` → `"ABCDEFGH"` |
+| `@random:hex(N)` | Lowercase hex (0-9, a-f) | `@random:hex(16)` → `"a1b2c3d4e5f67890"` |
+| `@random:hex(N, upper)` | Uppercase hex | `@random:hex(16, upper)` → `"A1B2C3D4E5F67890"` |
+| `@random:custom(CHARS, N)` | N chars from a custom charset | `@random:custom(ABCDEF123456, 6)` → `"AB12CD"` |
+
+**Prefix/suffix:**
+
+Append `pfx=...` and/or `sfx=...` to any variant:
+
+| Annotation | Output |
+|---|---|
+| `@random:alnum(8, pfx=TKN_)` | `"TKN_"` + 8 alphanumeric chars |
+| `@random:number(6, pfx=INV-)` | `"INV-"` + 6 digits |
+| `@random:alnum(12, upper, pfx=USR_, sfx=_END)` | `"USR_"` + 12 uppercase alnum + `"_END"` |
+
+**Behavior:**
+- Value is generated lazily at `insert()` time
+- If an explicit value is provided for the field, the annotation is skipped
+- Supports both `@random:` and `@random(...)` comment syntax
+- Works with any field type (use `INTEGER` for numeric fields with `@random:number`)
+
 ## Interfaces
 
 All model interfaces live in a single file: `src/interfaces.ts`. Import types from `./interfaces.js`:

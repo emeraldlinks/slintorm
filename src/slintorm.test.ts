@@ -219,16 +219,57 @@ const schema = {
     },
     relations: [],
   },
+  RandomKey: {
+    table: "random_keys",
+    fields: {
+      id: { type: "TEXT", meta: { primaryKey: true, random: "string:16" } },
+      uid: { type: "TEXT", optional: true, meta: { unique: true, random: "string(24)" } },
+      pin: { type: "INTEGER", optional: true, meta: { random: "number:4" } },
+      upperAlnum: { type: "TEXT", optional: true, meta: { random: "alnum(10, upper)" } },
+      lowerAlnum: { type: "TEXT", optional: true, meta: { random: "alnum(10, lower)" } },
+      lowerLetters: { type: "TEXT", optional: true, meta: { random: "lower(12)" } },
+      upperLetters: { type: "TEXT", optional: true, meta: { random: "upper(8)" } },
+      hexStr: { type: "TEXT", optional: true, meta: { random: "hex(16)" } },
+      upperHex: { type: "TEXT", optional: true, meta: { random: "hex(16, upper)" } },
+      tokenPrefixed: { type: "TEXT", optional: true, meta: { random: "alnum(8, pfx=TKN_)" } },
+      invoiceNum: { type: "TEXT", optional: true, meta: { random: "number(6, pfx=INV-)" } },
+      userCode: { type: "TEXT", optional: true, meta: { random: "alnum(12, upper, pfx=USR_, sfx=_END)" } },
+      customPin: { type: "TEXT", optional: true, meta: { random: "custom(ABCDEF123456, 6)" } },
+      createdAt: { type: "TEXT", optional: true, meta: {} },
+      updatedAt: { type: "TEXT", optional: true, meta: {} },
+    },
+    relations: [],
+  },
 };
+
+interface RandomKey {
+  id?: string;
+  uid?: string;
+  pin?: number;
+  upperAlnum?: string;
+  lowerAlnum?: string;
+  lowerLetters?: string;
+  upperLetters?: string;
+  hexStr?: string;
+  upperHex?: string;
+  tokenPrefixed?: string;
+  invoiceNum?: string;
+  userCode?: string;
+  customPin?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
 
 let orm: ORMManager;
 let Users: ModelAPI<User>;
 let Profiles: ModelAPI<Profile>;
+let RandomKeys: ModelAPI<RandomKey>;
 
 beforeAll(async () => {
   orm = new ORMManager({ driver: "sqlite", databaseUrl: ":memory:", schema, logs: false });
   Users = await orm.defineModel<User>("users", "User");
   Profiles = await orm.defineModel<Profile>("profiles", "Profile");
+  RandomKeys = await orm.defineModel<RandomKey>("random_keys", "RandomKey");
 });
 
 // ── 1. Basic CRUD ───────────────────────────────────────────────────────
@@ -1140,6 +1181,115 @@ describe("@mask", () => {
     const user = await Users.get({ name: "NoSsn" } as any);
     expect(user).notToBeNull();
     expect((user as any).ssn).toBe(null);
+  });
+});
+
+// ── 27. @random annotation variants ─────────────────────────────────────
+
+describe("@random annotation", () => {
+  beforeEach(async () => {
+    try { await RandomKeys.truncate(); } catch {
+      // Table may not exist yet — first insert will create it
+    }
+  });
+
+  it("generates alnum(10, upper) — all uppercase + digits", async () => {
+    const r = await RandomKeys.insert({ createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) as any;
+    expect(r.upperAlnum).notToBeNull();
+    expect(r.upperAlnum.length).toBe(10);
+    expect(/^[A-Z0-9]+$/.test(r.upperAlnum)).toBe(true);
+  });
+
+  it("generates alnum(10, lower) — all lowercase + digits", async () => {
+    const r = await RandomKeys.insert({ createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) as any;
+    expect(r.lowerAlnum).notToBeNull();
+    expect(r.lowerAlnum.length).toBe(10);
+    expect(/^[a-z0-9]+$/.test(r.lowerAlnum)).toBe(true);
+  });
+
+  it("generates lower(12) — only lowercase letters", async () => {
+    const r = await RandomKeys.insert({ createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) as any;
+    expect(r.lowerLetters).notToBeNull();
+    expect(r.lowerLetters.length).toBe(12);
+    expect(/^[a-z]+$/.test(r.lowerLetters)).toBe(true);
+  });
+
+  it("generates upper(8) — only uppercase letters", async () => {
+    const r = await RandomKeys.insert({ createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) as any;
+    expect(r.upperLetters).notToBeNull();
+    expect(r.upperLetters.length).toBe(8);
+    expect(/^[A-Z]+$/.test(r.upperLetters)).toBe(true);
+  });
+
+  it("generates hex(16) — lowercase hex", async () => {
+    const r = await RandomKeys.insert({ createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) as any;
+    expect(r.hexStr).notToBeNull();
+    expect(r.hexStr.length).toBe(16);
+    expect(/^[0-9a-f]+$/.test(r.hexStr)).toBe(true);
+  });
+
+  it("generates hex(16, upper) — uppercase hex", async () => {
+    const r = await RandomKeys.insert({ createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) as any;
+    expect(r.upperHex).notToBeNull();
+    expect(r.upperHex.length).toBe(16);
+    expect(/^[0-9A-F]+$/.test(r.upperHex)).toBe(true);
+  });
+
+  it("generates alnum(8, pfx=TKN_) with prefix", async () => {
+    const r = await RandomKeys.insert({ createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) as any;
+    expect(r.tokenPrefixed).notToBeNull();
+    expect(r.tokenPrefixed.startsWith("TKN_")).toBe(true);
+    expect(r.tokenPrefixed.length).toBe(12); // TKN_ + 8 chars
+    const body = r.tokenPrefixed.slice(4);
+    expect(/^[A-Za-z0-9]+$/.test(body)).toBe(true);
+    expect(body.length).toBe(8);
+  });
+
+  it("generates number(6, pfx=INV-) with prefix", async () => {
+    const r = await RandomKeys.insert({ createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) as any;
+    expect(r.invoiceNum).notToBeNull();
+    expect(r.invoiceNum.startsWith("INV-")).toBe(true);
+    expect(r.invoiceNum.length).toBe(10); // INV- + 6 digits
+    const numPart = r.invoiceNum.slice(4);
+    expect(/^\d+$/.test(numPart)).toBe(true);
+    expect(numPart.length).toBe(6);
+  });
+
+  it("generates alnum(12, upper, pfx=USR_, sfx=_END) with both", async () => {
+    const r = await RandomKeys.insert({ createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) as any;
+    expect(r.userCode).notToBeNull();
+    expect(r.userCode.startsWith("USR_")).toBe(true);
+    expect(r.userCode.endsWith("_END")).toBe(true);
+    expect(r.userCode.length).toBe(20); // USR_ + 12 + _END
+    const body = r.userCode.slice(4, -4);
+    expect(/^[A-Z0-9]+$/.test(body)).toBe(true);
+    expect(body.length).toBe(12);
+  });
+
+  it("generates custom(ABCDEF123456, 6) from charset", async () => {
+    const r = await RandomKeys.insert({ createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) as any;
+    expect(r.customPin).notToBeNull();
+    expect(r.customPin.length).toBe(6);
+    expect(/^[ABCDEF123456]+$/.test(r.customPin)).toBe(true);
+  });
+
+  it("respects user-provided value (skips @random)", async () => {
+    const r = await RandomKeys.insert({
+      upperAlnum: "MY_OWN_VAL",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }) as any;
+    expect(r.upperAlnum).toBe("MY_OWN_VAL");
+  });
+
+  it("generates unique values across inserts", async () => {
+    const values = new Set<string>();
+    for (let i = 0; i < 10; i++) {
+      const r = await RandomKeys.insert({ createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) as any;
+      expect(r.hexStr).notToBeNull();
+      values.add(r.hexStr);
+    }
+    expect(values.size).toBe(10);
   });
 });
 

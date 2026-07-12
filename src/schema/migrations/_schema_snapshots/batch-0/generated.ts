@@ -1,7 +1,7 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: 62001f6be7e0af33
-// Source Hash: 40a42917462e39f8
+// Schema Hash: 15121211480f62b4
+// Source Hash: bf04b9852c5a3790
 
 export interface User {
   id?: number;
@@ -97,6 +97,16 @@ export interface RandomKey {
   id?: string;
   uid?: string;
   pin?: number;
+  upperAlnum?: string;
+  lowerAlnum?: string;
+  lowerLetters?: string;
+  upperLetters?: string;
+  hexStr?: string;
+  upperHex?: string;
+  tokenPrefixed?: string;
+  invoiceNum?: string;
+  userCode?: string;
+  customPin?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -1107,6 +1117,86 @@ export const schema = {
         "optional": true,
         "meta": {
           "@random": "number:4"
+        }
+      },
+      "upperAlnum": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@random": "alnum(10, upper)"
+        }
+      },
+      "lowerAlnum": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@random": "alnum(10, lower)"
+        }
+      },
+      "lowerLetters": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@random": "lower(12)"
+        }
+      },
+      "upperLetters": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@random": "upper(8)"
+        }
+      },
+      "hexStr": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@random": "hex(16)"
+        }
+      },
+      "upperHex": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@random": "hex(16, upper)"
+        }
+      },
+      "tokenPrefixed": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@random": "alnum(8, pfx=TKN_)"
+        }
+      },
+      "invoiceNum": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@random": "number(6, pfx=INV-)"
+        }
+      },
+      "userCode": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@random": "alnum(12, upper, pfx=USR_, sfx=_END)"
+        }
+      },
+      "customPin": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@random": "custom(ABCDEF123456, 6)"
         }
       },
       "createdAt": {

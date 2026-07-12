@@ -2,6 +2,7 @@ import { DBAdapter } from "./dbAdapter.js";
 import { Migrator } from "./migrator.js";
 import { QueryBuilder, mapBooleans } from "./queryBuilder.js";
 import { parseMaskAnnotation, applyMask } from "./mask.js";
+import { getRandomMeta, generateRandomFromAnnotation } from "./annotations.js";
 import type { RelationDef, EntityWithUpdate } from "./types.js";
 import { AdvancedQueryBuilder } from "./extra_clauses.js";
 import { ExtendedQueryBuilder, Validator, ValidationError } from "./extensions.js";
@@ -241,42 +242,11 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       return value;
     }
 
-    function getRandomMeta(meta: any): string | boolean | undefined {
-      return meta?.random || meta?.["@random"];
-    }
-
-    function generateRandomValue(annotation: string | boolean): string | number {
-      if (annotation === true || annotation === "string") {
-        // Default: 32-char hex-ish string (timestamp + random)
-        return Date.now().toString(36) + Math.random().toString(36).slice(2, 10) +
-               Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
-      }
-      const raw = typeof annotation === "string" ? annotation : "";
-      // Support both :number:6 and :number(6) syntax
-      const parts = raw.split(/[:()]+/).filter(Boolean);
-      if (parts[0] === "string") {
-        const len = parseInt(parts[1] || "32", 10);
-        let s = "";
-        while (s.length < len) {
-          s += Math.random().toString(36).slice(2);
-        }
-        return s.slice(0, len);
-      }
-      if (parts[0] === "number") {
-        const digits = Math.max(1, parseInt(parts[1] || "8", 10));
-        const min = 10 ** (digits - 1);
-        const max = 10 ** digits - 1;
-        return Math.floor(Math.random() * (max - min + 1)) + min;
-      }
-      // Fallback
-      return Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
-    }
-
     function fillRandomFields(item: Partial<T>) {
       for (const [col, def] of Object.entries(modelSchema.fields || {})) {
         const r = getRandomMeta((def as any)?.meta);
         if (r && (item as any)[col] === undefined) {
-          (item as any)[col] = generateRandomValue(r);
+          (item as any)[col] = generateRandomFromAnnotation(r);
         }
       }
     }

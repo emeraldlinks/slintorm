@@ -118,6 +118,26 @@ export interface RandomKey {
   uid?: string;
   // @random:number:4
   pin?: number;
+  // @random:alnum(10, upper)
+  upperAlnum?: string;
+  // @random:alnum(10, lower)
+  lowerAlnum?: string;
+  // @random:lower(12)
+  lowerLetters?: string;
+  // @random:upper(8)
+  upperLetters?: string;
+  // @random:hex(16)
+  hexStr?: string;
+  // @random:hex(16, upper)
+  upperHex?: string;
+  // @random:alnum(8, pfx=TKN_)
+  tokenPrefixed?: string;
+  // @random:number(6, pfx=INV-)
+  invoiceNum?: string;
+  // @random:alnum(12, upper, pfx=USR_, sfx=_END)
+  userCode?: string;
+  // @random:custom(ABCDEF123456, 6)
+  customPin?: string;
   createdAt?: string;
   updatedAt?: string;
 }
