@@ -21,8 +21,8 @@ Minimal fully-typed ORM for TypeScript with SQLite / PostgreSQL / MySQL / MongoD
 | `src/proxy.ts` | `proxyExec()` (edge client) + `createProxyServer()` (Node server) — tunnel SQL over HTTP for V8-isolate runtimes |
 | `src/browser.ts` | Edge-safe entrypoint — re-exports from index.js, model.js, http-driver.js, proxy.js, extensions.js, db-error.js |
 | `src/utils.ts` | `tsTypeToSqlType()` — maps TS primitive types to SQL column types |
-| `src/example.ts` | Runnable walkthrough covering all 34 feature sections |
-| `src/slintorm.test.ts` | 57-runtime-test suite covering all features |
+ | `src/example.ts` | Runnable walkthrough covering all 42 feature sections |
+ | `src/slintorm.test.ts` | 105-runtime-test suite covering all features |
 | `src/types.test.ts` | Compile-time type-safety tests (validated via `tsc --noEmit`) |
 | `SERVERLESS.md` | Edge/serverless deployment guide (`/root/slintorm/SERVERLESS.md`) |
 
@@ -442,8 +442,7 @@ interface Comment {
 }
 
 // morphTo — resolve parent (fields auto-detected from annotations)
-const comment = await Comments.get({ id: 1 });
-const parent = await comment.morphTo();
+const parent = await Comments.morphTo();
 // parent = { id: 1, title: "...", ... }
 
 // morphMany — find all comments for a given parent type
