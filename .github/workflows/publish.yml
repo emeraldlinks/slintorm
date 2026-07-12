@@ -1,0 +1,34 @@
+name: Publish
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - run: npm run test:suite
+
+      - name: Check version and publish
+        run: |
+          PKG_VER=$(node -p "require('./package.json').version")
+          PUBLISHED_VER=$(npm view slintorm version 2>/dev/null || echo "none")
+          if [ "$PKG_VER" != "$PUBLISHED_VER" ]; then
+            npm publish
+          else
+            echo "Version $PKG_VER already published — skipping"
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
