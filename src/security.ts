@@ -3,12 +3,22 @@
 // Implements @hash (PBKDF2), @encrypt (AES-256-GCM), and @secret annotations.
 // Compatible with: Vercel Edge, Cloudflare Workers, Deno, Deno Deploy,
 // browsers, Node.js 18+ (via globalThis.crypto, not node:crypto).
-//
-// Design principles:
-//   - Zero npm dependencies — uses only Web Crypto API, TextEncoder, btoa/atob
-//   - All crypto operations are async (Web Crypto API requirement)
-//   - Self-describing storage format (algorithm$params$value) for future
-//     algorithm upgrades without breaking existing data
+
+export interface FieldMeta {
+  hash?: string | boolean;
+  "@hash"?: string | boolean;
+  encrypt?: boolean;
+  "@encrypt"?: boolean;
+  secret?: boolean;
+  "@secret"?: boolean;
+  mask?: string | boolean;
+  "@mask"?: string | boolean;
+  omitjson?: boolean;
+  "@omitjson"?: boolean;
+  omitdb?: boolean;
+  "@omitdb"?: boolean;
+  [key: string]: unknown;
+}
 
 function toBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -29,13 +39,6 @@ function toBufferSource(data: Uint8Array): BufferSource {
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-
-// ── PBKDF2 Password Hashing ──────────────────────────────────────────────
-//
-// Storage format: "pbkdf2$<base64salt>$<base64hash>"
-//   - Salt: 16 random bytes
-//   - Hash: 32 bytes (256 bits, SHA-256)
-//   - Iterations: 100000 (OWASP recommended minimum for PBKDF2-HMAC-SHA256)
 
 const HASH_ITERATIONS = 100_000;
 const HASH_SALT_BYTES = 16;
@@ -87,11 +90,6 @@ export async function verifyPassword(password: string, stored: string): Promise<
 }
 
 // ── AES-256-GCM Encryption ───────────────────────────────────────────────
-//
-// Storage format: "aes256gcm$<base64iv>$<base64ciphertext>$<base64authtag>"
-//   - IV: 12 bytes (96 bits, NIST recommended for GCM)
-//   - Auth tag: 16 bytes (128 bits, full GCM tag)
-//   - Key: 32 bytes (256 bits), derived from master key + field salt
 
 const ENCRYPT_IV_BYTES = 12;
 
@@ -165,54 +163,54 @@ export async function decryptField(
 
 // ── Meta helpers ─────────────────────────────────────────────────────────
 
-export function isHashField(meta: any): boolean {
+export function isHashField(meta: Record<string, unknown>): boolean {
   return !!(meta?.hash || meta?.["@hash"]);
 }
 
-export function isEncryptField(meta: any): boolean {
+export function isEncryptField(meta: Record<string, unknown>): boolean {
   return !!(meta?.encrypt || meta?.["@encrypt"]);
 }
 
-export function isSecretField(meta: any): boolean {
+export function isSecretField(meta: Record<string, unknown>): boolean {
   return !!(meta?.secret || meta?.["@secret"]);
 }
 
 // ── Write-time transforms (insert/update) ────────────────────────────────
 // Applies @hash, @encrypt, @secret to field values before DB write.
 
-export async function applySecurityOnWrite<T extends Record<string, any>>(
-  item: T,
-  schemaFields: Record<string, any> | undefined,
+export async function applySecurityOnWrite(
+  item: Record<string, unknown>,
+  schemaFields: Record<string, unknown> | undefined,
   encryptionKey?: string,
-): Promise<T> {
+): Promise<Record<string, unknown>> {
   if (!schemaFields) return item;
-  const data = item as Record<string, any>;
   for (const field of Object.keys(schemaFields)) {
-    const meta = schemaFields[field]?.meta;
-    if (!meta) continue;
-    const value = data[field];
+    const meta = schemaFields[field] as Record<string, unknown> | undefined;
+    const metaObj = meta?.meta as FieldMeta | undefined;
+    if (!metaObj) continue;
+    const value = item[field];
     if (value === undefined || value === null) continue;
 
-    if (isSecretField(meta)) {
-      data[field] = await hashPassword(String(value));
+    if (isSecretField(metaObj as unknown as Record<string, unknown>)) {
+      item[field] = await hashPassword(String(value));
       continue;
     }
 
-    if (isHashField(meta)) {
-      const algo = meta.hash ?? meta["@hash"];
+    if (isHashField(metaObj as unknown as Record<string, unknown>)) {
+      const algo = metaObj.hash ?? metaObj["@hash"];
       if (algo === true || algo === "pbkdf2" || !algo) {
-        data[field] = await hashPassword(String(value));
+        item[field] = await hashPassword(String(value));
       }
       continue;
     }
 
-    if (isEncryptField(meta)) {
+    if (isEncryptField(metaObj as unknown as Record<string, unknown>)) {
       if (!encryptionKey) {
         console.warn(`[@encrypt] field "${field}" skipped - no encryptionKey configured`);
         continue;
       }
       const fieldKey = await deriveEncryptionKey(encryptionKey, field);
-      data[field] = await encryptField(String(value), fieldKey);
+      item[field] = await encryptField(String(value), fieldKey);
       continue;
     }
   }
@@ -220,30 +218,50 @@ export async function applySecurityOnWrite<T extends Record<string, any>>(
 }
 
 // ── Read-time transforms (get / getAll / query results) ──────────────────
-// Decrypts @encrypt fields after reading from DB.
+// Decrypts @encrypt fields and attaches .verify() to @hash fields.
+
+export interface HashField {
+  toString(): string;
+  valueOf(): string;
+  [Symbol.toPrimitive](hint: string): string | number;
+  verify(plaintext: string): Promise<boolean>;
+}
+
+function attachHashVerify(value: string): string {
+  const hash = value;
+  const result: HashField = {
+    toString() { return hash; },
+    valueOf() { return hash; },
+    [Symbol.toPrimitive](hint: string): string | number { return hint === "number" ? NaN : hash; },
+    verify(plaintext: string) { return verifyPassword(plaintext, hash); },
+  };
+  return result as unknown as string;
+}
 
 export async function applySecurityOnRead(
-  row: Record<string, any>,
-  schemaFields: Record<string, any> | undefined,
+  row: Record<string, unknown>,
+  schemaFields: Record<string, unknown> | undefined,
   encryptionKey?: string,
-): Promise<Record<string, any>> {
-  if (!schemaFields || !encryptionKey) return row;
+): Promise<Record<string, unknown>> {
+  if (!schemaFields) return row;
   for (const field of Object.keys(schemaFields)) {
-    const meta = schemaFields[field]?.meta;
-    if (!meta) continue;
+    const meta = schemaFields[field] as Record<string, unknown> | undefined;
+    const metaObj = meta?.meta as FieldMeta | undefined;
+    if (!metaObj) continue;
     const value = row[field];
     if (value === undefined || value === null || typeof value !== "string") continue;
 
-    if (isEncryptField(meta) || isSecretField(meta)) {
-      if (isEncryptField(meta) && value.startsWith("aes256gcm$")) {
-        try {
-          const fieldKey = await deriveEncryptionKey(encryptionKey, field);
-          row[field] = await decryptField(value, fieldKey);
-        } catch (err) {
-          console.warn(`[@encrypt] failed to decrypt field "${field}": ${err}`);
-        }
+    if (isEncryptField(metaObj as unknown as Record<string, unknown>) && encryptionKey && value.startsWith("aes256gcm$")) {
+      try {
+        const fieldKey = await deriveEncryptionKey(encryptionKey, field);
+        row[field] = await decryptField(value, fieldKey);
+      } catch (err) {
+        console.warn(`[@encrypt] failed to decrypt field "${field}": ${err}`);
       }
-      continue;
+    }
+
+    if (isHashField(metaObj as unknown as Record<string, unknown>)) {
+      row[field] = attachHashVerify(row[field] as string);
     }
   }
   return row;

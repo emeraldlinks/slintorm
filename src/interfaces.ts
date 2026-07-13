@@ -22,6 +22,7 @@ export interface User {
   name: string;
   // @email
   email?: string;
+  // @hash
   password?: string;
   // @phone
   phone?: string;

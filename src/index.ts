@@ -14,6 +14,7 @@ import { Migrator, type SchemaModel } from "./migrator.js";
 import { wrapExec } from "./db-error.js";
 import type { DBDriver, ExecFn } from "./types.js";
 import type { Plugin, PluginEventType, OrmContext } from "./types.js";
+export type { HashField } from "./security.js";
 
 export type AnyModelMap = Record<string, object>;
 

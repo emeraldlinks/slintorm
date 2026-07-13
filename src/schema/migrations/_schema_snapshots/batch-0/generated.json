@@ -29,7 +29,9 @@
         "type": "string | undefined",
         "originalType": "string",
         "optional": true,
-        "meta": {}
+        "meta": {
+          "@hash": true
+        }
       },
       "phone": {
         "type": "string | undefined",

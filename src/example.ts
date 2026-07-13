@@ -936,7 +936,22 @@ async function main() {
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  // CLEANUP
+  // 43. Security annotations (@hash with .verify)
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("Security annotations (@hash)");
+
+  const hashUser = await Users.insert({ name: "HashTest", email: "hash@example.com", password: "correct-horse-battery-staple" });
+  const hashFetched = await Users.get({ name: "HashTest" });
+  if (!hashFetched?.password) { fail("security: could not fetch user"); } else {
+    info(`password in db: ${hashFetched.password}`);
+    const ok1 = await hashFetched.password.verify("correct-horse-battery-staple");
+    ok(ok1 ? "@hash .verify() matches correct password" : "@hash .verify() FAILED on correct password");
+    const ok2 = await hashFetched.password.verify("wrong-password");
+    ok(!ok2 ? "@hash .verify() rejects wrong password" : "@hash .verify() FAILED to reject wrong password");
+  }
+
+  // Cleanup
+  await Users.delete({ name: "HashTest" });
   // ──────────────────────────────────────────────────────────────────────────
   try { await (Posts as any).delete({ id: newPost?.id! }); } catch {}
 

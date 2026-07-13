@@ -109,7 +109,7 @@ export class QueryBuilder<T extends Record<string, any>> {
   protected modelName: string;
   protected dir: string;
   protected schema: Record<string, any> | any;
-  protected _wrapEntity?: (record: T) => T;
+  protected _wrapEntity?: (record: T) => T | Promise<T>;
 
   constructor(
     table: string,
@@ -117,7 +117,7 @@ export class QueryBuilder<T extends Record<string, any>> {
     exec: ExecFn,
     modelName: string,
     schema: Record<string, any>,
-    orm?: { dialect?: string; wrapEntity?: (record: T) => T }
+    orm?: { dialect?: string; wrapEntity?: (record: T) => T | Promise<T> }
   ) {
     if (!dir) throw new Error("QueryBuilder requires a valid directory for schema.");
     this.table = table;
@@ -750,7 +750,7 @@ export class QueryBuilder<T extends Record<string, any>> {
 
     // Attach entity methods (update/delete/refresh/toJSON) when a wrapper is set
     if (this._wrapEntity) {
-      rows = rows.map((r) => this._wrapEntity!(r));
+      rows = await Promise.all(rows.map((r) => this._wrapEntity!(r)));
     }
 
     return rows;

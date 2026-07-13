@@ -840,7 +840,14 @@ export default async function generateSchema(srcGlob: string) {
 
     for (const [propName, propDef] of Object.entries(intf.fields) as [string, FieldDefinition][]) {
       const optional = propDef.optional ? "?" : "";
-      props.push(`  ${propName}${optional}: ${propDef.originalType};`);
+      if (propDef.meta?.["@hash"]) {
+        const base = propDef.originalType.replace(/\s*\|\s*undefined\s*/g, '');
+        const suffix = ` & { verify(plaintext: string): Promise<boolean> }`;
+        const typeStr = propDef.optional ? `${base}${suffix} | undefined` : `${base}${suffix}`;
+        props.push(`  ${propName}${optional}: ${typeStr};`);
+      } else {
+        props.push(`  ${propName}${optional}: ${propDef.originalType};`);
+      }
     }
 
     modelInterfaces.push(`export interface ${modelName} {\n${props.join("\n")}\n}`);

@@ -36,6 +36,7 @@ export {
   encryptField,
   decryptField,
   deriveEncryptionKey,
+  type HashField,
 } from "./security.js";
 
 // Edge-compatible drivers — fetch-based, no TCP required
