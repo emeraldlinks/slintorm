@@ -41,6 +41,14 @@ export type ORMManagerConfig<TModelMap extends AnyModelMap = AnyModelMap> = {
    *  instances that share a database — key rotation requires re-encrypting
    *  all @encrypt fields. */
   encryptionKey?: string;
+  /** Enable Row-Level Security support (PostgreSQL only).
+   *  When true, every query sets PostgreSQL session parameters from the
+   *  current OrmContext (keys prefixed with "rls."), so RLS policies
+   *  referencing current_setting('rls.xxx') work automatically.
+   *  Use orm.withContext({ tenant_id: "abc" }) to set values.
+   *  NOTE: The database user must NOT have the BYPASSRLS attribute
+   *  (superusers bypass RLS). Use a dedicated application role. */
+  rls?: boolean;
 };
 
 export type ModelHooks<T extends object> = {
@@ -138,6 +146,7 @@ export default class ORMManager<
   private _plugins: Plugin[] = [];
   private _context: OrmContext = {};
   private _preparedMode = false;
+  private _rls = false;
   /** Named database connections for Database Resolver */
   private _databases: Map<string, { exec: any; driver?: string; adapter?: DBAdapter }> = new Map();
 
@@ -161,6 +170,33 @@ export default class ORMManager<
         this.adapter.exec.bind(this.adapter),
         sqlDriver
       );
+    }
+
+    this._rls = !!this.cfg.rls;
+    if (this._rls && sqlDriver === "postgres") {
+      const origExec = this.adapter.exec.bind(this.adapter);
+      const lastRls: Record<string, string> = {};
+      this.adapter.exec = async (sql: string, params?: any[]) => {
+        const ctx = this._context;
+        const keys = Object.keys(ctx).filter(k => ctx[k] != null);
+        for (const key of keys) {
+          const val = String(ctx[key]);
+          if (lastRls[key] !== val) {
+            await origExec("SELECT set_config($1, $2, false)", [
+              `rls.${key}`,
+              val,
+            ]);
+            lastRls[key] = val;
+          }
+        }
+        // Clear any previously-set keys that are no longer in context
+        for (const prevKey of Object.keys(lastRls)) {
+          if (!(prevKey in ctx) || ctx[prevKey] == null) {
+            delete lastRls[prevKey];
+          }
+        }
+        return origExec(sql, params);
+      };
     }
   }
 
@@ -346,6 +382,10 @@ export default class ORMManager<
     return this;
   }
 
+  rlsEnabled(): boolean {
+    return this._rls;
+  }
+
   // ── Prepared Statement Mode ────────────────────────────────────
   preparedMode(enabled: boolean): this {
     this._preparedMode = enabled;
@@ -407,23 +447,32 @@ export default class ORMManager<
   async enableAuditLogging(options: { tableName?: string; excludeModels?: string[] } = {}) {
     const tableName = options.tableName || "_audit_logs";
     const exclude = new Set(options.excludeModels || ["_audit_logs"]);
+    const driver = this.adapter.driver || "sqlite";
+    const q = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
+    const ph = (i: number) => driver === "postgres" ? `$${i + 1}` : "?";
+
+    const idType = driver === "postgres" ? "SERIAL PRIMARY KEY"
+      : driver === "mysql" ? "INT AUTO_INCREMENT PRIMARY KEY"
+      : "INTEGER PRIMARY KEY AUTOINCREMENT";
+    const changedType = driver === "postgres" ? "TIMESTAMPTZ"
+      : "DATETIME";
 
     await this.adapter.exec(
-      `CREATE TABLE IF NOT EXISTS "${tableName}" (
-        "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-        "model" TEXT NOT NULL,
-        "action" TEXT NOT NULL,
-        "recordId" TEXT,
-        "oldData" TEXT,
-        "newData" TEXT,
-        "changedAt" TEXT NOT NULL
+      `CREATE TABLE IF NOT EXISTS ${q(tableName)} (
+        ${q("id")} ${idType},
+        ${q("model")} TEXT NOT NULL,
+        ${q("action")} TEXT NOT NULL,
+        ${q("recordId")} TEXT,
+        ${q("oldData")} TEXT,
+        ${q("newData")} TEXT,
+        ${q("changedAt")} ${changedType} NOT NULL
       )`, []
     );
 
     this.on("afterInsert", async (event) => {
       if (exclude.has(event.model)) return;
       await this.adapter.exec(
-        `INSERT INTO "${tableName}" ("model", "action", "recordId", "newData", "changedAt") VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO ${q(tableName)} (${q("model")}, ${q("action")}, ${q("recordId")}, ${q("newData")}, ${q("changedAt")}) VALUES (${ph(0)}, ${ph(1)}, ${ph(2)}, ${ph(3)}, ${ph(4)})`,
         [event.model, "INSERT", String(event.data?.id ?? ""), JSON.stringify(event.data), new Date().toISOString()]
       );
     });
@@ -431,7 +480,7 @@ export default class ORMManager<
     this.on("afterUpdate", async (event) => {
       if (exclude.has(event.model)) return;
       await this.adapter.exec(
-        `INSERT INTO "${tableName}" ("model", "action", "recordId", "newData", "oldData", "changedAt") VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO ${q(tableName)} (${q("model")}, ${q("action")}, ${q("recordId")}, ${q("newData")}, ${q("oldData")}, ${q("changedAt")}) VALUES (${ph(0)}, ${ph(1)}, ${ph(2)}, ${ph(3)}, ${ph(4)}, ${ph(5)})`,
         [event.model, "UPDATE", String(event.data?.id ?? JSON.stringify(event.filter)), JSON.stringify(event.data), JSON.stringify(event.filter), new Date().toISOString()]
       );
     });
@@ -439,7 +488,7 @@ export default class ORMManager<
     this.on("afterDelete", async (event) => {
       if (exclude.has(event.model)) return;
       await this.adapter.exec(
-        `INSERT INTO "${tableName}" ("model", "action", "recordId", "oldData", "changedAt") VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO ${q(tableName)} (${q("model")}, ${q("action")}, ${q("recordId")}, ${q("oldData")}, ${q("changedAt")}) VALUES (${ph(0)}, ${ph(1)}, ${ph(2)}, ${ph(3)}, ${ph(4)})`,
         [event.model, "DELETE", String(event.data?.id ?? JSON.stringify(event.filter)), JSON.stringify(event.data), new Date().toISOString()]
       );
     });
