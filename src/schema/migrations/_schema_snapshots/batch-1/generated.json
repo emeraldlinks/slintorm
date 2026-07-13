@@ -29,7 +29,25 @@
         "type": "string | undefined",
         "originalType": "string",
         "optional": true,
-        "meta": {}
+        "meta": {
+          "@hash": true
+        }
+      },
+      "encrypted": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@encrypt": true
+        }
+      },
+      "autoDecrypted": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@encrypt": "(decrypt=auto)"
+        }
       },
       "phone": {
         "type": "string | undefined",

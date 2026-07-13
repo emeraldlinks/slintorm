@@ -7,8 +7,8 @@
 export interface FieldMeta {
   hash?: string | boolean;
   "@hash"?: string | boolean;
-  encrypt?: boolean;
-  "@encrypt"?: boolean;
+  encrypt?: string | boolean;
+  "@encrypt"?: string | boolean;
   secret?: boolean;
   "@secret"?: boolean;
   mask?: string | boolean;
@@ -238,6 +238,28 @@ function attachHashVerify(value: string): string {
   return result as unknown as string;
 }
 
+export interface EncryptedField {
+  toString(): string;
+  valueOf(): string;
+  [Symbol.toPrimitive](hint: string): string | number;
+  decrypt(): Promise<string>;
+}
+
+function attachEncryptDecrypt(value: string, encryptionKey: string, fieldName: string): string {
+  const raw = value;
+  let cachedKey: CryptoKey | undefined;
+  const result: EncryptedField = {
+    toString() { return raw; },
+    valueOf() { return raw; },
+    [Symbol.toPrimitive](hint: string): string | number { return hint === "number" ? NaN : raw; },
+    async decrypt(): Promise<string> {
+      if (!cachedKey) cachedKey = await deriveEncryptionKey(encryptionKey, fieldName);
+      return decryptField(raw, cachedKey);
+    },
+  };
+  return result as unknown as string;
+}
+
 export async function applySecurityOnRead(
   row: Record<string, unknown>,
   schemaFields: Record<string, unknown> | undefined,
@@ -252,11 +274,17 @@ export async function applySecurityOnRead(
     if (value === undefined || value === null || typeof value !== "string") continue;
 
     if (isEncryptField(metaObj as unknown as Record<string, unknown>) && encryptionKey && value.startsWith("aes256gcm$")) {
-      try {
-        const fieldKey = await deriveEncryptionKey(encryptionKey, field);
-        row[field] = await decryptField(value, fieldKey);
-      } catch (err) {
-        console.warn(`[@encrypt] failed to decrypt field "${field}": ${err}`);
+      const metaVal = metaObj?.encrypt ?? metaObj?.["@encrypt"];
+      const isAuto = typeof metaVal === "string" && (metaVal === "auto" || metaVal.includes("decrypt=auto"));
+      if (isAuto) {
+        try {
+          const fieldKey = await deriveEncryptionKey(encryptionKey, field);
+          row[field] = await decryptField(value, fieldKey);
+        } catch (err) {
+          console.warn(`[@encrypt] failed to decrypt field "${field}": ${err}`);
+        }
+      } else {
+        row[field] = attachEncryptDecrypt(value, encryptionKey, field);
       }
     }
 

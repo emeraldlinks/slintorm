@@ -32,6 +32,7 @@ async function main() {
     databaseUrl: ":memory:",
     dir: "src",
     logs: false,
+    encryptionKey: "test-encryption-key-32-chars-minimum!!",
   });
 
   await orm.migrate();
@@ -950,8 +951,26 @@ async function main() {
     ok(!ok2 ? "@hash .verify() rejects wrong password" : "@hash .verify() FAILED to reject wrong password");
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // 44. @encrypt with .decrypt
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("@encrypt annotation");
+
+  await orm.DB.User.insert({ name: "EncryptTest", email: "encrypt@example.com", encrypted: "sensitive-data", autoDecrypted: "auto-decrypted-value" });
+  const encFetched = await orm.DB.User.get({ name: "EncryptTest" });
+  if (!encFetched?.encrypted) { fail("encrypt: could not fetch user"); } else {
+    info(`raw encrypted value: ${encFetched.encrypted}`);
+    ok(encFetched.encrypted.toString().startsWith("aes256gcm$") ? "@encrypt raw value is aes256gcm$..." : "@encrypt raw value NOT encrypted");
+    const decrypted = await encFetched.encrypted.decrypt();
+    ok(decrypted === "sensitive-data" ? "@encrypt .decrypt() returns original plaintext" : "@encrypt .decrypt() FAILED");
+  }
+  if (!encFetched?.autoDecrypted) { fail("encrypt: could not fetch autoDecrypted"); } else {
+    ok(encFetched.autoDecrypted === "auto-decrypted-value" ? "@encrypt:(decrypt=auto) auto-decrypted value matches" : "@encrypt:(decrypt=auto) FAILED");
+  }
+
   // Cleanup
   await orm.DB.User.delete({ name: "HashTest" });
+  await orm.DB.User.delete({ name: "EncryptTest" });
   // ──────────────────────────────────────────────────────────────────────────
   try { await (Posts as any).delete({ id: newPost?.id! }); } catch {}
 

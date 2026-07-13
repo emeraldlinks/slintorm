@@ -1,13 +1,15 @@
 
 // AUTO-GENERATED SCHEMA - DO NOT EDIT
-// Schema Hash: 6ef1ba2f27c3ded8
-// Source Hash: 8d7d7f32330d36cc
+// Schema Hash: bc382993b984175c
+// Source Hash: d30f7200a5e3ba08
 
 export interface User {
   id?: number;
   name: string;
   email?: string;
   password?: string & { verify(plaintext: string): Promise<boolean> } | undefined;
+  encrypted?: string & { decrypt(): Promise<string> } | undefined;
+  autoDecrypted?: string;
   phone?: string;
   url?: string;
   uuid?: string;
@@ -566,6 +568,22 @@ export const schema = {
         "optional": true,
         "meta": {
           "@hash": true
+        }
+      },
+      "encrypted": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@encrypt": true
+        }
+      },
+      "autoDecrypted": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {
+          "@encrypt": "(decrypt=auto)"
         }
       },
       "phone": {

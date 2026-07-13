@@ -24,6 +24,10 @@ export interface User {
   email?: string;
   // @hash
   password?: string;
+  // @encrypt
+  encrypted?: string;
+  // @encrypt:(decrypt=auto)
+  autoDecrypted?: string;
   // @phone
   phone?: string;
   // @url

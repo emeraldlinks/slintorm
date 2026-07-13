@@ -26,6 +26,7 @@ Minimal fully-typed ORM for TypeScript with SQLite / PostgreSQL / MySQL / MongoD
  | `src/slintorm.test.ts` | 105-runtime-test suite covering all features |
 | `src/types.test.ts` | Compile-time type-safety tests (validated via `tsc --noEmit`) |
 | `SERVERLESS.md` | Edge/serverless deployment guide (`/root/slintorm/SERVERLESS.md`) |
+| `SECURITY.md` | Security annotations reference — `@hash`, `@encrypt`, `@secret` with `.verify()` and `.decrypt()` |
 
 ## Architecture
 
@@ -585,6 +586,8 @@ interface User {
   password?: string;
   // @encrypt
   encrypted?: string;
+  // @encrypt:(decrypt=auto)
+  autoDecrypted?: string;
   // @secret
   secretNote?: string;
   // @omitdb
@@ -735,13 +738,16 @@ Bypass with `.withoutMasking()` on the query builder.
 | Annotation | Storage | Read behavior |
 |---|---|---|
 | `@hash` | PBKDF2-hashed (salt + SHA-256, 100k iterations) | Raw hash exposed at runtime; a `.verify(plaintext: string): Promise<boolean>` method is attached to the string value for comparing against the original plaintext |
-| `@encrypt` | AES-256-GCM encrypted with a key derived from the master encryption key via PBKDF2 | Auto-decrypted on read; returns plain `string` transparently |
+| `@encrypt` | AES-256-GCM encrypted with a key derived from the master encryption key via PBKDF2 | Raw `aes256gcm$...` value with `.decrypt(): Promise<string>` for on-demand decryption |
+| `@encrypt:(decrypt=auto)` | Same as `@encrypt` | Auto-decrypted on read; returns plain `string` transparently |
 | `@secret` | `@hash` + `@omitjson` combined | Returned in runtime objects but excluded from `JSON.stringify` / `.toJSON()` output |
 
 **Requirements:**
 - `@encrypt` requires passing `encryptionKey` (min 32 chars) to the ORM constructor
 - Fields with `@encrypt` must be `TEXT`/`string` type (output is base64-encoded ciphertext)
+- `@encrypt` (default) exposes raw ciphertext with `.decrypt()`; append `:(decrypt=auto)` for transparent auto-decryption
 - `@hash` fields get `.verify()` in the generated interface type when using the generated schema types for full type safety
+- `@encrypt` fields get `.decrypt()` in the generated interface type (unless `:auto` variant)
 
 ### @random — auto-generated field values on insert
 

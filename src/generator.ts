@@ -845,6 +845,17 @@ export default async function generateSchema(srcGlob: string) {
         const suffix = ` & { verify(plaintext: string): Promise<boolean> }`;
         const typeStr = propDef.optional ? `${base}${suffix} | undefined` : `${base}${suffix}`;
         props.push(`  ${propName}${optional}: ${typeStr};`);
+      } else if (propDef.meta?.["@encrypt"]) {
+        const encryptVal = propDef.meta["@encrypt"];
+        const isAuto = typeof encryptVal === "string" && (encryptVal === "auto" || encryptVal.includes("decrypt=auto"));
+        if (isAuto) {
+          props.push(`  ${propName}${optional}: ${propDef.originalType};`);
+        } else {
+          const base = propDef.originalType.replace(/\s*\|\s*undefined\s*/g, '');
+          const suffix = ` & { decrypt(): Promise<string> }`;
+          const typeStr = propDef.optional ? `${base}${suffix} | undefined` : `${base}${suffix}`;
+          props.push(`  ${propName}${optional}: ${typeStr};`);
+        }
       } else {
         props.push(`  ${propName}${optional}: ${propDef.originalType};`);
       }

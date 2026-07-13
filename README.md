@@ -908,6 +908,7 @@ SlintORM fills the niche for **quick iteration, flexible queries, and minimal fr
 - **`QUERY_BUILDER.md`** — full query builder & `ModelAPI` reference, every method with usage examples.
 - **`llms.txt`** — condensed reference for AI coding assistants working in a SlintORM codebase.
 - **`example.ts`** — a complete, runnable walkthrough exercising 42 feature sections of the library in one file.
+- **`SECURITY.md`** — full reference for `@hash`, `@encrypt`, `@secret` annotations with `.verify()` and `.decrypt()`.
 - **`src/security.ts`** — runtime implementation of `@hash`, `@encrypt`, `@secret` annotations: PBKDF2 hashing with `.verify()`, AES-256-GCM encryption/decryption.
 - **`src/proxy.ts`** — proxy client + server for running queries from edge runtimes (Vercel Edge, Cloudflare Workers).
 - **`src/http-driver.ts`** — provider-specific HTTP drivers for Neon, Turso, and PlanetScale.
