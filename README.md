@@ -190,6 +190,9 @@ interface Team {
 | `@omitdb` | Field never stored in database — excluded from INSERT/UPDATE/reads |
 | `@omitjson` | Stored in DB but stripped from all read results unless `.select()`ed |
 | `@omitmigrate` | No column created by migrator — manual DDL; field still usable in queries |
+| `@hash` | PBKDF2-hashed on write; `.verify(plaintext)` method attached on read for password comparison |
+| `@encrypt` | AES-256-GCM encrypted in DB, auto-decrypted on read (requires `encryptionKey` in constructor) |
+| `@secret` | `@hash` + `@omitjson` combined — hashed, excluded from JSON output |
 | `@json` | Serialize/deserialize this field as JSON automatically |
 | `@softDelete` | Marks the field (e.g. `deletedAt`) used for soft deletes; enables `withTrashed()`/`onlyTrashed()`/`restore()` |
 | `@enum:(a,b,c)` | Restrict to a set of string values |
@@ -904,6 +907,7 @@ SlintORM fills the niche for **quick iteration, flexible queries, and minimal fr
 
 - **`QUERY_BUILDER.md`** — full query builder & `ModelAPI` reference, every method with usage examples.
 - **`llms.txt`** — condensed reference for AI coding assistants working in a SlintORM codebase.
-- **`example.ts`** — a complete, runnable walkthrough exercising 34 feature sections of the library in one file.
+- **`example.ts`** — a complete, runnable walkthrough exercising 42 feature sections of the library in one file.
+- **`src/security.ts`** — runtime implementation of `@hash`, `@encrypt`, `@secret` annotations: PBKDF2 hashing with `.verify()`, AES-256-GCM encryption/decryption.
 - **`src/proxy.ts`** — proxy client + server for running queries from edge runtimes (Vercel Edge, Cloudflare Workers).
 - **`src/http-driver.ts`** — provider-specific HTTP drivers for Neon, Turso, and PlanetScale.

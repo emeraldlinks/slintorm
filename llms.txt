@@ -14,7 +14,8 @@ Minimal fully-typed ORM for TypeScript with SQLite / PostgreSQL / MySQL / MongoD
 | `src/extensions.ts` | `ExtendedQueryBuilder<T>` (top-level QB), `SoftDeleteQueryBuilder<T>` (withTrashed/onlyTrashed), scopes, `Validator<T>` + `ValidationError` |
 | `src/dbAdapter.ts` | `DBAdapter` — lazy driver connection with fallback chain (node:sqlite → better-sqlite3 → sqlite3 for SQLite; mysql2; pg; mongodb), read replicas, prepared statement cache, custom exec bypass |
 | `src/migrator.ts` | `Migrator` — schema migration engine: `ensureTable()` CREATE/ALTER TABLE, column type mapping, nullability inference, defaults, indexes, uniques, FKs, comments, polymorphic columns, column rename, drop orphan columns |
-| `src/generator.ts` | Schema generator — tokenizes TypeScript source files, parses `interface`/`type` declarations, extracts field metadata from `//` comments (`@index`, `@unique`, `@nullable`, `@default`, `@polymorphicType`, `@polymorphicId`, etc.), relation directives (`@relation onetomany:User;foreignKey:userId`), writes `schema/generated.json` + `schema/generated.ts` |
+| `src/generator.ts` | Schema generator — tokenizes TypeScript source files, parses `interface`/`type` declarations, extracts field metadata from `//` comments (`@index`, `@unique`, `@nullable`, `@default`, `@hash`, `@encrypt`, `@secret`, `@polymorphicType`, `@polymorphicId`, etc.), relation directives (`@relation onetomany:User;foreignKey:userId`), writes `schema/generated.json` + `schema/generated.ts` |
+| `src/security.ts` | Security annotations runtime — `@hash` (bcrypt-like PBKDF2 hashing with `.verify()`), `@encrypt` (AES-256-GCM transparent encryption/decryption), `@secret` (`@hash` + `@omitjson` combined) |
 | `src/db-error.ts` | `ORMError` + `parseConstraintError()` + `wrapExec()` — converts driver-specific constraint errors (UNIQUE, NOT NULL, FK, CHECK) into structured, actionable errors across SQLite/Postgres/MySQL |
 | `src/migration-history.ts` | Migration tracking (`_slint_migrations` table + filesystem records), schema hash-based change detection, snapshot/restore, `runMigrations()` |
 | `src/http-driver.ts` | Edge-safe HTTP exec drivers — `neonExec()`, `tursoExec()`, `planetscaleExec()`, generic `createExec()`, `http` namespace |
@@ -580,6 +581,12 @@ interface User {
   starMasked?: string;
   // @mask:pattern:###-##-####
   patternMasked?: string;
+  // @hash
+  password?: string;
+  // @encrypt
+  encrypted?: string;
+  // @secret
+  secretNote?: string;
   // @omitdb
   internalNote?: string;
   // @omitjson
@@ -722,6 +729,19 @@ Bypass with `.withoutMasking()` on the query builder.
 | `@omitdb` | Not stored | Never returned |
 | `@omitjson` | Stored in DB | Stripped from reads (returned on `.select()`) |
 | `@omitmigrate` | Manual DDL | Full visibility |
+
+### @hash / @encrypt / @secret — security annotations
+
+| Annotation | Storage | Read behavior |
+|---|---|---|
+| `@hash` | PBKDF2-hashed (salt + SHA-256, 100k iterations) | Raw hash exposed at runtime; a `.verify(plaintext: string): Promise<boolean>` method is attached to the string value for comparing against the original plaintext |
+| `@encrypt` | AES-256-GCM encrypted with a key derived from the master encryption key via PBKDF2 | Auto-decrypted on read; returns plain `string` transparently |
+| `@secret` | `@hash` + `@omitjson` combined | Returned in runtime objects but excluded from `JSON.stringify` / `.toJSON()` output |
+
+**Requirements:**
+- `@encrypt` requires passing `encryptionKey` (min 32 chars) to the ORM constructor
+- Fields with `@encrypt` must be `TEXT`/`string` type (output is base64-encoded ciphertext)
+- `@hash` fields get `.verify()` in the generated interface type when using the generated schema types for full type safety
 
 ### @random — auto-generated field values on insert
 

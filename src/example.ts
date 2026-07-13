@@ -940,8 +940,8 @@ async function main() {
   // ──────────────────────────────────────────────────────────────────────────
   heading("Security annotations (@hash)");
 
-  const hashUser = await Users.insert({ name: "HashTest", email: "hash@example.com", password: "correct-horse-battery-staple" });
-  const hashFetched = await Users.get({ name: "HashTest" });
+  const hashUser = await orm.DB.User.insert({ name: "HashTest", email: "hash@example.com", password: "correct-horse-battery-staple" });
+  const hashFetched = await orm.DB.User.get({ name: "HashTest" });
   if (!hashFetched?.password) { fail("security: could not fetch user"); } else {
     info(`password in db: ${hashFetched.password}`);
     const ok1 = await hashFetched.password.verify("correct-horse-battery-staple");
@@ -951,7 +951,7 @@ async function main() {
   }
 
   // Cleanup
-  await Users.delete({ name: "HashTest" });
+  await orm.DB.User.delete({ name: "HashTest" });
   // ──────────────────────────────────────────────────────────────────────────
   try { await (Posts as any).delete({ id: newPost?.id! }); } catch {}
 
