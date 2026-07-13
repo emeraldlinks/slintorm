@@ -40,11 +40,12 @@ function toBufferSource(data: Uint8Array): BufferSource {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-const HASH_ITERATIONS = 100_000;
+const HASH_ITERATIONS = 600_000;
 const HASH_SALT_BYTES = 16;
 const HASH_KEY_LENGTH = 256;
 
-export async function hashPassword(password: string): Promise<string> {
+export async function hashPassword(password: string, iterations?: number): Promise<string> {
+  const iters = iterations ?? HASH_ITERATIONS;
   const salt = new Uint8Array(HASH_SALT_BYTES);
   crypto.getRandomValues(salt);
   const keyMaterial = await crypto.subtle.importKey(
@@ -55,20 +56,31 @@ export async function hashPassword(password: string): Promise<string> {
     ["deriveBits"],
   );
   const hash = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: toBufferSource(salt), iterations: HASH_ITERATIONS, hash: "SHA-256" },
+    { name: "PBKDF2", salt: toBufferSource(salt), iterations: iters, hash: "SHA-256" },
     keyMaterial,
     HASH_KEY_LENGTH,
   );
-  return `pbkdf2$${toBase64(salt)}$${toBase64(new Uint8Array(hash))}`;
+  return `pbkdf2$${iters}$${toBase64(salt)}$${toBase64(new Uint8Array(hash))}`;
 }
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const parts = stored.split("$");
-  if (parts.length !== 3 || parts[0] !== "pbkdf2") {
-    throw new Error("Unsupported hash format: " + (parts[0] || "unknown"));
+  if (parts[0] !== "pbkdf2") {
+    throw new Error(
+      `Expected 'pbkdf2$iterations$salt$hash' format, got '${parts[0] || "unknown"}'`,
+    );
   }
-  const salt = fromBase64(parts[1]);
-  const expectedHash = fromBase64(parts[2]);
+  const iters = parts.length === 4 ? parseInt(parts[1], 10) : HASH_ITERATIONS;
+  const saltIdx = parts.length === 4 ? 2 : 1;
+  const hashIdx = parts.length === 4 ? 3 : 2;
+  if (parts.length !== 3 && parts.length !== 4) {
+    throw new Error(
+      `Expected 'pbkdf2$iterations$salt$hash' (new) or 'pbkdf2$salt$hash' (legacy), ` +
+      `got ${parts.length} parts`,
+    );
+  }
+  const salt = fromBase64(parts[saltIdx]);
+  const expectedHash = fromBase64(parts[hashIdx]);
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
     toBufferSource(encoder.encode(password)),
@@ -77,7 +89,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
     ["deriveBits"],
   );
   const hash = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: toBufferSource(salt), iterations: HASH_ITERATIONS, hash: "SHA-256" },
+    { name: "PBKDF2", salt: toBufferSource(salt), iterations: iters, hash: "SHA-256" },
     keyMaterial,
     HASH_KEY_LENGTH,
   );
@@ -93,10 +105,17 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
 const ENCRYPT_IV_BYTES = 12;
 
+const KEY_CACHE = new Map<string, CryptoKey>();
+
 export async function deriveEncryptionKey(
   masterKey: string,
   fieldSalt: string,
+  iterations?: number,
 ): Promise<CryptoKey> {
+  const iters = iterations ?? HASH_ITERATIONS;
+  const cacheKey = `${masterKey}:${fieldSalt}:${iters}`;
+  const cached = KEY_CACHE.get(cacheKey);
+  if (cached) return cached;
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
     toBufferSource(encoder.encode(masterKey)),
@@ -108,16 +127,22 @@ export async function deriveEncryptionKey(
     {
       name: "PBKDF2",
       salt: toBufferSource(encoder.encode(fieldSalt)),
-      iterations: 100_000,
+      iterations: iters,
       hash: "SHA-256",
     },
     keyMaterial,
     256,
   );
-  return await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, [
+  const key = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, [
     "encrypt",
     "decrypt",
   ]);
+  KEY_CACHE.set(cacheKey, key);
+  return key;
+}
+
+export function clearKeyCache(): void {
+  KEY_CACHE.clear();
 }
 
 export async function encryptField(
@@ -144,12 +169,23 @@ export async function decryptField(
   key: CryptoKey,
 ): Promise<string> {
   const parts = stored.split("$");
-  if (parts.length !== 4 || parts[0] !== "aes256gcm") {
-    throw new Error("Unsupported encryption format: " + (parts[0] || "unknown"));
+  if (parts[0] !== "aes256gcm") {
+    throw new Error(
+      `Expected 'aes256gcm$iv$ct$tag' format, got '${parts[0] || "unknown"}'`,
+    );
   }
-  const iv = fromBase64(parts[1]);
-  const ct = fromBase64(parts[2]);
-  const tag = fromBase64(parts[3]);
+  const ivIdx = parts.length === 5 ? 2 : 1;
+  const ctIdx = parts.length === 5 ? 3 : 2;
+  const tagIdx = parts.length === 5 ? 4 : 3;
+  if (parts.length !== 4 && parts.length !== 5) {
+    throw new Error(
+      `Expected 'aes256gcm$iv$ct$tag' (legacy) or 'aes256gcm$iters$iv$ct$tag' (new), ` +
+      `got ${parts.length} parts`,
+    );
+  }
+  const iv = fromBase64(parts[ivIdx]);
+  const ct = fromBase64(parts[ctIdx]);
+  const tag = fromBase64(parts[tagIdx]);
   const combined = new Uint8Array(ct.length + tag.length);
   combined.set(ct, 0);
   combined.set(tag, ct.length);
@@ -159,6 +195,73 @@ export async function decryptField(
     toBufferSource(combined),
   );
   return decoder.decode(plaintext);
+}
+
+// Combined encrypt: derive key + encrypt, storing iterations in format
+export async function encryptFieldFull(
+  plaintext: string,
+  masterKey: string,
+  fieldName: string,
+  iterations?: number,
+): Promise<string> {
+  const iters = iterations ?? HASH_ITERATIONS;
+  const key = await deriveEncryptionKey(masterKey, fieldName, iters);
+  const nonce = new Uint8Array(ENCRYPT_IV_BYTES);
+  crypto.getRandomValues(nonce);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: toBufferSource(nonce), tagLength: 128 },
+    key,
+    toBufferSource(encoder.encode(plaintext)),
+  );
+  const combined = new Uint8Array(ciphertext);
+  const ctLen = combined.length - 16;
+  const ct = combined.slice(0, ctLen);
+  const tag = combined.slice(ctLen);
+  return `aes256gcm$${iters}$${toBase64(nonce)}$${toBase64(ct)}$${toBase64(tag)}`;
+}
+
+// Combined decrypt: parse iterations from format, derive key, decrypt
+export async function decryptFieldFull(
+  stored: string,
+  masterKey: string,
+  fieldName: string,
+): Promise<string> {
+  const parts = stored.split("$");
+  if (parts[0] !== "aes256gcm") {
+    throw new Error(
+      `Expected 'aes256gcm$iters$iv$ct$tag' format, got '${parts[0] || "unknown"}'`,
+    );
+  }
+  const iters = parts.length === 5 ? parseInt(parts[1], 10) : HASH_ITERATIONS;
+  const ivIdx = parts.length === 5 ? 2 : 1;
+  const ctIdx = parts.length === 5 ? 3 : 2;
+  const tagIdx = parts.length === 5 ? 4 : 3;
+  if (parts.length !== 4 && parts.length !== 5) {
+    throw new Error(
+      `Expected 'aes256gcm$iters$iv$ct$tag' (new) or 'aes256gcm$iv$ct$tag' (legacy), ` +
+      `got ${parts.length} parts`,
+    );
+  }
+  const key = await deriveEncryptionKey(masterKey, fieldName, iters);
+  const iv = fromBase64(parts[ivIdx]);
+  const ct = fromBase64(parts[ctIdx]);
+  const tag = fromBase64(parts[tagIdx]);
+  const combined = new Uint8Array(ct.length + tag.length);
+  combined.set(ct, 0);
+  combined.set(tag, ct.length);
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: toBufferSource(iv), tagLength: 128 },
+    key,
+    toBufferSource(combined),
+  );
+  return decoder.decode(plaintext);
+}
+
+// Extract iterations from an encrypt-format string
+export function parseEncryptIterations(stored: string): number {
+  const parts = stored.split("$");
+  if (parts[0] !== "aes256gcm") return HASH_ITERATIONS;
+  return parts.length === 5 ? parseInt(parts[1], 10) : HASH_ITERATIONS;
 }
 
 // ── Meta helpers ─────────────────────────────────────────────────────────
@@ -177,6 +280,22 @@ export function isSecretField(meta: Record<string, unknown>): boolean {
 
 // ── Write-time transforms (insert/update) ────────────────────────────────
 // Applies @hash, @encrypt, @secret to field values before DB write.
+
+function parseAnnotationValue(metaValue: string | boolean): { iterations?: number } {
+  if (typeof metaValue !== "string") return {};
+  const parenMatch = metaValue.match(/^\(([^)]*)\)$/);
+  if (!parenMatch) return {};
+  const result: Record<string, string> = {};
+  for (const part of parenMatch[1].split(",")) {
+    const eqIdx = part.indexOf("=");
+    if (eqIdx > 0) {
+      result[part.slice(0, eqIdx).trim()] = part.slice(eqIdx + 1).trim();
+    }
+  }
+  return {
+    ...(result.iterations ? { iterations: parseInt(result.iterations, 10) } : {}),
+  };
+}
 
 export async function applySecurityOnWrite(
   item: Record<string, unknown>,
@@ -200,17 +319,23 @@ export async function applySecurityOnWrite(
       const algo = metaObj.hash ?? metaObj["@hash"];
       if (algo === true || algo === "pbkdf2" || !algo) {
         item[field] = await hashPassword(String(value));
+      } else {
+        const opts = parseAnnotationValue(algo as string);
+        item[field] = await hashPassword(String(value), opts.iterations);
       }
       continue;
     }
 
     if (isEncryptField(metaObj as unknown as Record<string, unknown>)) {
       if (!encryptionKey) {
-        console.warn(`[@encrypt] field "${field}" skipped - no encryptionKey configured`);
-        continue;
+        throw new Error(
+          `[@encrypt] field "${field}" requires encryptionKey in ORMManager config. ` +
+          `Set encryptionKey (min 32 chars) or remove the @encrypt annotation.`,
+        );
       }
-      const fieldKey = await deriveEncryptionKey(encryptionKey, field);
-      item[field] = await encryptField(String(value), fieldKey);
+      const metaVal = metaObj.encrypt ?? metaObj["@encrypt"];
+      const opts = parseAnnotationValue(metaVal as string | boolean);
+      item[field] = await encryptFieldFull(String(value), encryptionKey, field, opts.iterations);
       continue;
     }
   }
@@ -247,14 +372,12 @@ export interface EncryptedField {
 
 function attachEncryptDecrypt(value: string, encryptionKey: string, fieldName: string): string {
   const raw = value;
-  let cachedKey: CryptoKey | undefined;
   const result: EncryptedField = {
     toString() { return raw; },
     valueOf() { return raw; },
     [Symbol.toPrimitive](hint: string): string | number { return hint === "number" ? NaN : raw; },
     async decrypt(): Promise<string> {
-      if (!cachedKey) cachedKey = await deriveEncryptionKey(encryptionKey, fieldName);
-      return decryptField(raw, cachedKey);
+      return decryptFieldFull(raw, encryptionKey, fieldName);
     },
   };
   return result as unknown as string;
@@ -278,8 +401,7 @@ export async function applySecurityOnRead(
       const isAuto = typeof metaVal === "string" && (metaVal === "auto" || metaVal.includes("decrypt=auto"));
       if (isAuto) {
         try {
-          const fieldKey = await deriveEncryptionKey(encryptionKey, field);
-          row[field] = await decryptField(value, fieldKey);
+          row[field] = await decryptFieldFull(value, encryptionKey, field);
         } catch (err) {
           console.warn(`[@encrypt] failed to decrypt field "${field}": ${err}`);
         }

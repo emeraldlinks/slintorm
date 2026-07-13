@@ -35,7 +35,10 @@ export {
   verifyPassword,
   encryptField,
   decryptField,
+  encryptFieldFull,
+  decryptFieldFull,
   deriveEncryptionKey,
+  clearKeyCache,
   type HashField,
 } from "./security.js";
 

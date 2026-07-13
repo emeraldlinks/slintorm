@@ -742,7 +742,7 @@ class InterfaceTokenParser {
   }
 
   private reportError(line: number, message: string): void {
-    // Suppressed — not critical
+    console.warn(`[schema generator] line ${line}: ${message}`);
   }
 }
 

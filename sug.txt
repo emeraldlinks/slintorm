@@ -1,0 +1,14 @@
+Security (security.js)
+Bump HASH_ITERATIONS (and the matching iteration count in deriveEncryptionKey) from 100,000 to 600,000+, as named constants kept in sync.
+Encode the iteration count into the stored format itself (pbkdf2$iterations$salt$hash, and the equivalent for the AES key derivation), so verifyPassword/decryptField read parameters from the stored value rather than trusting the current constant. Lets you raise the constant later without invalidating existing rows.
+Cache derived encryption keys — memoize deriveEncryptionKey(masterKey, fieldName) results in a Map so repeated encrypt/decrypt calls on the same field don't re-run a full PBKDF2 derivation every time.
+Make @encrypt throw, not console.warn and silently write plaintext, when encryptionKey isn't configured. Silent plaintext fallback contradicts the "handles security so you don't have to think about it" pitch.
+Confirm @secret actually enforces @omitjson-equivalent stripping from toJSON()/getAll() output — docs describe @secret as @hash + @omitjson + log-masking composited, but security.js only implements the hashing part; verify the omit/masking behavior elsewhere in the read/serialize path.
+DX / API design
+Support per-field iteration overrides using the same parenthesized key=value annotation syntax already used elsewhere (@random, @encrypt:(decrypt=auto)) — e.g. @hash:(iterations=600000) — rather than a separate global-only config path, so the annotation grammar stays uniform.
+Document the .verify()/.decrypt() wrapper-object behavior prominently as a named "gotcha" — typeof isn't "string", direct === comparison against a plain string fails even though toString()/valueOf() make most other usage transparent.
+Make error messages self-teaching, not just diagnostic — a malformed hash/encrypt value should explain the expected format inline (Expected 'pbkdf2$iterations$salt$hash'...) rather than just naming what's wrong.
+Schema generator (generator.js)
+Wire up reportError (currently a no-op, // Suppressed — not critical) to at least console.warn with file/line info, matching the pattern already used for Duplicate interface and Unknown relation target warnings elsewhere in the same file. Right now a field or interface the tokenizer can't parse is silently dropped rather than surfaced — the risk isn't misparsing (the tokenizer is solid), it's silent skip-on-failure.
+Note in docs that parseMetadata splits annotation content on ; naively — a literal semicolon inside an annotation value (e.g. @comment:some;text) will misparse into extra spurious metadata keys. Minor, but worth flagging as an unsafe character in annotation values.
+Lower priority: parseRelationDirective uses regex against comment text rather than the tokenizer — fine for typical single-line relation annotations, but multi-line or unusually formatted relation directives could slip past the \s+ assumptions. Worth a test case if relation annotations ever get more complex.

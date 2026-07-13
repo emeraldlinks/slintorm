@@ -1,5 +1,21 @@
 # SlintORM Annotation Roadmap
 
+## ✅ Shipped
+
+### v1.9.1 — Row-Level Security
+
+| Feature | Behavior |
+|---|---|
+| `rls: true` config option | Enables automatic `set_config()` calls before every query, propagating OrmContext values as PostgreSQL session parameters for RLS policies. |
+| `orm.withContext({ tenant_id: "abc" })` | Sets RLS context values (prefixed with `rls.`). |
+| `orm.rlsEnabled()` | Returns whether RLS mode is active. |
+| Session-scoped `set_config` | Uses `false` for session scope so settings persist across queries on the same connection. |
+| Redundant call skipping | Caches last-set RLS values to avoid repeated `set_config` calls for unchanged context. |
+
+**Requirements:** The database user must NOT have `BYPASSRLS` attribute (superusers bypass RLS). Use a dedicated application role.
+
+---
+
 ## ✅ Shipped — v1.9.0
 
 ### Security Annotations
@@ -299,3 +315,16 @@ Log redaction: in `model.ts`, when logging SQL params (if `logs: true`), replace
 | 11. @fulltext / @spatial / @partialIndex | Generator + migrator | High |
 
 Batches with no dependencies can be implemented in parallel.
+
+---
+
+### 6. Security Hardening (sug.txt)
+
+| # | Item | File | What |
+|---|---|---|---|
+| 1 | Bump HASH_ITERATIONS | `src/security.ts` | Increase from 100,000 to 600,000+. Encode iteration count into stored format so existing hashes stay valid when the constant changes. |
+| 2 | Cache `deriveEncryptionKey` | `src/security.ts` | Memoize per-field key derivation in a Map so repeated encrypt/decrypt on the same field don't re-run PBKDF2. |
+| 3 | `@encrypt` throws on missing key | `src/security.ts` | Replace `console.warn` + silent skip with a throw when `encryptionKey` isn't configured. |
+| 4 | Per-field iteration override | `src/generator.ts` | `@hash:(iterations=600000)` — annotation grammar uniform with `@encrypt:(decrypt=auto)`. |
+| 5 | Wire up `reportError` | `src/generator.ts` | Change no-op to `console.warn` with file/line info. |
+| 6 | Self-teaching errors | `src/security.ts` | Malformed hash/encrypt values should explain expected format inline. |

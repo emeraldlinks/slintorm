@@ -2,6 +2,9 @@
 
 Minimal fully-typed ORM for TypeScript with SQLite / PostgreSQL / MySQL / MongoDB support, edge/serverless runtime support, schema generation from TypeScript interfaces, and a multi-hop relation resolver.
 
+> **v1.9.1** — Features below marked with a version label (e.g. `[v1.7]`) are shipped in that release.
+> Features WITHOUT a version label or marked "Planned" / "🔲" do NOT exist yet. Do not generate code for unshipped features.
+
 ## Key Files
 
 | Path | Purpose |
@@ -136,6 +139,8 @@ interface ORMManagerConfig<TModelMap> {
   replicas?: string[];                         // Read replica URLs (round-robin)
   poolSize?: number;                           // PG/MySQL connection pool
   exec?: ExecFn;                               // Custom exec (edge mode)
+  encryptionKey?: string;                      // [v1.7] Master key for @encrypt (min 32 chars)
+  rls?: boolean;                               // [v1.9.1] Enable RLS support (PostgreSQL only)
 }
 ```
 
@@ -176,6 +181,8 @@ class ORMManager<TModelMap extends AnyModelMap = AnyModelMap> {
 
   preparedMode(enabled: boolean): this;
   isPreparedMode(): boolean;
+
+  rlsEnabled(): boolean;                     // [v1.9.1] Returns whether RLS mode is active
 
   addDatabase(name, config: { driver?, databaseUrl?, exec?, logs? }): this;
   getDatabase(name);
@@ -499,6 +506,28 @@ const ctx = orm.getContext();
 orm.clearContext();
 ```
 
+### Row-Level Security (RLS) [v1.9.1]
+PostgreSQL only. Requires a database user WITHOUT the `BYPASSRLS` attribute (superusers bypass RLS).
+
+```typescript
+const orm = new ORMManager({
+  driver: "postgres",
+  databaseUrl: process.env.DATABASE_URL!,
+  rls: true,                           // enable RLS support
+});
+
+// Set tenant context before queries
+orm.withContext({ tenant_id: "tenant_a" });
+const rows = await Items.getAll();     // SELECT set_config('rls.tenant_id', 'tenant_a', false)
+                                       // then SELECT ... WHERE RLS policy filters
+
+orm.clearContext();
+orm.withContext({ tenant_id: "tenant_b" });
+const rowsB = await Items.getAll();    // different tenant → different results
+```
+
+The ORM calls `SELECT set_config('rls.<key>', <value>, false)` before every query, setting PostgreSQL session parameters that RLS policies reference via `current_setting('rls.tenant_id', true)`. Repeated calls with the same values are skipped (cached).
+
 ### Prepared statement mode
 ```typescript
 orm.preparedMode(true);
@@ -527,6 +556,8 @@ await orm.runAllSeeds();
 ### Interface metadata via `//` comments
 
 The generator reads `//` line comments (NOT `/** */` block comments) that immediately precede a field. A single `@` prefix starts the annotation; subsequent tags are separated by `;`. Key-value pairs use `:`.
+
+**⚠️ `;` is unsafe in annotation values.** The `parseMetadata` function splits on `;` naively. A literal semicolon inside a value (e.g. `@comment:some;text`) will misparse into extra spurious metadata keys.
 
 ```typescript
 interface User {
@@ -706,10 +737,12 @@ try {
 12. **Stream interleaves requests** — The `stream()` async generator does NOT buffer the entire result set; it fetches batch by batch
 13. **Schema generator rejects certain field names** — Keywords like `?`, `:`, `;`, `{`, `}`, `[`, `]`, `<`, `>`, quoted keys, numeric keys all produce clear warnings with the interface name
 14. **Bug #1 fixed**: entity.refresh()/update()/delete() close over PK value, not the original filter — so calling entity.update({ name: "new" }) followed by entity.refresh() works
+15. **`@secret` is just `@hash` + `@omitjson`** — it does NOT add log redaction. `@secret` fields are hashed on write and stripped from read results (same as `@omitjson`), but SQL logging is NOT redacted.
+16. **`reportError` in the schema generator is currently a no-op** (`// Suppressed — not critical` at `generator.ts:744`). Fields/interfaces the tokenizer can't parse are silently dropped rather than surfaced.
 
 ## Annotations
 
-### @mask — output masking on read
+### @mask — output masking on read [v1.5]
 
 | Directive | Effect |
 |---|---|
@@ -725,7 +758,7 @@ try {
 
 Bypass with `.withoutMasking()` on the query builder.
 
-### @omit family — visibility control
+### @omit family — visibility control [v1.5]
 
 | Annotation | Storage | Read visibility |
 |---|---|---|
@@ -733,7 +766,7 @@ Bypass with `.withoutMasking()` on the query builder.
 | `@omitjson` | Stored in DB | Stripped from reads (returned on `.select()`) |
 | `@omitmigrate` | Manual DDL | Full visibility |
 
-### @hash / @encrypt / @secret — security annotations
+### @hash / @encrypt / @secret — security annotations [v1.7]
 
 | Annotation | Storage | Read behavior |
 |---|---|---|
@@ -742,14 +775,28 @@ Bypass with `.withoutMasking()` on the query builder.
 | `@encrypt:(decrypt=auto)` | Same as `@encrypt` | Auto-decrypted on read; returns plain `string` transparently |
 | `@secret` | `@hash` + `@omitjson` combined | Returned in runtime objects but excluded from `JSON.stringify` / `.toJSON()` output |
 
+**⚠️ Gotcha: `.verify()` and `.decrypt()` return wrapper objects, not plain strings:**
+```typescript
+const user = await User.get({ id: 1 });
+typeof user.password;            // "string" at runtime (object coercion)
+user.password === "pbkdf2$...";  // true — comparison works via valueOf()
+user.password.verify("secret");  // ✅ works
+const str: string = user.password; // ✅ assignable to string
+
+// BUT direct === comparison against a plain string literal fails:
+if (user.password === "pbkdf2$...") {} // false — different object identity
+// Use .verify() for @hash, .decrypt() for @encrypt, or compare via toString()
+```
+
 **Requirements:**
 - `@encrypt` requires passing `encryptionKey` (min 32 chars) to the ORM constructor
 - Fields with `@encrypt` must be `TEXT`/`string` type (output is base64-encoded ciphertext)
 - `@encrypt` (default) exposes raw ciphertext with `.decrypt()`; append `:(decrypt=auto)` for transparent auto-decryption
 - `@hash` fields get `.verify()` in the generated interface type when using the generated schema types for full type safety
 - `@encrypt` fields get `.decrypt()` in the generated interface type (unless `:auto` variant)
+- `@secret` IS shipped (contrary to some docs). It enforces `@hash` + `@omitjson` combined — hashed on write, stripped from all read results.
 
-### @random — auto-generated field values on insert
+### @random — auto-generated field values on insert [v1.3]
 
 Generates a random value when no explicit value is provided on insert.
 
@@ -790,7 +837,7 @@ Append `pfx=...` and/or `sfx=...` to any variant:
 - Supports both `@random:` and `@random(...)` comment syntax
 - Works with any field type (use `INTEGER` for numeric fields with `@random:number`)
 
-### @email / @url / @uuid / @phone — format validators
+### @email / @url / @uuid / @phone — format validators [v1.7]
 
 Validates field value at insert/update time. Throws `ValidationError` on mismatch.
 
@@ -801,21 +848,21 @@ Validates field value at insert/update time. Throws `ValidationError` on mismatc
 | `@uuid` | UUID v4 format (`550e8400-...`) |
 | `@phone` | Phone number (7–15 digits after stripping non-digits) |
 
-### @min / @max — numeric range
+### @min / @max — numeric range [v1.7]
 
 | Annotation | Behavior |
 |---|---|
 | `@min:N` | Value must be ≥ N (coerces strings to Number) |
 | `@max:N` | Value must be ≤ N |
 
-### @minLength / @maxLength — string length
+### @minLength / @maxLength — string length [v1.7]
 
 | Annotation | Behavior |
 |---|---|
 | `@minLength:N` | String must be ≥ N characters |
 | `@maxLength:N` | String must be ≤ N characters |
 
-### @pattern — custom regex
+### @pattern — custom regex [v1.7]
 
 | Annotation | Behavior |
 |---|---|
