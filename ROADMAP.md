@@ -1,6 +1,46 @@
 # SlintORM Annotation Roadmap
 
-## ✅ Shipped — v1.5.0
+## ✅ Shipped — v1.9.0
+
+### Security Annotations
+
+| Annotation | Behavior |
+|---|---|
+| `@hash` | PBKDF2 hashing on write; `.verify(plaintext)` method attached on read |
+| `@encrypt` | AES-256-GCM encryption on write; raw ciphertext with `.decrypt()` method on read |
+| `@encrypt:(decrypt=auto)` | Same encryption; auto-decrypted to plain `string` on read |
+| `@secret` | `@hash` + `@omitjson` combined — PBKDF2 hashed, excluded from JSON output |
+| `.verify()` | Type-safe on `@hash` fields in generated schema types |
+| `.decrypt()` | Type-safe on `@encrypt` fields in generated schema types |
+
+### Validation Annotations
+
+| Annotation | Validates |
+|---|---|
+| `@email` | RFC 5322-ish email regex |
+| `@url` | URL with protocol |
+| `@uuid` | UUID v4 format |
+| `@phone` | 7–15 digit phone (non-digits stripped) |
+| `@min:N` | Numeric minimum |
+| `@max:N` | Numeric maximum |
+| `@minLength:N` | String minimum length |
+| `@maxLength:N` | String maximum length |
+| `@pattern:regex` | Custom regular expression |
+
+### Random / Auto-generation
+
+| Annotation | Behavior |
+|---|---|
+| `@random:string:N` | Alphanumeric string of length N |
+| `@random:number:N` | Numeric string of N digits |
+| `@random:alnum(N)` | Mixed-case alphanumeric |
+| `@random:alnum(N, upper/lower)` | Case-controlled alphanumeric |
+| `@random:lower(N)` | Lowercase letters only |
+| `@random:upper(N)` | Uppercase letters only |
+| `@random:hex(N)` | Lowercase hex |
+| `@random:hex(N, upper)` | Uppercase hex |
+| `@random:custom(CHARS, N)` | Custom charset |
+| Prefix/suffix via `pfx=` / `sfx=` | Works with all variants |
 
 ### Omit / Visibility Family
 
@@ -25,95 +65,9 @@
 | `@mask:pattern:...` | `#` = keep, rest literal. `###-##-####` → `123-**-6789` |
 | `.withoutMasking()` | Bypass all masks on query builder chain |
 
----
-
 ## ⬜ Planned
 
-### 1. Validation Annotations — zero-dep regex validators
-
-Annotations that validate field values at insert/update time, throwing `ValidationError` on mismatch. Runs inside `ModelAPI.insert()` / `ModelAPI.update()` automatically (opt-in per field, no separate `validate()` call needed).
-
-```
-@email          — RFC 5322-ish email regex
-@url            — URL with protocol
-@uuid           — UUID v4 (hex+hyphens)
-@phone          — E.164 or common formatting
-@min:N          — Numeric minimum (inclusive)
-@max:N          — Numeric maximum (inclusive)
-@minLength:N    — String minimum length (code points)
-@maxLength:N    — String maximum length (code points)
-@pattern:regex  — Custom regular expression
-```
-
-**Implementation plan:**
-
-| Step | File(s) | What |
-|---|---|---|
-| Generator parse | `src/generator.ts` | Add `@email`, `@url`, `@uuid`, `@phone`, `@min:N`, `@max:N`, `@minLength:N`, `@maxLength:N`, `@pattern:regex` to recognized tag list. Store as `validation` key in field metadata. `@pattern:regex` stores the raw regex string. |
-| Validation registry | `src/extensions.ts` | New `validationAnnotations` map (pattern → validator fn). Each validator returns `string | null` (error message or null). |
-| Auto-validate hook | `src/model.ts` | In `insert()` and `update()` (and `insertMany()`, `upsert()`), after `onCreateBefore`/`onUpdateBefore` hooks but before DB write, iterate fields with `validation` metadata and run each validator. Collect errors and throw `ValidationError` with `errors` map if any fail. |
-| Driver awareness | `src/model.ts` | Numeric `@min`/`@max` coerce strings to Number. `@minLength`/`@maxLength` check `.length` on strings, throw if field is not string. `@pattern` uses `new RegExp(pattern)` — must handle malformed patterns gracefully (skip + warn). |
-
-**Edge cases:**
-- `@min` / `@max` on non-numeric fields → warn and skip
-- `@email` on `null` / `undefined` → skip if `@nullable`, fail if not
-- `@pattern` with invalid regex → skip + warn, don't crash
-- Multiple validators on one field → run all, collect all errors
-- Inline annotations (`field: string; // @email`) → must parse same as stacked
-
-**Test strategy:**
-- Unit-test each validator in isolation (regex matching, edge inputs)
-- Integration test: valid insert passes, invalid insert throws with correct error map
-- Test that validators do NOT run on reads or deletes
-- Test `@nullable` + validator: null skips validation
-
----
-
-### 2. Security Annotations — Node.js built-in `crypto`
-
-Transparent encryption/ hashing at write time, automatic decryption/verification at read time. Uses only `node:crypto` — zero npm dependencies.
-
-```
-@hash:pbkdf2     — PBKDF2 with 100k iterations, random salt. Stored as "pbkdf2$salt$hash"
-@hash:scrypt     — scrypt (memory-hard). Stored as "scrypt$salt$hash". Upgradeable per-field.
-@encrypt:AES-256-GCM  — Authenticated encryption with random IV + auth tag. Tamper-detection.
-@encrypt:CBC     — Simpler AES-256-CBC. No auth tag. Faster, less secure.
-@token:bytes:N   — crypto.randomBytes(N). Configurable prefix + encoding (hex/base64). Auto-fills on insert.
-```
-
-**Implementation plan:**
-
-| Step | File(s) | What |
-|---|---|---|
-| Key management | `src/index.ts` (config) | Add `encryptionKey?: string` to `ORMManagerConfig`. Derive per-field HKDF keys from master key + field name. Warn at init if `@encrypt` is used without a key. |
-| @hash generator | `src/generator.ts` | Parse `@hash:pbkdf2` / `@hash:scrypt` as field metadata. Store hash params (algorithm, iterations if custom) |
-| @hash runtime | `src/model.ts` | On `insert()`/`update()`: run `crypto.pbkdf2Sync` or `crypto.scryptSync` before write. Replace field value with encoded string. On reads: no auto-verify (one-way). |
-| @hash verify | `src/extensions.ts` | Add `.verifyPassword(field, plaintext)` method to `ModelAPI` and `EntityWithUpdate`. Does constant-time comparison via `crypto.timingSafeEqual`. |
-| @encrypt generator | `src/generator.ts` | Parse `@encrypt:AES-256-GCM` / `@encrypt:CBC`. Store cipher algorithm. |
-| @encrypt runtime | `src/model.ts` | On write: generate random IV, encrypt, prepend IV to ciphertext (format: `iv:ciphertext:tag` for GCM). On read: parse IV, decrypt transparently so `user.get()` returns plaintext. |
-| @token generator | `src/generator.ts` | Parse `@token:bytes:N` plus optional `:hex` / `:base64` / `:prefix:ABC`. |
-| @token runtime | `src/model.ts` | On insert, if field is empty/null, generate `crypto.randomBytes(N)`, apply encoding + prefix. Never overwrite existing values. |
-
-**Edge cases:**
-- `@encrypt` without encryption key in config → warn at defineModel(), skip encryption
-- Key rotation: no built-in re-encrypt (out of scope). Document that users can read all rows, decrypt, encrypt with new key, write back.
-- `@hash` + `@unique` on same field: hashed values are unique but not reversible. Document that uniqueness is on the hash, not the plaintext.
-- `@token` + `@unique`: fine, random bytes are collision-resistant.
-- `@encrypt` + `@index`: indexing encrypted values is useless. Warn at generate time.
-- `@encrypt` on JSON fields: encrypt the serialized JSON string, not the raw object.
-- Nullable encrypted fields: null stays null, don't encrypt null.
-
-**Test strategy:**
-- Unit: pbkdf2/scrypt produce stable format, verify() rejects wrong password
-- Unit: AES-GCM encrypt/decrypt round-trip with random IV
-- Unit: AES-GCM tampered ciphertext throws on read
-- Integration: insert with `@hash`, verify() succeeds, wrong password fails
-- Integration: insert with `@encrypt`, get() returns plaintext, DB stores ciphertext
-- Integration: `@token` auto-fills on insert, doesn't overwrite on update
-
----
-
-### 3. Sanitization — input transforms on write
+### 1. Sanitization — input transforms on write
 
 Runs before validation and before DB write. Transforms the value in-place (mutates the data object). Chainable: multiple `@sanitize` directives on one field apply in declaration order.
 
@@ -149,7 +103,7 @@ Runs before validation and before DB write. Transforms the value in-place (mutat
 
 ---
 
-### 4. Expiry & Audit — time-based expiration + CUD tracking
+### 2. Expiry & Audit — time-based expiration + CUD tracking
 
 ```
 @expires:Nd / :Nh / :Nm  — Auto-expire after N days/hours/minutes
@@ -185,7 +139,7 @@ Runs before validation and before DB write. Transforms the value in-place (mutat
 
 ---
 
-### 5. Multi-tenant — automatic row-level isolation
+### 3. Multi-tenant — automatic row-level isolation
 
 ```
 @tenant    — Auto-filter all queries by ctx.tenantId. Auto-set on insert.
@@ -220,7 +174,7 @@ Runs before validation and before DB write. Transforms the value in-place (mutat
 
 ---
 
-### 6. Relation Shortcuts — concise alternatives to verbose `@relation`
+### 4. Relation Shortcuts — concise alternatives to verbose `@relation`
 
 ```
 @belongsTo:Model         → @relation manytoone:Model;foreignKey:modelId
@@ -255,7 +209,7 @@ Runs before validation and before DB write. Transforms the value in-place (mutat
 
 ---
 
-### 7. Data Lifecycle & DDL Extras
+### 5. Data Lifecycle & DDL Extras
 
 ```
 @slug:sourceField              — Auto-generate URL slug from source field on insert

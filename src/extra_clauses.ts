@@ -100,6 +100,11 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
     }
 
     // ---- FOR UPDATE / FOR SHARE (row locking) --------------------------------
+    if (this._forUpdate || this._forNoKeyUpdate || this._forShare) {
+      if (this.orm?.dialect === "sqlite") {
+        throw new Error("Row locking (FOR UPDATE / FOR SHARE) is not supported on SQLite");
+      }
+    }
     if (this._forUpdate) {
       let lockClause = " FOR UPDATE";
       if (this._lockTables.length) {
@@ -199,11 +204,13 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
 
   // ── Joins ──────────────────────────────────────────────────────────────────
   rightJoin(table: string, onLeft: string, op: string, onRight: string) {
+    if (this.orm?.dialect === "sqlite") throw new Error("RIGHT JOIN is not supported on SQLite");
     this._joins.push(`RIGHT JOIN ${table} ON ${onLeft} ${op} ${onRight}`);
     return this;
   }
 
   fullOuterJoin(table: string, onLeft: string, op: string, onRight: string) {
+    if (this.orm?.dialect === "sqlite") throw new Error("FULL OUTER JOIN is not supported on SQLite");
     this._joins.push(`FULL OUTER JOIN ${table} ON ${onLeft} ${op} ${onRight}`);
     return this;
   }

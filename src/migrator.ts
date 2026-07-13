@@ -279,7 +279,7 @@ export class Migrator {
               ? "DEFAULT (datetime('now'))"
               : "DEFAULT CURRENT_TIMESTAMP";
         } else if (typeof defVal === "boolean") {
-          defaultClause = `DEFAULT ${defVal ? 1 : 0}`;
+          defaultClause = `DEFAULT ${defVal ? "TRUE" : "FALSE"}`;
         } else if (typeof defVal === "string") {
           defaultClause = `DEFAULT '${defVal}'`;
         } else {
@@ -604,7 +604,7 @@ export class Migrator {
       if (def === "CURRENT_TIMESTAMP") {
         value =
           this.driver === "sqlite"
-            ? "strftime('%s','now')"
+            ? "datetime('now')"
             : "CURRENT_TIMESTAMP";
       } else if (typeof def === "boolean") {
         value = def ? 1 : 0;
@@ -721,7 +721,8 @@ export class Migrator {
     let params: any[] = [];
     switch (this.driver) {
       case "sqlite":
-        query = `SELECT name FROM sqlite_master WHERE type='table' AND name='${table}'`;
+        query = `SELECT name FROM sqlite_master WHERE type='table' AND name=?`;
+        params = [table];
         break;
       case "postgres":
         query = `SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname='public' AND tablename=$1`;

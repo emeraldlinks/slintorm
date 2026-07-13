@@ -184,12 +184,15 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       await migrator.ensureTable(tableName, schemaForTable?.fields || {}, schemaForTable?.relations);
     }
 
+    const q = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
+
     function buildWhereClause(filter: Partial<T>) {
       const keys = Object.keys(filter);
       if (!keys.length) throw new Error("Filter must contain at least one field");
       if (driver === "mongodb") return { mongoFilter: filter };
+      const isPg = driver === "postgres";
       const clause = keys
-        .map((k, i) => driver === "postgres" ? `"${k}" = $${i + 1}` : `${k} = ?`)
+        .map((k, i) => `${q(k)} = ${isPg ? `$${i + 1}` : "?"}`)
         .join(" AND ");
       const params = keys.map((k) => filter[k as keyof T]);
       return { clause, params };
@@ -265,13 +268,12 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         return 0;
       }
       const isPg = driver === "postgres";
-      const w = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
       const keys = filter ? Object.keys(filter) : [];
       const whereClause = keys.length
-        ? "WHERE " + keys.map((k, i) => `${w(k)} = ${isPg ? `$${i + 1}` : "?"}`).join(" AND ")
+        ? "WHERE " + keys.map((k, i) => `${q(k)} = ${isPg ? `$${i + 1}` : "?"}`).join(" AND ")
         : "";
       const params = keys.map((k) => (filter as any)[k]);
-      const res = await adapter.exec(`SELECT ${fn}(${w(column)}) as __val FROM ${w(tableName)} ${whereClause}`, params);
+      const res = await adapter.exec(`SELECT ${fn}(${q(column)}) as __val FROM ${q(tableName)} ${whereClause}`, params);
       return parseFloat(res.rows?.[0]?.__val ?? "0");
     }
 
@@ -421,23 +423,21 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           if (versionField) {
             const currentVersion = (before as any)?.[versionField] ?? (where as any)[versionField];
             if (currentVersion !== undefined) {
-              versionClause = isPg
-                ? ` AND "${versionField}" = $${setCols.length + whereCols.length + 1}`
-                : ` AND ${versionField} = ?`;
+              versionClause = ` AND ${q(versionField)} = ${isPg ? `$${setCols.length + whereCols.length + 1}` : "?"}`;
               if (!setCols.includes(versionField)) {
                 (data as any)[versionField] = Number(currentVersion) + 1;
               }
             }
           }
 
-          const setClause = setCols.map((c, i) => isPg ? `"${c}" = $${i + 1}` : `${c} = ?`).join(", ");
-          const whereClause = whereCols.map((c, i) => isPg ? `"${c}" = $${setCols.length + i + 1}` : `${c} = ?`).join(" AND ");
+          const setClause = setCols.map((c, i) => `${q(c)} = ${isPg ? `$${i + 1}` : "?"}`).join(", ");
+          const whereClause = whereCols.map((c, i) => `${q(c)} = ${isPg ? `$${setCols.length + i + 1}` : "?"}`).join(" AND ");
           const params = [...setCols.map((c) => serializeValue(c, (data as any)[c])), ...whereCols.map((c) => where[c as keyof T])];
           if (versionClause) {
             params.push((before as any)?.[versionField as string]);
           }
           await adapter.exec(
-            `UPDATE ${isPg ? `"${tableName}"` : tableName} SET ${setClause} WHERE ${whereClause}${versionClause}`,
+            `UPDATE ${q(tableName)} SET ${setClause} WHERE ${whereClause}${versionClause}`,
             params
           );
         }
@@ -458,7 +458,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           await adapter.exec(JSON.stringify({ collection: tableName, action: "delete", filter }));
         } else {
           const { clause, params } = buildWhereClause(filter) as { clause: string; params: any[] };
-          await adapter.exec(`DELETE FROM ${tableName} WHERE ${clause}`, params);
+          await adapter.exec(`DELETE FROM ${q(tableName)} WHERE ${clause}`, params);
         }
         if (hooks?.onDeleteAfter) await hooks.onDeleteAfter(toDelete || filter);
         await emit("afterDelete", toDelete, filter);
@@ -474,7 +474,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           record = res.rows[0] || null;
         } else {
           const { clause, params } = buildWhereClause(filter) as { clause: string; params: any[] };
-          const res = await adapter.exec(`SELECT * FROM ${tableName} WHERE ${clause} LIMIT 1`, params);
+          const res = await adapter.exec(`SELECT * FROM ${q(tableName)} WHERE ${clause} LIMIT 1`, params);
           record = res.rows[0] || null;
         }
 
@@ -498,7 +498,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       async getAll() {
         const res = driver === "mongodb"
           ? await adapter.exec(JSON.stringify({ collection: tableName, action: "find" }))
-          : await adapter.exec(`SELECT * FROM ${tableName}`);
+          : await adapter.exec(`SELECT * FROM ${q(tableName)}`);
         const rows = await Promise.all(res.rows.map(async (r: T) => {
           const row = mapJson(mapBooleans(r, modelSchema.fields), modelSchema.fields);
           const cleaned = applyMasks(stripOmitJson(stripOmitDb(row, modelSchema.fields), modelSchema.fields), modelSchema.fields);
@@ -533,19 +533,19 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         const isPg = driver === "postgres";
         const keys = filter ? Object.keys(filter) : [];
         const whereClause = keys.length
-          ? "WHERE " + keys.map((k, i) => `"${k}" = ${isPg ? `$${i + 1}` : "?"}`).join(" AND ")
+          ? "WHERE " + keys.map((k, i) => `${q(k)} = ${isPg ? `$${i + 1}` : "?"}`).join(" AND ")
           : "";
-        const res = await adapter.exec(`SELECT COUNT(*) as count FROM "${tableName}" ${whereClause}`, keys.map((k) => (filter as any)[k]));
+        const res = await adapter.exec(`SELECT COUNT(*) as count FROM ${q(tableName)} ${whereClause}`, keys.map((k) => (filter as any)[k]));
         return parseInt(res.rows?.[0]?.count ?? "0", 10);
       },
 
       async exists(filter: Partial<T>) {
         const { clause, params } = buildWhereClause(filter) as { clause: string; params: any[] };
-        const res = await adapter.exec(`SELECT 1 FROM ${tableName} WHERE ${clause} LIMIT 1`, params);
+        const res = await adapter.exec(`SELECT 1 FROM ${q(tableName)} WHERE ${clause} LIMIT 1`, params);
         return !!res.rows.length;
       },
 
-      async truncate() { await adapter.exec(`DELETE FROM ${tableName}`); },
+      async truncate() { await adapter.exec(`DELETE FROM ${q(tableName)}`); },
 
       async sum(column: keyof T & string, filter?: Partial<T>) { return scalarAggregate("SUM", column, filter); },
       async avg(column: keyof T & string, filter?: Partial<T>) { return scalarAggregate("AVG", column, filter); },
@@ -789,7 +789,8 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           if (!schemaEntry) schemaEntry = schemas[morphType];
           if (!schemaEntry) return null;
           const targetTable = (schemaEntry as any).table || morphType;
-          const res = await adapter.exec(`SELECT * FROM "${targetTable}" WHERE "id" = ?`, [morphId]);
+          const ph = driver === "postgres" ? "$1" : "?";
+          const res = await adapter.exec(`SELECT * FROM ${q(targetTable)} WHERE ${q("id")} = ${ph}`, [morphId]);
           if (!res.rows?.length) return null;
           return res.rows[0];
         })();
@@ -804,7 +805,8 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           );
           if (!schemaEntry) schemaEntry = schemas[morphValue];
           const targetTable = (schemaEntry as any)?.table || morphValue;
-          const res = await adapter.exec(`SELECT * FROM "${targetTable}" WHERE "${String(resolvedType)}" = ?`, [morphValue]);
+          const ph = driver === "postgres" ? "$1" : "?";
+          const res = await adapter.exec(`SELECT * FROM ${q(targetTable)} WHERE ${q(String(resolvedType))} = ${ph}`, [morphValue]);
           return res.rows || [];
         })();
       },

@@ -169,7 +169,7 @@ export async function snapshotCurrentGeneratedSchema(options: {
   const dir = options.dir ?? "src";
 
   await ensureMigrationsTable(options.exec, driver as string);
-  const batch = await getLastBatch(options.exec);
+  const batch = await getLastBatch(options.exec, driver as string);
   return snapshotGeneratedSchema(dir, batch);
 }
 
@@ -274,25 +274,32 @@ async function ensureMigrationsTable(exec: ExecFn, driver: string) {
   await exec(sql);
 }
 
-async function getApplied(exec: ExecFn): Promise<{ id: number; name: string; batch: number; run_at: string }[]> {
-  const r = await exec(`SELECT * FROM "${MIGRATIONS_TABLE}" ORDER BY id ASC`);
+function quoteId(driver: string, name: string): string {
+  return driver === "mysql" ? `\`${name}\`` : `"${name}"`;
+}
+
+async function getApplied(exec: ExecFn, driver?: string): Promise<{ id: number; name: string; batch: number; run_at: string }[]> {
+  const q = quoteId(driver || "sqlite", MIGRATIONS_TABLE);
+  const r = await exec(`SELECT * FROM ${q} ORDER BY id ASC`);
   return r.rows;
 }
 
-async function getLastBatch(exec: ExecFn): Promise<number> {
-  const r = await exec(`SELECT MAX(batch) as b FROM "${MIGRATIONS_TABLE}"`);
+async function getLastBatch(exec: ExecFn, driver?: string): Promise<number> {
+  const q = quoteId(driver || "sqlite", MIGRATIONS_TABLE);
+  const r = await exec(`SELECT MAX(batch) as b FROM ${q}`);
   return parseInt(r.rows[0]?.b ?? "0", 10);
 }
 
 async function insertMigrationRow(exec: ExecFn, driver: string, name: string, batch: number) {
+  const q = quoteId(driver, MIGRATIONS_TABLE);
   if (driver === "mongodb") {
-    await exec(`INSERT INTO "${MIGRATIONS_TABLE}" (name, batch) VALUES (?,?)`, [name, batch]);
+    await exec(`INSERT INTO ${q} (name, batch) VALUES (?,?)`, [name, batch]);
     return;
   }
 
   const isPg = driver === "postgres";
   await exec(
-    `INSERT INTO "${MIGRATIONS_TABLE}" (name, batch) VALUES (${isPg ? "$1,$2" : "?,?"})`,
+    `INSERT INTO ${q} (name, batch) VALUES (${isPg ? "$1,$2" : "?,?"})`,
     [name, batch]
   );
 }
@@ -323,7 +330,7 @@ export async function runMigrations(options: MigrationRunOptions): Promise<Migra
   await ensureMigrationsTable(options.exec, driver as string);
 
   const plan = schemaToPlan(schema);
-  const rows = await getApplied(options.exec);
+  const rows = await getApplied(options.exec, driver as string);
   const records = loadMigrationRecords(dir);
   const dbApplied = new Set(rows.map((r) => r.name));
 
@@ -342,7 +349,7 @@ export async function runMigrations(options: MigrationRunOptions): Promise<Migra
 
   if (!pending.length) {
     const result = {
-      batch: await getLastBatch(options.exec),
+      batch: await getLastBatch(options.exec, driver as string),
       applied: 0,
       pending: [],
     };
@@ -351,7 +358,7 @@ export async function runMigrations(options: MigrationRunOptions): Promise<Migra
   }
 
   const migrator = new Migrator(options.exec, driver as any);
-  const batch = (await getLastBatch(options.exec)) + 1;
+  const batch = (await getLastBatch(options.exec, driver as string)) + 1;
   let appliedCount = 0;
 
   if (batch === 1) {

@@ -226,10 +226,13 @@ export class QueryBuilder<T extends Record<string, any>> {
 
   whereColumnsIn<K extends keyof T>(columns: K[], values: Array<Array<T[K]>>) {
     if (!columns.length || !values.length) return this;
-    const ph = values.map(() => `(${columns.map(() => "?").join(", ")})`).join(", ");
+    const dialect = Dialects[this.orm?.dialect || "sqlite"];
+    let idx = 0;
+    const ph = values.map(() => `(${columns.map(() => dialect.formatPlaceholder(idx++)).join(", ")})`).join(", ");
     const flat = values.flat();
+    const quotedCols = columns.map((c) => dialect.quoteIdentifier(String(c))).join(", ");
     this._where.push({
-      raw: `(${columns.map(String).join(", ")}) IN (${ph})`,
+      raw: `(${quotedCols}) IN (${ph})`,
       rawParams: flat,
       kind: "and",
     });
