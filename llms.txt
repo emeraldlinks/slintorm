@@ -2,7 +2,7 @@
 
 Minimal fully-typed ORM for TypeScript with SQLite / PostgreSQL / MySQL / MongoDB support, edge/serverless runtime support, schema generation from TypeScript interfaces, and a multi-hop relation resolver.
 
-> **v1.9.1** — Features below marked with a version label (e.g. `[v1.7]`) are shipped in that release.
+> **v1.9.3** — Features below marked with a version label (e.g. `[v1.7]`) are shipped in that release.
 > Features WITHOUT a version label or marked "Planned" / "🔲" do NOT exist yet. Do not generate code for unshipped features.
 
 ## Key Files
