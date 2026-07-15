@@ -93,14 +93,16 @@ export async function hashBalloon(
   for (let i = 1; i < sCost; i++) {
     block[i] = await sha256(concatBytes(block[i - 1], toUint32LE(i)));
   }
-  // Mix step
+  // Mix step (deterministic — other index derived from H(block[i] || t || i))
   for (let t = 0; t < time; t++) {
     for (let i = 0; i < sCost; i++) {
       const prev = i === 0 ? block[sCost - 1] : block[i - 1];
       block[i] = await sha256(xorBytes(block[i], prev));
       for (let d = 0; d < delta; d++) {
-        const idxOther = crypto.getRandomValues(new Uint32Array(1))[0] % sCost;
-        block[i] = await sha256(xorBytes(block[i], await sha256(concatBytes(block[i], block[idxOther], toUint32LE(i)))));
+        const mixInput = concatBytes(block[i], toUint32LE(t), toUint32LE(i), toUint32LE(d));
+        const mixHash = await sha256(mixInput);
+        const idxOther = new DataView(mixHash.buffer, mixHash.byteOffset, 4).getUint32(0, true) % sCost;
+        block[i] = await sha256(xorBytes(block[i], await sha256(concatBytes(block[i], block[idxOther], toUint32LE(i), toUint32LE(d)))));
       }
     }
   }

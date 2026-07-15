@@ -2,7 +2,7 @@
 
 Minimal fully-typed ORM for TypeScript with SQLite / PostgreSQL / MySQL / MongoDB support, edge/serverless runtime support, schema generation from TypeScript interfaces, and a multi-hop relation resolver.
 
-> **v1.9.3** — Features below marked with a version label (e.g. `[v1.7]`) are shipped in that release.
+> **v1.9.5** — Features below marked with a version label (e.g. `[v1.7]`) are shipped in that release.
 > Features WITHOUT a version label or marked "Planned" / "🔲" do NOT exist yet. Do not generate code for unshipped features.
 
 ## Key Files
@@ -18,7 +18,7 @@ Minimal fully-typed ORM for TypeScript with SQLite / PostgreSQL / MySQL / MongoD
 | `src/dbAdapter.ts` | `DBAdapter` — lazy driver connection with fallback chain (node:sqlite → better-sqlite3 → sqlite3 for SQLite; mysql2; pg; mongodb), read replicas, prepared statement cache, custom exec bypass |
 | `src/migrator.ts` | `Migrator` — schema migration engine: `ensureTable()` CREATE/ALTER TABLE, column type mapping, nullability inference, defaults, indexes, uniques, FKs, comments, polymorphic columns, column rename, drop orphan columns |
 | `src/generator.ts` | Schema generator — tokenizes TypeScript source files, parses `interface`/`type` declarations, extracts field metadata from `//` comments (`@index`, `@unique`, `@nullable`, `@default`, `@hash`, `@encrypt`, `@secret`, `@polymorphicType`, `@polymorphicId`, etc.), relation directives (`@relation onetomany:User;foreignKey:userId`), writes `schema/generated.json` + `schema/generated.ts` |
-| `src/security.ts` | Security annotations runtime — `@hash` (bcrypt-like PBKDF2 hashing with `.verify()`), `@encrypt` (AES-256-GCM transparent encryption/decryption), `@secret` (`@hash` + `@omitjson` combined) |
+| `src/security.ts` | Security annotations runtime — `@hash` (Balloon memory-hard hashing with `.verify()`, PBKDF2 opt-in), `@encrypt` (AES-256-GCM transparent encryption/decryption), `@secret` (`@hash` + `@omitjson` combined) |
 | `src/db-error.ts` | `ORMError` + `parseConstraintError()` + `wrapExec()` — converts driver-specific constraint errors (UNIQUE, NOT NULL, FK, CHECK) into structured, actionable errors across SQLite/Postgres/MySQL |
 | `src/migration-history.ts` | Migration tracking (`_slint_migrations` table + filesystem records), schema hash-based change detection, snapshot/restore, `runMigrations()` |
 | `src/http-driver.ts` | Edge-safe HTTP exec drivers — `neonExec()`, `tursoExec()`, `planetscaleExec()`, generic `createExec()`, `http` namespace |
@@ -770,7 +770,7 @@ Bypass with `.withoutMasking()` on the query builder.
 
 | Annotation | Storage | Read behavior |
 |---|---|---|
-| `@hash` | PBKDF2-hashed (salt + SHA-256, 600k iterations) | Raw hash exposed at runtime; a `.verify(plaintext: string): Promise<boolean>` method is attached to the string value for comparing against the original plaintext |
+| `@hash` | Balloon-hashed (memory-hard, SHA-256, space=65536/time=3/delta=3). `:(algo=pbkdf2,iterations=N)` for PBKDF2 opt-in | Raw hash exposed at runtime; a `.verify(plaintext: string): Promise<boolean>` method is attached for constant-time comparison |
 | `@encrypt` | AES-256-GCM encrypted with a key derived from the master encryption key via PBKDF2 | Raw `aes256gcm$...` value with `.decrypt(): Promise<string>` for on-demand decryption |
 | `@encrypt:(decrypt=auto)` | Same as `@encrypt` | Auto-decrypted on read; returns plain `string` transparently |
 | `@secret` | `@hash` + `@omitjson` combined | Returned in runtime objects but excluded from `JSON.stringify` / `.toJSON()` output |
@@ -779,12 +779,12 @@ Bypass with `.withoutMasking()` on the query builder.
 ```typescript
 const user = await User.get({ id: 1 });
 typeof user.password;            // "string" at runtime (object coercion)
-user.password === "pbkdf2$...";  // true — comparison works via valueOf()
+user.password === "balloon$...";  // true — comparison works via valueOf()
 user.password.verify("secret");  // ✅ works
 const str: string = user.password; // ✅ assignable to string
 
 // BUT direct === comparison against a plain string literal fails:
-if (user.password === "pbkdf2$...") {} // false — different object identity
+if (user.password === "balloon$...") {} // false — different object identity
 // Use .verify() for @hash, .decrypt() for @encrypt, or compare via toString()
 ```
 
