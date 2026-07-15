@@ -728,6 +728,158 @@
     "relations": [],
     "table": "random_keys"
   },
+  "Payment": {
+    "primaryKey": "id",
+    "fields": {
+      "id": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
+      "userId": {
+        "type": "number",
+        "originalType": "number",
+        "optional": false,
+        "meta": {}
+      },
+      "enrollmentId": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
+      "cohortId": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
+      "trackId": {
+        "type": "number | undefined",
+        "originalType": "number",
+        "optional": true,
+        "meta": {}
+      },
+      "amount": {
+        "type": "number",
+        "originalType": "number",
+        "optional": false,
+        "meta": {}
+      },
+      "currency": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "method": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "status": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "reference": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "metadata": {
+        "type": "Record <string ,any > | undefined",
+        "originalType": "Record <string ,any >",
+        "optional": true,
+        "meta": {}
+      },
+      "createdAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "updatedAt": {
+        "type": "string | undefined",
+        "originalType": "string",
+        "optional": true,
+        "meta": {}
+      },
+      "user": {
+        "type": "User | undefined",
+        "originalType": "User",
+        "optional": true,
+        "meta": {
+          "@relation onetoone": "User",
+          "foreignKey": "userId"
+        }
+      },
+      "cohort": {
+        "type": "Cohort | undefined",
+        "originalType": "Cohort",
+        "optional": true,
+        "meta": {
+          "@relation onetoone": "Cohort",
+          "foreignKey": "cohortId"
+        }
+      },
+      "enrollment": {
+        "type": "Enrollment | undefined",
+        "originalType": "Enrollment",
+        "optional": true,
+        "meta": {
+          "@relation onetoone": "Enrollment",
+          "foreignKey": "enrollmentId"
+        }
+      },
+      "track": {
+        "type": "Track | undefined",
+        "originalType": "Track",
+        "optional": true,
+        "meta": {}
+      }
+    },
+    "relations": [
+      {
+        "sourceModel": "Payment",
+        "fieldName": "user",
+        "kind": "onetoone",
+        "targetModel": "User",
+        "foreignKey": "userId",
+        "meta": {
+          "@relation onetoone": "User",
+          "foreignKey": "userId"
+        }
+      },
+      {
+        "sourceModel": "Payment",
+        "fieldName": "cohort",
+        "kind": "onetoone",
+        "targetModel": "Cohort",
+        "foreignKey": "cohortId",
+        "meta": {
+          "@relation onetoone": "Cohort",
+          "foreignKey": "cohortId"
+        }
+      },
+      {
+        "sourceModel": "Payment",
+        "fieldName": "enrollment",
+        "kind": "onetoone",
+        "targetModel": "Enrollment",
+        "foreignKey": "enrollmentId",
+        "meta": {
+          "@relation onetoone": "Enrollment",
+          "foreignKey": "enrollmentId"
+        }
+      }
+    ],
+    "table": "payments"
+  },
   "Track": {
     "primaryKey": "id",
     "fields": {
@@ -2857,158 +3009,6 @@
     },
     "relations": [],
     "table": "activity_logs"
-  },
-  "Payment": {
-    "primaryKey": "id",
-    "fields": {
-      "id": {
-        "type": "number | undefined",
-        "originalType": "number",
-        "optional": true,
-        "meta": {}
-      },
-      "userId": {
-        "type": "number",
-        "originalType": "number",
-        "optional": false,
-        "meta": {}
-      },
-      "enrollmentId": {
-        "type": "number | undefined",
-        "originalType": "number",
-        "optional": true,
-        "meta": {}
-      },
-      "cohortId": {
-        "type": "number | undefined",
-        "originalType": "number",
-        "optional": true,
-        "meta": {}
-      },
-      "trackId": {
-        "type": "number | undefined",
-        "originalType": "number",
-        "optional": true,
-        "meta": {}
-      },
-      "amount": {
-        "type": "number",
-        "originalType": "number",
-        "optional": false,
-        "meta": {}
-      },
-      "currency": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {}
-      },
-      "method": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {}
-      },
-      "status": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {}
-      },
-      "reference": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {}
-      },
-      "metadata": {
-        "type": "Record <string ,any > | undefined",
-        "originalType": "Record <string ,any >",
-        "optional": true,
-        "meta": {}
-      },
-      "createdAt": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {}
-      },
-      "updatedAt": {
-        "type": "string | undefined",
-        "originalType": "string",
-        "optional": true,
-        "meta": {}
-      },
-      "user": {
-        "type": "User | undefined",
-        "originalType": "User",
-        "optional": true,
-        "meta": {
-          "@relation onetoone": "User",
-          "foreignKey": "userId"
-        }
-      },
-      "cohort": {
-        "type": "Cohort | undefined",
-        "originalType": "Cohort",
-        "optional": true,
-        "meta": {
-          "@relation onetoone": "Cohort",
-          "foreignKey": "cohortId"
-        }
-      },
-      "enrollment": {
-        "type": "Enrollment | undefined",
-        "originalType": "Enrollment",
-        "optional": true,
-        "meta": {
-          "@relation onetoone": "Enrollment",
-          "foreignKey": "enrollmentId"
-        }
-      },
-      "track": {
-        "type": "Track | undefined",
-        "originalType": "Track",
-        "optional": true,
-        "meta": {}
-      }
-    },
-    "relations": [
-      {
-        "sourceModel": "Payment",
-        "fieldName": "user",
-        "kind": "onetoone",
-        "targetModel": "User",
-        "foreignKey": "userId",
-        "meta": {
-          "@relation onetoone": "User",
-          "foreignKey": "userId"
-        }
-      },
-      {
-        "sourceModel": "Payment",
-        "fieldName": "cohort",
-        "kind": "onetoone",
-        "targetModel": "Cohort",
-        "foreignKey": "cohortId",
-        "meta": {
-          "@relation onetoone": "Cohort",
-          "foreignKey": "cohortId"
-        }
-      },
-      {
-        "sourceModel": "Payment",
-        "fieldName": "enrollment",
-        "kind": "onetoone",
-        "targetModel": "Enrollment",
-        "foreignKey": "enrollmentId",
-        "meta": {
-          "@relation onetoone": "Enrollment",
-          "foreignKey": "enrollmentId"
-        }
-      }
-    ],
-    "table": "payments"
   },
   "AlumniReport": {
     "primaryKey": "id",

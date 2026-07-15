@@ -770,7 +770,7 @@ Bypass with `.withoutMasking()` on the query builder.
 
 | Annotation | Storage | Read behavior |
 |---|---|---|
-| `@hash` | PBKDF2-hashed (salt + SHA-256, 100k iterations) | Raw hash exposed at runtime; a `.verify(plaintext: string): Promise<boolean>` method is attached to the string value for comparing against the original plaintext |
+| `@hash` | PBKDF2-hashed (salt + SHA-256, 600k iterations) | Raw hash exposed at runtime; a `.verify(plaintext: string): Promise<boolean>` method is attached to the string value for comparing against the original plaintext |
 | `@encrypt` | AES-256-GCM encrypted with a key derived from the master encryption key via PBKDF2 | Raw `aes256gcm$...` value with `.decrypt(): Promise<string>` for on-demand decryption |
 | `@encrypt:(decrypt=auto)` | Same as `@encrypt` | Auto-decrypted on read; returns plain `string` transparently |
 | `@secret` | `@hash` + `@omitjson` combined | Returned in runtime objects but excluded from `JSON.stringify` / `.toJSON()` output |

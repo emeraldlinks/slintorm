@@ -92,6 +92,8 @@ export class QueryBuilder<T extends Record<string, any>> {
   protected _joins: string[] = [];
   protected _preloads: string[] = [];
   protected _filteredPreloads: Map<string, WhereClause[]> = new Map();
+  protected _preloadLimits: Map<string, number> = new Map();
+  protected _preloadOrders: Map<string, "asc" | "desc"> = new Map();
   protected _exclude: string[] = [];
   protected _pendingRelated: { path: string; column: string; value: any; op?: OpComparison }[] = [];
   private _preloadCache = new Map<string, any[]>();
@@ -312,15 +314,25 @@ export class QueryBuilder<T extends Record<string, any>> {
     return this;
   }
 
-  preload<K extends PreloadPath<T>>(relation: K, filter?: (qb: QueryBuilder<T>) => void) {
-    if (filter) {
-      const nestedKey = relation as string;
-      if (!this._filteredPreloads) this._filteredPreloads = new Map();
+  preload<K extends PreloadPath<T>>(relation: K): this;
+  preload<K extends PreloadPath<T>>(relation: K, filter: (qb: QueryBuilder<T>) => void): this;
+  preload<K extends PreloadPath<T>>(relation: K, limit: number, order?: "asc" | "desc"): this;
+  preload<K extends PreloadPath<T>>(relation: K, filter: (qb: QueryBuilder<T>) => void, limit: number, order?: "asc" | "desc"): this;
+  preload<K extends PreloadPath<T>>(relation: K, arg2?: any, arg3?: any, arg4?: "asc" | "desc") {
+    const key = relation as string;
+    if (typeof arg2 === "function") {
       const fakeQB = new QueryBuilder<T>(this.table, this.dir, this.exec, this.modelName, this.schema, this.orm);
-      filter(fakeQB);
-      this._filteredPreloads.set(nestedKey, fakeQB._where.slice());
+      arg2(fakeQB);
+      this._filteredPreloads.set(key, fakeQB._where.slice());
+      if (typeof arg3 === "number") {
+        this._preloadLimits.set(key, arg3);
+        if (arg4 === "asc" || arg4 === "desc") this._preloadOrders.set(key, arg4);
+      }
+    } else if (typeof arg2 === "number") {
+      this._preloadLimits.set(key, arg2);
+      if (arg3 === "asc" || arg3 === "desc") this._preloadOrders.set(key, arg3);
     }
-    this._preloads.push(relation as string);
+    this._preloads.push(key);
     return this;
   }
 
@@ -708,33 +720,7 @@ export class QueryBuilder<T extends Record<string, any>> {
 
     const schemaFields = this.schema![this.modelName]?.fields ?? {};
     const explicitSelects = this._selects ? new Set(this._selects as string[]) : null;
-    rows = rows.map((r) => {
-      let row: Record<string, any> = this.mapJson(mapBooleans(r, schemaFields), schemaFields);
-      // Strip @omitdb and @omitjson fields from result
-      // (omtdb: belt-and-suspenders — column doesn't exist anyway)
-      // (omitjson: stripped unless explicitly selected)
-      for (const [k, v] of Object.entries(schemaFields)) {
-        const meta = (v as any)?.meta;
-        if (meta?.omitdb || meta?.["@omitdb"] || meta?.omit || meta?.["@omit"]) {
-          delete row[k];
-        } else if (meta?.omitjson || meta?.["@omitjson"] || meta?.secret || meta?.["@secret"]) {
-          if (!explicitSelects || !explicitSelects.has(k)) {
-            delete row[k];
-          }
-        }
-      }
-      // Apply @mask unless .withoutMasking() was called
-      if (!this._withoutMasking) {
-        for (const [k, v] of Object.entries(schemaFields)) {
-          const meta = (v as any)?.meta;
-          const maskVal = meta?.mask ?? meta?.["@mask"];
-          if (maskVal !== undefined && maskVal !== false && k in row) {
-            row[k] = applyMask(row[k], parseMaskAnnotation(maskVal));
-          }
-        }
-      }
-      return row as T;
-    }) as T[];
+    rows = rows.map((r) => this.sanitizeRow(r, schemaFields, explicitSelects)) as T[];
 
     if (this._exclude.length) {
       rows = rows.map((r) => {
@@ -874,27 +860,28 @@ export class QueryBuilder<T extends Record<string, any>> {
       const filterWheres = this._filteredPreloads?.get(fieldName);
       if (!filterWheres?.length) return { sql: "", params: [] };
       const origWhere = this._where;
+      const origTable = this.table;
       this._where = filterWheres;
+      this.table = targetTable;
       const result = this._buildWhereSql(0);
-      let sql = result.sql;
-      for (const w of filterWheres) {
-        if (w.column && !w.column.includes(".")) {
-          sql = sql.replace(new RegExp(`\\b${w.column}\\b`, "g"), `${targetTable}.${w.column}`);
-        }
-      }
       this._where = origWhere;
-      return { sql: sql ? ` AND (${sql})` : "", params: result.params };
+      this.table = origTable;
+      return { sql: result.sql ? ` AND (${result.sql})` : "", params: result.params };
     };
 
     const mongoFetch = async (targetTable: string, filter: Record<string, any>) =>
       (await this.exec(JSON.stringify({ collection: targetTable, action: "find", filter }), [])).rows || [];
 
-    const sqlFetch = async (targetTable: string, colName: string, ids: any[], fieldName?: string) => {
+    const sqlFetch = async (targetTable: string, colName: string, ids: any[], pk: string, fieldName?: string) => {
       const fc = fieldName ? buildWhereClauseForPreload(fieldName, targetTable) : { sql: "", params: [] };
-      const cacheKey = `${targetTable}:${colName}:${[...ids].sort().join(",")}:${fc.sql}`;
+      const orderBy = fieldName && this._preloadOrders?.has(fieldName) ? this._preloadOrders.get(fieldName)!.toUpperCase() : "ASC";
+      const limitVal = fieldName && this._preloadLimits?.has(fieldName) ? this._preloadLimits.get(fieldName) : 0;
+      const limitClause = limitVal ? ` LIMIT ${limitVal}` : "";
+      const orderClause = limitVal ? ` ORDER BY ${dialect.quoteIdentifier(pk)} ${orderBy}` : "";
+      const cacheKey = `${targetTable}:${colName}:${[...ids].sort().join(",")}:${fc.sql}:${limitVal}:${orderBy}`;
       if (this._preloadCache.has(cacheKey)) return this._preloadCache.get(cacheKey)!;
       const ph = ids.map((_, i) => dialect.formatPlaceholder(i)).join(", ");
-      const sql = `SELECT * FROM ${dialect.quoteIdentifier(targetTable)} WHERE ${dialect.quoteIdentifier(colName)} IN (${ph})${fc.sql}`;
+      const sql = `SELECT * FROM ${dialect.quoteIdentifier(targetTable)} WHERE ${dialect.quoteIdentifier(colName)} IN (${ph})${fc.sql}${orderClause}${limitClause}`;
       const params = ids.concat(fc.params);
       const result = (await this.exec(sql, params)).rows || [];
       this._preloadCache.set(cacheKey, result);
@@ -907,6 +894,10 @@ export class QueryBuilder<T extends Record<string, any>> {
       fieldName?: string
     ) => {
       const fc = fieldName ? buildWhereClauseForPreload(fieldName, targetTable) : { sql: "", params: [] };
+      const orderBy = fieldName && this._preloadOrders?.has(fieldName) ? this._preloadOrders.get(fieldName)!.toUpperCase() : "ASC";
+      const limitVal = fieldName && this._preloadLimits?.has(fieldName) ? this._preloadLimits.get(fieldName) : 0;
+      const limitClause = limitVal ? ` LIMIT ${limitVal}` : "";
+      const orderClause = limitVal ? ` ORDER BY ${dialect.quoteIdentifier(targetPK)} ${orderBy}` : "";
       if (isMongo) {
         const junction = await mongoFetch(through, { [foreignKey]: { $in: parentIds } });
         const targetIds = Array.from(new Set(junction.map((j) => j[relatedKey])));
@@ -921,7 +912,7 @@ export class QueryBuilder<T extends Record<string, any>> {
         `INNER JOIN ${dialect.quoteIdentifier(through)} ` +
         `ON ${dialect.quoteIdentifier(through)}.${dialect.quoteIdentifier(relatedKey)} = ` +
         `${dialect.quoteIdentifier(targetTable)}.${dialect.quoteIdentifier(targetPK)} ` +
-        `WHERE ${dialect.quoteIdentifier(through)}.${dialect.quoteIdentifier(foreignKey)} IN (${ph})${fc.sql}`;
+        `WHERE ${dialect.quoteIdentifier(through)}.${dialect.quoteIdentifier(foreignKey)} IN (${ph})${fc.sql}${orderClause}${limitClause}`;
       const rows = (await this.exec(sql, parentIds.concat(fc.params))).rows || [];
       const junctionRows = rows.map((r: any) => ({ [foreignKey]: r.__pivot_fk, [relatedKey]: r[targetPK] }));
       const relatedRows = rows.map((r: any) => { const c = { ...r }; delete c.__pivot_fk; return c; });
@@ -930,8 +921,14 @@ export class QueryBuilder<T extends Record<string, any>> {
 
     const manyToManyJoinFetch = async (
       through: string, targetTable: string, targetPK: string,
-      foreignKey: string, relatedKey: string, parentIds: any[]
+      foreignKey: string, relatedKey: string, parentIds: any[],
+      fieldName?: string
     ) => {
+      const fc = fieldName ? buildWhereClauseForPreload(fieldName, targetTable) : { sql: "", params: [] };
+      const orderBy = fieldName && this._preloadOrders?.has(fieldName) ? this._preloadOrders.get(fieldName)!.toUpperCase() : "ASC";
+      const limitVal = fieldName && this._preloadLimits?.has(fieldName) ? this._preloadLimits.get(fieldName) : 0;
+      const limitClause = limitVal ? ` LIMIT ${limitVal}` : "";
+      const orderClause = limitVal ? ` ORDER BY ${dialect.quoteIdentifier(targetPK)} ${orderBy}` : "";
       if (isMongo) {
         const junction = await mongoFetch(through, { [foreignKey]: { $in: parentIds } });
         const targetIds = Array.from(new Set(junction.map((j) => j[relatedKey])));
@@ -946,8 +943,8 @@ export class QueryBuilder<T extends Record<string, any>> {
         `INNER JOIN ${dialect.quoteIdentifier(through)} ` +
         `ON ${dialect.quoteIdentifier(through)}.${dialect.quoteIdentifier(relatedKey)} = ` +
         `${dialect.quoteIdentifier(targetTable)}.${dialect.quoteIdentifier(targetPK)} ` +
-        `WHERE ${dialect.quoteIdentifier(through)}.${dialect.quoteIdentifier(foreignKey)} IN (${ph})`;
-      const rows = (await this.exec(sql, parentIds)).rows || [];
+        `WHERE ${dialect.quoteIdentifier(through)}.${dialect.quoteIdentifier(foreignKey)} IN (${ph})${fc.sql}${orderClause}${limitClause}`;
+      const rows = (await this.exec(sql, parentIds.concat(fc.params))).rows || [];
       const junctionRows = rows.map((r: any) => ({ [foreignKey]: r.__pivot_fk, [relatedKey]: r[targetPK] }));
       const relatedRows = rows.map((r: any) => { const c = { ...r }; delete c.__pivot_fk; return c; });
       return { junctionRows, relatedRows };
@@ -964,6 +961,14 @@ export class QueryBuilder<T extends Record<string, any>> {
       const { kind, through } = relation;
       const foreignKey = relation.foreignKey as string;
       const relatedKey = relation.relatedKey as string;
+      const preloadLimit = this._preloadLimits?.get(relation.fieldName);
+      const preloadOrder = this._preloadOrders?.get(relation.fieldName);
+      if ((kind === "manytoone" || kind === "onetoone") && preloadLimit != null) {
+        throw new Error(
+          `preload("${relation.fieldName}", ${preloadLimit}): cannot apply limit/order to ` +
+          `${kind} relation '${relation.fieldName}' — it returns at most one row`
+        );
+      }
       let relatedRows: any[] = [];
       const filterClause = buildWhereClauseForPreload(relation.fieldName, targetSchema.table);
 
@@ -972,7 +977,7 @@ export class QueryBuilder<T extends Record<string, any>> {
         if (!hasValues(parentIds)) { parentRows.forEach((r) => (r[relation.fieldName] = [])); return []; }
         relatedRows = isMongo
           ? await mongoFetch(targetSchema.table, { [foreignKey]: { $in: parentIds } })
-          : await sqlFetch(targetSchema.table, foreignKey, parentIds, relation.fieldName);
+          : await sqlFetch(targetSchema.table, foreignKey, parentIds, targetPK, relation.fieldName);
         relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
         const map = new Map<any, any[]>();
         relatedRows.forEach((r) => { const k = r[foreignKey]; if (!map.has(k)) map.set(k, []); map.get(k)!.push(r); });
@@ -983,7 +988,7 @@ export class QueryBuilder<T extends Record<string, any>> {
         if (!hasValues(fkValues)) { parentRows.forEach((r) => (r[relation.fieldName] = null)); return []; }
         relatedRows = isMongo
           ? await mongoFetch(targetSchema.table, { [targetPK]: { $in: fkValues } })
-          : await sqlFetch(targetSchema.table, targetPK, fkValues, relation.fieldName);
+          : await sqlFetch(targetSchema.table, targetPK, fkValues, targetPK, relation.fieldName);
         relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
         const map = new Map(relatedRows.map((r) => [r[targetPK] as PropertyKey, r]));
         parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[foreignKey]) || null));
@@ -995,7 +1000,7 @@ export class QueryBuilder<T extends Record<string, any>> {
           if (!hasValues(parentIds)) { parentRows.forEach((r) => (r[relation.fieldName] = null)); return []; }
           relatedRows = isMongo
             ? await mongoFetch(targetSchema.table, { [foreignKey]: { $in: parentIds } })
-            : await sqlFetch(targetSchema.table, foreignKey, parentIds, relation.fieldName);
+            : await sqlFetch(targetSchema.table, foreignKey, parentIds, targetPK, relation.fieldName);
           relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
           const map = new Map(relatedRows.map((r) => [r[foreignKey] as PropertyKey, r]));
           parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[rootPK]) || null));
@@ -1004,7 +1009,7 @@ export class QueryBuilder<T extends Record<string, any>> {
           if (!hasValues(fkValues)) { parentRows.forEach((r) => (r[relation.fieldName] = null)); return []; }
           relatedRows = isMongo
             ? await mongoFetch(targetSchema.table, { [targetPK]: { $in: fkValues } })
-            : await sqlFetch(targetSchema.table, targetPK, fkValues, relation.fieldName);
+            : await sqlFetch(targetSchema.table, targetPK, fkValues, targetPK, relation.fieldName);
           relatedRows = relatedRows.map((r) => this.cleanRow(r, targetSchema, relation.fieldName));
           const map = new Map(relatedRows.map((r) => [r[targetPK] as PropertyKey, r]));
           parentRows.forEach((r) => (r[relation.fieldName] = map.get(r[foreignKey]) || null));
@@ -1034,6 +1039,19 @@ export class QueryBuilder<T extends Record<string, any>> {
         child._exclude = this._nestedExcludes(relation.fieldName);
         if ("_withTrashed" in this) (child as any)._withTrashed = (this as any)._withTrashed;
         if ("_onlyTrashed" in this) (child as any)._onlyTrashed = (this as any)._onlyTrashed;
+        child._filteredPreloads = new Map();
+        child._preloadLimits = new Map();
+        child._preloadOrders = new Map();
+        const prefix = relation.fieldName + ".";
+        this._filteredPreloads.forEach((v, k) => {
+          if (k.startsWith(prefix)) child._filteredPreloads!.set(k.slice(prefix.length), v);
+        });
+        this._preloadLimits.forEach((v, k) => {
+          if (k.startsWith(prefix)) child._preloadLimits!.set(k.slice(prefix.length), v);
+        });
+        this._preloadOrders.forEach((v, k) => {
+          if (k.startsWith(prefix)) child._preloadOrders!.set(k.slice(prefix.length), v);
+        });
         await child.applyPreloads(relatedRows, visited);
       }
 
@@ -1050,9 +1068,36 @@ export class QueryBuilder<T extends Record<string, any>> {
   }
 
   // ── Utilities ─────────────────────────────────────────────────────────────────
+  private sanitizeRow(row: any, schemaFields: Record<string, any>, explicitSelects: Set<string> | null): any {
+    let clean: Record<string, any> = this.mapJson(mapBooleans(row, schemaFields), schemaFields);
+    for (const [k, v] of Object.entries(schemaFields)) {
+      const meta = (v as any)?.meta;
+      if (meta?.omitdb || meta?.["@omitdb"] || meta?.omit || meta?.["@omit"]) {
+        delete clean[k];
+      } else if (meta?.omitjson || meta?.["@omitjson"] || meta?.secret || meta?.["@secret"]) {
+        if (!explicitSelects || !explicitSelects.has(k)) {
+          delete clean[k];
+        }
+      }
+    }
+    if (!this._withoutMasking) {
+      for (const [k, v] of Object.entries(schemaFields)) {
+        const meta = (v as any)?.meta;
+        const maskVal = meta?.mask ?? meta?.["@mask"];
+        if (maskVal !== undefined && maskVal !== false && k in clean) {
+          clean[k] = applyMask(clean[k], parseMaskAnnotation(maskVal));
+        }
+      }
+    }
+    return clean;
+  }
+
   private cleanRow(row: any, targetSchema: any, root?: string) {
-    let clean = mapBooleans(row, targetSchema.fields || {});
-    clean = this.mapJson(clean, targetSchema.fields || {});
+    let clean: Record<string, any> = this.sanitizeRow(
+      row,
+      targetSchema.fields || {},
+      null,
+    );
     if (root) {
       const nestedExcludes = this._nestedExcludes(root);
       if (nestedExcludes.length) clean = this.removeExcluded(clean, nestedExcludes);

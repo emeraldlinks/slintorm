@@ -1,66 +1,68 @@
-Skip to content
-slintorm
-Repository navigation
-Code
-Issues
-Pull requests
-Publish
-ci: add GitHub Actions workflow for auto-publish on push to main #1
-Annotations
-1 error and 1 warning
-publish
-failed 8 minutes ago in 18s
-1s
-0s
-4s
-7s
-3s
-1s
-Run npm run test:suite
-
-> slintorm@1.6.0 test:suite
-> node --import tsx/esm src/slintorm.test.ts
-
-
-  CRUD
-    ✗ inserts a record
-      No SQLite driver found.
-
-  Your Node version: v20.20.2
-
-Install one of:
-  npm install better-sqlite3    (recommended)
-  npm install sqlite3 sqlite     (async wrapper)
-  # Or upgrade to Node 22.5+ to use the built-in driver.
-
-Original error: No such built-in module: node:sqlite
-    ✗ gets a record by filter
-      No SQLite driver found.
-
-  Your Node version: v20.20.2
-
-Install one of:
-  npm install better-sqlite3    (recommended)
-  npm install sqlite3 sqlite     (async wrapper)
-  # Or upgrade to Node 22.5+ to use the built-in driver.
-
-Original error: No such built-in module: node:sqlite
-    ✗ gets all records
-      No SQLite driver found.
-
-  Your Node version: v20.20.2
-
-Install one of:
-  npm install better-sqlite3    (recommended)
-  npm install sqlite3 sqlite     (async wrapper)
-  # Or upgrade to Node 22.5+ to use the built-in driver.
-
-Original error: No such built-in module: node:sqlite
-    ✗ updates a record
-      No SQLite driver found.
-
-  Your Node version: v20.20.2
-0s
-0s
-0s
-0s
+18:42:32.092 Running build in Washington, D.C., USA (East) – iad1
+18:42:32.092 Build machine configuration: 2 cores, 8 GB
+18:42:32.201 Cloning github.com/emeraldlinks/slintorm-docs (Branch: main, Commit: ead4ce9)
+18:42:32.521 Cloning completed: 320.000ms
+18:42:33.487 Running "vercel build"
+18:42:33.504 Vercel CLI 55.0.0
+18:42:33.861 Installing dependencies...
+18:42:34.764
+18:42:34.764 up to date in 803ms
+18:42:34.765
+18:42:34.765 149 packages are looking for funding
+18:42:34.765   run `npm fund` for details
+18:42:34.791 Detected Next.js version: 16.2.9
+18:42:34.795 Running "npm run build"
+18:42:34.890
+18:42:34.891 > slintorm-docs@0.1.0 build
+18:42:34.891 > next build
+18:42:34.891
+18:42:35.558   Applying modifyConfig from Vercel
+18:42:35.574 ▲ Next.js 16.2.9 (Turbopack)
+18:42:35.574
+18:42:35.612   Creating an optimized production build ...
+18:42:44.749 ✓ Compiled successfully in 9.1s
+18:42:44.757   Running TypeScript ...
+18:42:52.876   Finished TypeScript in 8.1s ...
+18:42:52.932   Collecting page data using 1 worker ...
+18:42:53.628   Generating static pages using 1 worker (0/54) ...
+18:42:53.981 ✓ All pages generated successfully in 358ms
+18:42:54.018   Finalizing page optimization ...
+18:42:54.022
+18:42:54.023   Route (app)                              Size     First Load
+18:42:54.023   ─── page                                 ───       ───
+18:42:54.023   ─ /                                      0 B         0 B
+18:42:54.023   ─ /_not-found                            0 B         0 B
+18:42:54.023   ─ /docs/annotations                       26.4 kB    73.8 kB
+18:42:54.023   ─ /docs/annotations/constraints           13.9 kB    61.3 kB
+18:42:54.023   ─ /docs/annotations/encrypt               14 kB      61.4 kB
+18:42:54.023   ─ /docs/annotations/hash                  14.5 kB    61.9 kB
+18:42:54.023   ─ /docs/annotations/json                  11.3 kB    58.7 kB
+18:42:54.023   ─ /docs/annotations/mask                  14 kB      61.4 kB
+18:42:54.023   ─ /docs/annotations/omit                  11.8 kB    59.2 kB
+18:42:54.023   ─ /docs/annotations/polymorphic           12.3 kB    59.7 kB
+18:42:54.023   ─ /docs/annotations/random                10.3 kB    57.7 kB
+18:42:54.023   ─ /docs/annotations/relations             14.1 kB    61.5 kB
+18:42:54.023   ─ /docs/annotations/secret                12.2 kB    59.6 kB
+18:42:54.023   ─ /docs/annotations/validation            14.5 kB    61.9 kB
+18:42:54.023   ─ /docs/                                  3.75 kB    44.4 kB
+18:42:54.023   ─ /docs/annotations/ (with http://...)    26.4 kB    73.8 kB
+18:42:54.023   ─ /docs/examples                          16.4 kB    63.8 kB
+18:42:54.023   ─ /docs/getting-started                    7.04 kB    54.5 kB
+18:42:54.023   ─ └ /docs/llms.txt (7 kB)                 ───       ───
+18:42:54.023   ─ /docs/logging                            9.07 kB    56.5 kB
+18:42:54.023   ─ /docs/manual                             11.3 kB    58.7 kB
+18:42:54.023   ─ /docs/migration                          7.44 kB    54.9 kB
+18:42:54.023   ─ /docs/proxy                              12 kB      59.4 kB
+18:42:54.023   ─ /docs/relations                          10.4 kB    57.8 kB
+18:42:54.023   ─ /docs/rls                                8.4 kB     54.8 kB
+18:42:54.023   ─ /docs/security                           14.8 kB    62.2 kB
+18:42:54.023   ─ /docs/upcoming-features                  12.2 kB    59.6 kB
+18:42:54.023   ─ /docs/validations                        10.1 kB    57.5 kB
+18:42:54.023
+18:42:54.023   + First Load Share JS shared by all          43.3 kB
+18:42:54.023   chunks: main,cb1608dc-48d5-4485-a7af-0c
+18:42:54.023   8a90a5a0
+18:42:54.023
+18:42:54.023   ○  (Static)  automatically rendered as static HTML (uses no initial payload)
+18:42:54.024
+18:42:54.024 ✓ Build completed successfully

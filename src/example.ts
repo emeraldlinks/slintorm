@@ -7,7 +7,7 @@
  */
 
 import ORMManager from "./index.js";
-import type { Post, User, Profile, Todo, Team, AggTest, Comment, RandomKey } from "./interfaces.js";
+import type { Post, User, Profile, Todo, Team, AggTest, Comment, RandomKey, Payment } from "./interfaces.js";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -968,7 +968,86 @@ async function main() {
     ok(encFetched.autoDecrypted === "auto-decrypted-value" ? "@encrypt:(decrypt=auto) auto-decrypted value matches" : "@encrypt:(decrypt=auto) FAILED");
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // 45. Preload with limit/order
+  // ──────────────────────────────────────────────────────────────────────────
+  heading("Preload with limit/order");
+
+  const Payments = await orm.defineModel<Payment>("payments", "Payment");
+
+  // Create a test user with multiple payments
+  const preloadUser = await Users.insert({ name: "PreloadTest", email: "preload@test.com" });
+  if (!preloadUser?.id) { fail("could not create preload user"); return; }
+  // Insert payments for the test user
+  for (const amount of [10, 20, 30, 40, 50, 60]) {
+    await Payments.insert({ userId: preloadUser.id, amount, status: "completed" } as any);
+  }
+
+  // Test 1: preload with limit only
+  const userWithLimit = await (Users as any).query()
+    .preload("payments", 3)
+    .first({ name: "PreloadTest" });
+  const limited: any[] = userWithLimit?.payments || [];
+  ok(limited.length === 3
+    ? `preload("payments", 3) returned ${limited.length} payments`
+    : `preload("payments", 3) FAILED: expected 3, got ${limited.length}`);
+
+  // Test 2: preload with limit + order desc
+  const userWithDesc = await (Users as any).query()
+    .preload("payments", 4, "desc")
+    .first({ name: "PreloadTest" });
+  const desc: any[] = userWithDesc?.payments || [];
+  const descOk = desc.length === 4 && desc[0].amount === 60;
+  ok(descOk
+    ? `preload("payments", 4, "desc") returns ${desc.length} items, first amount=${desc[0]?.amount}`
+    : `preload("payments", 4, "desc") FAILED`);
+
+  // Test 3: preload with filter + limit
+  const userWithFilter = await (Users as any).query()
+    .preload("payments", (qb: any) => qb.where("amount", "<", 40), 2)
+    .first({ name: "PreloadTest" });
+  const filtered: any[] = userWithFilter?.payments || [];
+  ok(filtered.length === 2 && filtered.every((p: any) => p.amount < 40)
+    ? `preload("payments", filter, 2) returned ${filtered.length} payments`
+    : `preload("payments", filter, 2) FAILED`);
+
+  // Test 4: preload with filter + limit + order desc
+  const userWithAll = await (Users as any).query()
+    .preload("payments", (qb: any) => qb.where("amount", ">=", 30), 3, "desc")
+    .first({ name: "PreloadTest" });
+  const all: any[] = userWithAll?.payments || [];
+  ok(all.length === 3 && all[0].amount === 60
+    ? `preload("payments", filter, 3, "desc") first amount=${all[0]?.amount}`
+    : `preload("payments", filter, 3, "desc") FAILED`);
+
+  // Test 5: error on manytoone with limit
+  try {
+    const postWithUser = await (Posts as any).query()
+      .preload("user", 5)
+      .first();
+    fail("preload on manytoone with limit should throw");
+  } catch (err: unknown) {
+    const msg = (err as Error).message;
+    ok(msg.includes("cannot apply limit/order")
+      ? `manytoone limit error: ${msg}`
+      : `unexpected error: ${msg}`);
+  }
+
+  // Test 6: @secret and omit are applied to preloaded rows
+  // secret fields on the preloaded user should be stripped
+  const postWithMask = await (Posts as any).query()
+    .preload("user")
+    .first();
+  const preloadedUser = (postWithMask as any)?.user;
+  ok(preloadedUser && !("auditData" in preloadedUser)
+    ? "@omitjson strips auditData from preloaded user"
+    : "@omitjson FAILED on preloaded user");
+
   // Cleanup
+  await Payments.delete({ userId: preloadUser.id } as any);
+  await Users.delete({ name: "PreloadTest" });
+
+  // Existing cleanup
   await orm.DB.User.delete({ name: "HashTest" });
   await orm.DB.User.delete({ name: "EncryptTest" });
   // ──────────────────────────────────────────────────────────────────────────
