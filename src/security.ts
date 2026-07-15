@@ -1,8 +1,8 @@
 // src/security.ts — Edge/Deno-compatible security transforms using Web Crypto API
 //
-// Implements @hash (PBKDF2), @encrypt (AES-256-GCM), and @secret annotations.
-// Compatible with: Vercel Edge, Cloudflare Workers, Deno, Deno Deploy,
-// browsers, Node.js 18+ (via globalThis.crypto, not node:crypto).
+// Implements @hash (Balloon hashing, PBKDF2), @encrypt (AES-256-GCM), and
+// @secret annotations.  Compatible with: Vercel Edge, Cloudflare Workers,
+// Deno, Deno Deploy, browsers, Node.js 18+ (via globalThis.crypto).
 
 export interface FieldMeta {
   hash?: string | boolean;
@@ -44,8 +44,107 @@ const HASH_ITERATIONS = 600_000;
 const HASH_SALT_BYTES = 16;
 const HASH_KEY_LENGTH = 256;
 
-export async function hashPassword(password: string, iterations?: number): Promise<string> {
-  const iters = iterations ?? HASH_ITERATIONS;
+// ── Balloon Hashing (default) ──────────────────────────────────────────
+// Memory-hard hashing using SHA-256 as the inner hash (Web Crypto API).
+// Format: balloon$space$time$delta$salt$hash
+const BALLOON_DELTA = 3;
+
+function xorBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length);
+  for (let i = 0; i < a.length; i++) out[i] = a[i] ^ b[i];
+  return out;
+}
+
+function concatBytes(...arrays: Uint8Array[]): Uint8Array {
+  let totalLen = 0;
+  for (const arr of arrays) totalLen += arr.length;
+  const out = new Uint8Array(totalLen);
+  let offset = 0;
+  for (const arr of arrays) { out.set(arr, offset); offset += arr.length; }
+  return out;
+}
+
+function toUint32LE(n: number): Uint8Array {
+  const buf = new Uint8Array(4);
+  buf[0] = n & 0xff;
+  buf[1] = (n >> 8) & 0xff;
+  buf[2] = (n >> 16) & 0xff;
+  buf[3] = (n >> 24) & 0xff;
+  return buf;
+}
+
+async function sha256(data: Uint8Array): Promise<Uint8Array> {
+  const hash = await crypto.subtle.digest("SHA-256", toBufferSource(data));
+  return new Uint8Array(hash);
+}
+
+export async function hashBalloon(
+  password: string,
+  salt: Uint8Array,
+  space: number,
+  time: number,
+  delta: number,
+): Promise<string> {
+  const sCost = Math.max(3, Math.floor(space / 32));
+  const pwBytes = encoder.encode(password);
+  const block = new Array<Uint8Array>(sCost);
+  // Collapse step: fill buffer
+  block[0] = await sha256(concatBytes(pwBytes, salt, toUint32LE(0)));
+  for (let i = 1; i < sCost; i++) {
+    block[i] = await sha256(concatBytes(block[i - 1], toUint32LE(i)));
+  }
+  // Mix step
+  for (let t = 0; t < time; t++) {
+    for (let i = 0; i < sCost; i++) {
+      const prev = i === 0 ? block[sCost - 1] : block[i - 1];
+      block[i] = await sha256(xorBytes(block[i], prev));
+      for (let d = 0; d < delta; d++) {
+        const idxOther = crypto.getRandomValues(new Uint32Array(1))[0] % sCost;
+        block[i] = await sha256(xorBytes(block[i], await sha256(concatBytes(block[i], block[idxOther], toUint32LE(i)))));
+      }
+    }
+  }
+  // Extract step
+  let result = block[0];
+  for (let i = 1; i < sCost; i++) {
+    result = await sha256(xorBytes(result, block[i]));
+  }
+  return `balloon$${space}$${time}$${delta}$${toBase64(salt)}$${toBase64(result)}`;
+}
+
+async function verifyBalloon(password: string, stored: string): Promise<boolean> {
+  const parts = stored.split("$");
+  if (parts.length !== 6 || parts[0] !== "balloon") return false;
+  const space = parseInt(parts[1], 10);
+  const time = parseInt(parts[2], 10);
+  const delta = parseInt(parts[3], 10);
+  const salt = fromBase64(parts[4]);
+  const expected = fromBase64(parts[5]);
+  const computed = await hashBalloon(password, salt, space, time, delta);
+  const computedParts = computed.split("$");
+  const computedHash = fromBase64(computedParts[5]);
+  let match = expected.length ^ computedHash.length;
+  for (let i = 0; i < Math.max(expected.length, computedHash.length); i++) {
+    match |= (expected[i] || 0) ^ (computedHash[i] || 0);
+  }
+  return match === 0;
+}
+
+interface BalloonOptions {
+  algo: "balloon";
+  space?: number;
+  time?: number;
+  delta?: number;
+}
+
+export async function hashPassword(password: string, options?: number | BalloonOptions): Promise<string> {
+  if (options === undefined || (typeof options === "object" && options.algo === "balloon")) {
+    const salt = new Uint8Array(HASH_SALT_BYTES);
+    crypto.getRandomValues(salt);
+    const opts = options as BalloonOptions | undefined;
+    return hashBalloon(password, salt, opts?.space ?? 65536, opts?.time ?? 3, opts?.delta ?? BALLOON_DELTA);
+  }
+  const iters = typeof options === "number" ? options : HASH_ITERATIONS;
   const salt = new Uint8Array(HASH_SALT_BYTES);
   crypto.getRandomValues(salt);
   const keyMaterial = await crypto.subtle.importKey(
@@ -64,12 +163,16 @@ export async function hashPassword(password: string, iterations?: number): Promi
 }
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const parts = stored.split("$");
-  if (parts[0] !== "pbkdf2") {
+  const prefix = stored.split("$")[0];
+  if (prefix === "balloon") {
+    return verifyBalloon(password, stored);
+  }
+  if (prefix !== "pbkdf2") {
     throw new Error(
-      `Expected 'pbkdf2$iterations$salt$hash' format, got '${parts[0] || "unknown"}'`,
+      `Expected 'balloon$...' or 'pbkdf2$...' format, got '${prefix || "unknown"}'`,
     );
   }
+  const parts = stored.split("$");
   const iters = parts.length === 4 ? parseInt(parts[1], 10) : HASH_ITERATIONS;
   const saltIdx = parts.length === 4 ? 2 : 1;
   const hashIdx = parts.length === 4 ? 3 : 2;
@@ -281,7 +384,15 @@ export function isSecretField(meta: Record<string, unknown>): boolean {
 // ── Write-time transforms (insert/update) ────────────────────────────────
 // Applies @hash, @encrypt, @secret to field values before DB write.
 
-function parseAnnotationValue(metaValue: string | boolean): { iterations?: number } {
+interface AnnotationOpts {
+  iterations?: number;
+  algo?: string;
+  space?: number;
+  time?: number;
+  delta?: number;
+}
+
+function parseAnnotationValue(metaValue: string | boolean): AnnotationOpts {
   if (typeof metaValue !== "string") return {};
   const parenMatch = metaValue.match(/^\(([^)]*)\)$/);
   if (!parenMatch) return {};
@@ -294,6 +405,10 @@ function parseAnnotationValue(metaValue: string | boolean): { iterations?: numbe
   }
   return {
     ...(result.iterations ? { iterations: parseInt(result.iterations, 10) } : {}),
+    ...(result.algo ? { algo: result.algo } : {}),
+    ...(result.space ? { space: parseInt(result.space, 10) } : {}),
+    ...(result.time ? { time: parseInt(result.time, 10) } : {}),
+    ...(result.delta ? { delta: parseInt(result.delta, 10) } : {}),
   };
 }
 
@@ -317,11 +432,11 @@ export async function applySecurityOnWrite(
 
     if (isHashField(metaObj as unknown as Record<string, unknown>)) {
       const algo = metaObj.hash ?? metaObj["@hash"];
-      if (algo === true || algo === "pbkdf2" || !algo) {
-        item[field] = await hashPassword(String(value));
-      } else {
-        const opts = parseAnnotationValue(algo as string);
+      const opts = parseAnnotationValue(algo as string);
+      if (algo === "pbkdf2" || opts.algo === "pbkdf2") {
         item[field] = await hashPassword(String(value), opts.iterations);
+      } else {
+        item[field] = await hashPassword(String(value), { algo: "balloon", space: opts.space, time: opts.time, delta: opts.delta });
       }
       continue;
     }

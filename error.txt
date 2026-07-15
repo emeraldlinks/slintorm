@@ -1,68 +1,39 @@
-18:42:32.092 Running build in Washington, D.C., USA (East) – iad1
-18:42:32.092 Build machine configuration: 2 cores, 8 GB
-18:42:32.201 Cloning github.com/emeraldlinks/slintorm-docs (Branch: main, Commit: ead4ce9)
-18:42:32.521 Cloning completed: 320.000ms
-18:42:33.487 Running "vercel build"
-18:42:33.504 Vercel CLI 55.0.0
-18:42:33.861 Installing dependencies...
-18:42:34.764
-18:42:34.764 up to date in 803ms
-18:42:34.765
-18:42:34.765 149 packages are looking for funding
-18:42:34.765   run `npm fund` for details
-18:42:34.791 Detected Next.js version: 16.2.9
-18:42:34.795 Running "npm run build"
-18:42:34.890
-18:42:34.891 > slintorm-docs@0.1.0 build
-18:42:34.891 > next build
-18:42:34.891
-18:42:35.558   Applying modifyConfig from Vercel
-18:42:35.574 ▲ Next.js 16.2.9 (Turbopack)
-18:42:35.574
-18:42:35.612   Creating an optimized production build ...
-18:42:44.749 ✓ Compiled successfully in 9.1s
-18:42:44.757   Running TypeScript ...
-18:42:52.876   Finished TypeScript in 8.1s ...
-18:42:52.932   Collecting page data using 1 worker ...
-18:42:53.628   Generating static pages using 1 worker (0/54) ...
-18:42:53.981 ✓ All pages generated successfully in 358ms
-18:42:54.018   Finalizing page optimization ...
-18:42:54.022
-18:42:54.023   Route (app)                              Size     First Load
-18:42:54.023   ─── page                                 ───       ───
-18:42:54.023   ─ /                                      0 B         0 B
-18:42:54.023   ─ /_not-found                            0 B         0 B
-18:42:54.023   ─ /docs/annotations                       26.4 kB    73.8 kB
-18:42:54.023   ─ /docs/annotations/constraints           13.9 kB    61.3 kB
-18:42:54.023   ─ /docs/annotations/encrypt               14 kB      61.4 kB
-18:42:54.023   ─ /docs/annotations/hash                  14.5 kB    61.9 kB
-18:42:54.023   ─ /docs/annotations/json                  11.3 kB    58.7 kB
-18:42:54.023   ─ /docs/annotations/mask                  14 kB      61.4 kB
-18:42:54.023   ─ /docs/annotations/omit                  11.8 kB    59.2 kB
-18:42:54.023   ─ /docs/annotations/polymorphic           12.3 kB    59.7 kB
-18:42:54.023   ─ /docs/annotations/random                10.3 kB    57.7 kB
-18:42:54.023   ─ /docs/annotations/relations             14.1 kB    61.5 kB
-18:42:54.023   ─ /docs/annotations/secret                12.2 kB    59.6 kB
-18:42:54.023   ─ /docs/annotations/validation            14.5 kB    61.9 kB
-18:42:54.023   ─ /docs/                                  3.75 kB    44.4 kB
-18:42:54.023   ─ /docs/annotations/ (with http://...)    26.4 kB    73.8 kB
-18:42:54.023   ─ /docs/examples                          16.4 kB    63.8 kB
-18:42:54.023   ─ /docs/getting-started                    7.04 kB    54.5 kB
-18:42:54.023   ─ └ /docs/llms.txt (7 kB)                 ───       ───
-18:42:54.023   ─ /docs/logging                            9.07 kB    56.5 kB
-18:42:54.023   ─ /docs/manual                             11.3 kB    58.7 kB
-18:42:54.023   ─ /docs/migration                          7.44 kB    54.9 kB
-18:42:54.023   ─ /docs/proxy                              12 kB      59.4 kB
-18:42:54.023   ─ /docs/relations                          10.4 kB    57.8 kB
-18:42:54.023   ─ /docs/rls                                8.4 kB     54.8 kB
-18:42:54.023   ─ /docs/security                           14.8 kB    62.2 kB
-18:42:54.023   ─ /docs/upcoming-features                  12.2 kB    59.6 kB
-18:42:54.023   ─ /docs/validations                        10.1 kB    57.5 kB
-18:42:54.023
-18:42:54.023   + First Load Share JS shared by all          43.3 kB
-18:42:54.023   chunks: main,cb1608dc-48d5-4485-a7af-0c
-18:42:54.023   8a90a5a0
-18:42:54.023
-18:42:54.023   ○  (Static)  automatically rendered as static HTML (uses no initial payload)
-18:42:54.024
-18:42:54.024 ✓ Build completed successfully
+13:31:33.711 Running build in Washington, D.C., USA (East) – iad1
+13:31:33.712 Build machine configuration: 2 cores, 8 GB
+13:31:33.849 Cloning github.com/emeraldlinks/slintorm-docs (Branch: main, Commit: e44c31f)
+13:31:34.243 Cloning completed: 393.000ms
+13:31:36.349 Restored build cache from previous deployment (6dZADwwosu3kzVTG8KcNjWkjzDmp)
+13:31:36.644 Running "vercel build"
+13:31:36.700 Vercel CLI 56.2.0
+13:31:37.276 Installing dependencies...
+13:31:38.668 
+13:31:38.668 up to date in 1s
+13:31:38.669 
+13:31:38.669 149 packages are looking for funding
+13:31:38.670   run `npm fund` for details
+13:31:38.714 Detected Next.js version: 16.2.9
+13:31:38.720 Running "npm run build"
+13:31:38.890 
+13:31:38.894 > slintorm-docs@0.1.0 build
+13:31:38.895 > next build
+13:31:38.895 
+13:31:39.884   Applying modifyConfig from Vercel
+13:31:39.905 ▲ Next.js 16.2.9 (Turbopack)
+13:31:39.907 
+13:31:39.964   Creating an optimized production build ...
+13:31:52.396 ✓ Compiled successfully in 12.0s
+13:31:52.408   Running TypeScript ...
+13:32:00.530 Failed to type check.
+13:32:00.530 
+13:32:00.532 ./src/app/docs/annotations/encrypt/page.tsx:111:93
+13:32:00.532 Type error: Cannot find name 'field'.
+13:32:00.532 
+13:32:00.532   109 | ...> is <code>false</code> (it's <code>"object"</code>)</li>
+13:32:00.533   110 | ... <code>false</code> even if the decrypted value matches</li>
+13:32:00.533 > 111 | ...concatenation work fine</strong> (<code>`${field}`</code>, <code>"" + field</code>) — ...
+13:32:00.533       |                                               ^
+13:32:00.534   112 | ...ode>String(field) === "plaintext"</code> or <code>field.toString() === "plaintext"</co...
+13:32:00.534   113 | ...
+13:32:00.534   114 | ...
+13:32:00.580 Next.js build worker exited with code: 1 and signal: null
+13:32:00.658 Error: Command "npm run build" exited with 1
