@@ -573,11 +573,128 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       async insertMany(items: T[]): Promise<T[]> {
         if (!items.length) return [];
         await ensure(items[0]);
-        const results: T[] = [];
-        for (const item of items) {
-          results.push(await this.insert(item));
+        const now = new Date().toISOString();
+        const prepared = items.map((item) => {
+          const row = { ...item } as any;
+          fillRandomFields(row);
+          if (row.createdAt === undefined) row.createdAt = now;
+          if (row.updatedAt === undefined) row.updatedAt = now;
+          return row;
+        });
+        for (const row of prepared) {
+          validateItem(row, modelSchema?.fields);
         }
-        return results;
+        const rawSecrets = prepared.map((row) => captureRawSecret(row));
+        for (const row of prepared) {
+          await applySecurityOnWrite(row as unknown as Record<string, unknown>, modelSchema?.fields, encryptionKey);
+        }
+
+        const w = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
+        const cols = Object.keys(prepared[0]).filter((c) => {
+          if (isOmitDb(modelSchema.fields?.[c])) return false;
+          return prepared[0][c] !== undefined;
+        });
+
+        if (driver === "postgres") {
+          const allValues: any[] = [];
+          const rowPlaceholders = prepared.map((row, rowIdx) => {
+            const phs = cols.map((c, colIdx) => {
+              allValues.push(serializeValue(c, row[c]));
+              return `$${rowIdx * cols.length + colIdx + 1}`;
+            });
+            return `(${phs.join(", ")})`;
+          });
+          const result = await adapter.exec(
+            `INSERT INTO ${w(tableName)} (${cols.map(w).join(", ")}) VALUES ${rowPlaceholders.join(", ")} RETURNING *`,
+            allValues
+          );
+          const rows = result?.rows || [];
+          return rows.map((row: any, i: number) => {
+            const r = row as T;
+            if (Object.keys(rawSecrets[i]).length) Object.assign(r, rawSecrets[i]);
+            const pk = modelSchema?.primaryKey || "id";
+            const pkVal = (r as any)[pk];
+            return attachEntityMethods(r, { [pk]: pkVal } as Partial<T>, this);
+          });
+        }
+
+        if (driver === "mongodb") {
+          await adapter.exec(JSON.stringify({ collection: tableName, action: "insert", data: prepared }));
+          return [];
+        }
+
+        // SQLite / MySQL — batch INSERT, then fetch by ID range
+        if (driver === "sqlite") {
+          await adapter.exec("BEGIN", []);
+          try {
+            for (const row of prepared) {
+              const values = cols.map((c) => serializeValue(c, row[c]));
+              await adapter.exec(
+                `INSERT INTO ${w(tableName)} (${cols.map(w).join(", ")}) VALUES (${values.map(() => "?").join(", ")})`,
+                values
+              );
+            }
+            await adapter.exec("COMMIT", []);
+          } catch (err) {
+            await adapter.exec("ROLLBACK", []);
+            throw err;
+          }
+          const lr = await adapter.exec("SELECT last_insert_rowid() as id");
+          const lastId = lr?.rows?.[0]?.id;
+          const firstId = lastId ? lastId - prepared.length + 1 : undefined;
+          if (firstId && firstId > 0) {
+            const existing = await adapter.exec(
+              `SELECT * FROM ${w(tableName)} WHERE rowid >= ? AND rowid <= ?`,
+              [firstId, lastId]
+            );
+            const rows = existing?.rows || [];
+            return rows.map((row: any, i: number) => {
+              const r = row as T;
+              if (Object.keys(rawSecrets[i] || {}).length) Object.assign(r, rawSecrets[i] || {});
+              const pk = modelSchema?.primaryKey || "id";
+              const pkVal = (r as any)[pk];
+              return attachEntityMethods(r, { [pk]: pkVal } as Partial<T>, this);
+            });
+          }
+        }
+
+        if (driver === "mysql") {
+          const allValues: any[] = [];
+          for (const row of prepared) {
+            for (const c of cols) {
+              allValues.push(serializeValue(c, row[c]));
+            }
+          }
+          const rowPlaceholders = prepared.map(() => `(${cols.map(() => "?").join(", ")})`).join(", ");
+          await adapter.exec(
+            `INSERT INTO ${w(tableName)} (${cols.map(w).join(", ")}) VALUES ${rowPlaceholders}`,
+            allValues
+          );
+          const lr = await adapter.exec("SELECT LAST_INSERT_ID() as id");
+          const firstId = lr?.rows?.[0]?.id;
+          if (firstId && firstId > 0) {
+            const lastId = firstId + prepared.length - 1;
+            const existing = await adapter.exec(
+              `SELECT * FROM ${w(tableName)} WHERE id >= ? AND id <= ?`,
+              [firstId, lastId]
+            );
+            const rows = existing?.rows || [];
+            return rows.map((row: any, i: number) => {
+              const r = row as T;
+              if (Object.keys(rawSecrets[i] || {}).length) Object.assign(r, rawSecrets[i] || {});
+              const pk = modelSchema?.primaryKey || "id";
+              const pkVal = (r as any)[pk];
+              return attachEntityMethods(r, { [pk]: pkVal } as Partial<T>, this);
+            });
+          }
+        }
+
+        // Fallback: return raw prepared rows
+        return prepared.map((row, i) => {
+          const r = row as T;
+          if (Object.keys(rawSecrets[i] || {}).length) Object.assign(r, rawSecrets[i] || {});
+          return r;
+        });
       },
 
       async updateMany(filter: Partial<T>, data: Partial<T>) {
