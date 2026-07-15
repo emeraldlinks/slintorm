@@ -309,6 +309,19 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       return { typeF, idF };
     }
 
+    function captureRawSecret(item: Record<string, unknown>): Record<string, unknown> {
+      const raw: Record<string, unknown> = {};
+      if (!modelSchema?.fields) return raw;
+      for (const field of Object.keys(modelSchema.fields)) {
+        const meta = (modelSchema.fields[field] as any)?.meta;
+        if (meta?.secret || meta?.["@secret"]) {
+          const val = (item as any)[field];
+          if (val !== undefined) raw[field] = val;
+        }
+      }
+      return raw;
+    }
+
     return {
       async insert(item: T) {
         await ensure(item);
@@ -324,6 +337,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         }
 
         validateItem(item, modelSchema?.fields);
+        const rawSecret = captureRawSecret(item as unknown as Record<string, unknown>);
         item = await applySecurityOnWrite(item as unknown as Record<string, unknown>, modelSchema?.fields, encryptionKey) as unknown as T;
 
         let insertedId: number | undefined;
@@ -366,6 +380,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
           if (driver === "postgres" && result?.rows?.[0]) {
             const row = result.rows[0];
+            Object.assign(row, rawSecret);
             if (hooks?.onCreateAfter) await hooks.onCreateAfter(row);
             return row as any;
           }
@@ -390,6 +405,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         if (!inserted && (item as any).email) {
           try { inserted = await this.get({ email: (item as any).email } as any); } catch {}
         }
+        if (inserted && Object.keys(rawSecret).length) Object.assign(inserted, rawSecret);
         if (hooks?.onCreateAfter && inserted) await hooks.onCreateAfter(inserted);
         await emit("afterInsert", inserted);
         return inserted;
@@ -409,6 +425,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         }
 
         validateItem(data, modelSchema?.fields);
+        const rawSecret = captureRawSecret(data as unknown as Record<string, unknown>);
         data = await applySecurityOnWrite(data as unknown as Record<string, unknown>, modelSchema?.fields, encryptionKey) as unknown as Partial<T>;
 
         if (driver === "mongodb") {
@@ -443,6 +460,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         }
 
         const after = await this.get(where);
+        if (after && Object.keys(rawSecret).length) Object.assign(after, rawSecret);
         if (hooks?.onUpdateAfter) await hooks.onUpdateAfter(before, after || data);
         await emit("afterUpdate", after, where);
         return after;
@@ -552,60 +570,14 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       async min(column: keyof T & string, filter?: Partial<T>) { return scalarAggregate("MIN", column, filter); },
       async max(column: keyof T & string, filter?: Partial<T>) { return scalarAggregate("MAX", column, filter); },
 
-      async insertMany(items: T[]) {
-        if (!items.length) return 0;
+      async insertMany(items: T[]): Promise<T[]> {
+        if (!items.length) return [];
         await ensure(items[0]);
-        const now = new Date().toISOString();
-        const prepared = items.map((item) => {
-          const row = { ...item } as any;
-          fillRandomFields(row);
-          if (row.createdAt === undefined) row.createdAt = now;
-          if (row.updatedAt === undefined) row.updatedAt = now;
-          return row;
-        });
-
-        for (const row of prepared) {
-          validateItem(row, modelSchema?.fields);
-          await applySecurityOnWrite(row as unknown as Record<string, unknown>, modelSchema?.fields, encryptionKey);
+        const results: T[] = [];
+        for (const item of items) {
+          results.push(await this.insert(item));
         }
-
-        if (driver === "mongodb") {
-          await adapter.exec(JSON.stringify({ collection: tableName, action: "insert", data: prepared }));
-          return prepared.length;
-        }
-
-        const cols = Object.keys(prepared[0]).filter((c) => {
-          if (isOmitDb(modelSchema.fields?.[c])) return false;
-          return prepared[0][c] !== undefined;
-        });
-        const w = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
-
-        if (driver === "sqlite") {
-          await adapter.exec("BEGIN", []);
-          try {
-            for (const row of prepared) {
-              const values = cols.map((c) => serializeValue(c, row[c]));
-              await adapter.exec(`INSERT INTO ${w(tableName)} (${cols.map(w).join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`, values);
-            }
-            await adapter.exec("COMMIT", []);
-          } catch (err) {
-            await adapter.exec("ROLLBACK", []);
-            throw err;
-          }
-          return prepared.length;
-        }
-
-        const allValues: any[] = [];
-        const isPg = driver === "postgres";
-        const rowPlaceholders = prepared.map((row, rowIdx) => {
-          const phs = cols.map((c, colIdx) => {
-            allValues.push(serializeValue(c, row[c]));
-            return isPg ? `$${rowIdx * cols.length + colIdx + 1}` : "?";
-          });
-          return `(${phs.join(", ")})`;
-        });
-        await adapter.exec(`INSERT INTO ${w(tableName)} (${cols.map(w).join(", ")}) VALUES ${rowPlaceholders.join(", ")}`, allValues);
-        return prepared.length;
+        return results;
       },
 
       async updateMany(filter: Partial<T>, data: Partial<T>) {
@@ -705,8 +677,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       async findOrCreate(filter: Partial<T>, defaults: T) {
         const existing = await this.get(filter);
         if (existing) return { record: existing as T, created: false };
-        await this.insertMany([defaults]);
-        const created = await this.get(filter);
+        const created = await this.insert(defaults);
         return { record: created as T, created: true };
       },
 
