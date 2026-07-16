@@ -1433,6 +1433,6 @@ if (mongoUrl && !pgOnly) {
   await runSuite("mongodb", mongoUrl, mongoDbName);
 }
 
-// ── Run PostgreSQL if PG_URL is set (fallback to Supabase) ──────────────
-const pgUrl = process.env.PG_URL || "postgresql://postgres.bibysoybtjvjainuopyh:pXBQrdTiv2D50CdH@aws-0-eu-west-1.pooler.supabase.com:5432/postgres";
-await runSuite("postgres", pgUrl);
+// ── Run PostgreSQL if PG_URL is set ────────────────────────────────────
+const pgUrl = process.env.PG_URL;
+if (pgUrl) await runSuite("postgres", pgUrl);
