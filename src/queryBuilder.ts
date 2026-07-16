@@ -501,7 +501,7 @@ export class QueryBuilder<T extends Record<string, any>> {
   }
 
   // ── MongoDB helpers ──────────────────────────────────────────────────────────
-  private buildMongoFilter(): Record<string, any> {
+  protected buildMongoFilter(): Record<string, any> {
     const filter: Record<string, any> = {};
     const orClauses: Record<string, any>[] = [];
     for (const w of this._where) {

@@ -23,6 +23,7 @@ export type AnyModelMap = Record<string, object>;
 export type ORMManagerConfig<TModelMap extends AnyModelMap = AnyModelMap> = {
   driver?: DBDriver;
   databaseUrl?: string;
+  databaseName?: string;
   dir?: string;
   logs?: boolean;
   /** Pre-built schema — required when using the ORM in edge/serverless runtimes
