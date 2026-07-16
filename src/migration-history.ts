@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { createHash } from "node:crypto";
 
 import { Migrator, type SchemaModel } from "./migrator.js";
-import type { DBDriver, ExecFn } from "./types.js";
+import type { DBDriver, ExecFn, SQLExecResult } from "./types.js";
 
 export interface MigrationUnit {
   name: string;
@@ -160,6 +160,64 @@ function restoreGeneratedSchemaSnapshot(dir: string, batch: number): Record<stri
   return schema;
 }
 
+export interface DataMigration {
+  name: string;
+  description?: string;
+  up: (exec: ExecFn) => Promise<void>;
+  down?: (exec: ExecFn) => Promise<void>;
+}
+
+const DATA_MIG_PREFIX = "data:";
+
+export function isDataMigration(name: string): boolean {
+  return name.startsWith(DATA_MIG_PREFIX);
+}
+
+export async function getAppliedDataMigrations(exec: ExecFn, driver?: string): Promise<string[]> {
+  if (driver === "mongodb") {
+    const r = await exec(JSON.stringify({ collection: MIGRATIONS_TABLE, action: "find", filter: {} }));
+    return (r.rows || [])
+      .filter((row: any) => isDataMigration(row.name))
+      .map((row: any) => row.name);
+  }
+  const q = quoteId(driver || "sqlite", MIGRATIONS_TABLE);
+  try {
+    const r = await exec(`SELECT name FROM ${q} WHERE name LIKE '${DATA_MIG_PREFIX}%' ORDER BY name ASC`);
+    return (r.rows || []).map((row: any) => row.name);
+  } catch {
+    return [];
+  }
+}
+
+export async function runDataMigrations(options: {
+  exec: ExecFn;
+  driver?: string;
+  migrations: DataMigration[];
+}): Promise<{ applied: number; names: string[] }> {
+  const driver = options.driver ?? "sqlite";
+  const runExec = (sql: string, params?: any[]) => options.exec(sql, params);
+  await ensureMigrationsTable(runExec, driver as string);
+
+  const applied = new Set(await getAppliedDataMigrations(runExec, driver as string));
+  const pending = options.migrations.filter((m) => !applied.has(DATA_MIG_PREFIX + m.name));
+  let count = 0;
+  const names: string[] = [];
+
+  for (const mig of pending) {
+    try {
+      await mig.up(runExec);
+      const fullName = DATA_MIG_PREFIX + mig.name;
+      await insertMigrationRow(runExec, driver as string, fullName, 0);
+      names.push(mig.name);
+      count++;
+    } catch (err) {
+      throw new Error(`Data migration "${mig.name}" failed: ${(err as any)?.message || err}`);
+    }
+  }
+
+  return { applied: count, names };
+}
+
 export async function snapshotCurrentGeneratedSchema(options: {
   exec: ExecFn;
   driver?: DBDriver;
@@ -266,7 +324,7 @@ function schemaToPlan(schema: Record<string, any>): MigrationUnit[] {
 
 async function ensureMigrationsTable(exec: ExecFn, driver: string) {
   if (driver === "mongodb") {
-    await exec(`CREATE TABLE "${MIGRATIONS_TABLE}"`);
+    await exec(JSON.stringify({ collection: MIGRATIONS_TABLE, action: "createCollection" }));
     return;
   }
 
@@ -279,24 +337,32 @@ function quoteId(driver: string, name: string): string {
 }
 
 async function getApplied(exec: ExecFn, driver?: string): Promise<{ id: number; name: string; batch: number; run_at: string }[]> {
+  if (driver === "mongodb") {
+    const r = await exec(JSON.stringify({ collection: MIGRATIONS_TABLE, action: "find", filter: {} }));
+    return r.rows;
+  }
   const q = quoteId(driver || "sqlite", MIGRATIONS_TABLE);
   const r = await exec(`SELECT * FROM ${q} ORDER BY id ASC`);
   return r.rows;
 }
 
 async function getLastBatch(exec: ExecFn, driver?: string): Promise<number> {
+  if (driver === "mongodb") {
+    const r = await exec(JSON.stringify({ collection: MIGRATIONS_TABLE, action: "aggregate", pipeline: [{ $group: { _id: null, b: { $max: "$batch" } } }] }));
+    return r.rows[0]?.b ?? 0;
+  }
   const q = quoteId(driver || "sqlite", MIGRATIONS_TABLE);
   const r = await exec(`SELECT MAX(batch) as b FROM ${q}`);
   return parseInt(r.rows[0]?.b ?? "0", 10);
 }
 
 async function insertMigrationRow(exec: ExecFn, driver: string, name: string, batch: number) {
-  const q = quoteId(driver, MIGRATIONS_TABLE);
   if (driver === "mongodb") {
-    await exec(`INSERT INTO ${q} (name, batch) VALUES (?,?)`, [name, batch]);
+    await exec(JSON.stringify({ collection: MIGRATIONS_TABLE, action: "insert", data: [{ name, batch, run_at: new Date().toISOString() }] }));
     return;
   }
 
+  const q = quoteId(driver, MIGRATIONS_TABLE);
   const isPg = driver === "postgres";
   await exec(
     `INSERT INTO ${q} (name, batch) VALUES (${isPg ? "$1,$2" : "?,?"})`,

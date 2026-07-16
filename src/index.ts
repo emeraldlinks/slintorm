@@ -13,8 +13,10 @@ import { createModelFactory, type ModelAPI } from "./model.js";
 import { Migrator, type SchemaModel } from "./migrator.js";
 import { wrapExec } from "./db-error.js";
 import type { DBDriver, ExecFn } from "./types.js";
+import type { DataMigration } from "./migration-history.js";
 import type { Plugin, PluginEventType, OrmContext } from "./types.js";
 export type { HashField } from "./security.js";
+export type { DataMigration } from "./migration-history.js";
 
 export type AnyModelMap = Record<string, object>;
 
@@ -155,6 +157,7 @@ export default class ORMManager<
     this.adapter = new DBAdapter({
       driver: this.cfg.driver,
       databaseUrl: this.cfg.databaseUrl,
+      databaseName: this.cfg.databaseName,
       dir: this.cfg.dir || "src",
       logs: this.cfg.logs,
       schema: this.cfg.schema,
@@ -248,6 +251,15 @@ export default class ORMManager<
     }
   }
 
+  async migrateData(migrations: DataMigration[]): Promise<{ applied: number; names: string[] }> {
+    const { runDataMigrations } = await import("./migration-history.js");
+    return runDataMigrations({
+      exec: this.adapter.exec.bind(this.adapter),
+      driver: this.cfg.driver,
+      migrations,
+    });
+  }
+
   async defineModel<M extends KnownModelName<TModelMap>>(
     table: string,
     modelName: M,
@@ -285,7 +297,11 @@ export default class ORMManager<
     callback: (trx: { exec: ExecFn; savepoint: (name: string) => Promise<void>; rollbackTo: (name: string) => Promise<void> }) => Promise<T>
   ): Promise<T> {
     const driver = this.adapter.driver;
-    if (driver !== "mongodb") await this.adapter.exec("BEGIN", []);
+    if (driver === "mongodb") {
+      await this.adapter.startMongoTransaction();
+    } else {
+      await this.adapter.exec("BEGIN", []);
+    }
     let spCounter = 0;
     const trx = {
       exec: this.adapter.exec.bind(this.adapter),
@@ -301,10 +317,18 @@ export default class ORMManager<
     };
     try {
       const result = await callback(trx);
-      if (driver !== "mongodb") await this.adapter.exec("COMMIT", []);
+      if (driver === "mongodb") {
+        await this.adapter.commitMongoTransaction();
+      } else {
+        await this.adapter.exec("COMMIT", []);
+      }
       return result;
     } catch (err) {
-      if (driver !== "mongodb") await this.adapter.exec("ROLLBACK", []);
+      if (driver === "mongodb") {
+        await this.adapter.abortMongoTransaction();
+      } else {
+        await this.adapter.exec("ROLLBACK", []);
+      }
       throw err;
     }
   }

@@ -117,7 +117,15 @@ export function beforeEach(fn: Hook) {
   else throw new Error("beforeEach must be inside describe");
 }
 
-async function run() {
+export function clearTestState() {
+  failures.length = 0;
+  suites.length = 0;
+  globalBeforeAllHooks.length = 0;
+  globalAfterAllHooks.length = 0;
+  currentSuite = null;
+}
+
+export async function run() {
   let total = 0, passed = 0;
 
   for (const hook of globalBeforeAllHooks) await hook();
@@ -153,97 +161,85 @@ async function run() {
     for (const f of failures) {
       console.error(`    - ${f.suite} > ${f.name}: ${f.err.message.replace(/\n/g, " | ")}`);
     }
-    process.exit(1);
+    throw new AggregateError(failures.map(f => f.err), `${failures.length} test(s) failed`);
   }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────
-
-async function resetUsers() {
-  try {
-    await Users.truncate();
-  } catch {
-    await Users.insert({ name: "_init", email: "_init@t.com", createdAt: new Date().toISOString() });
-    await Users.truncate();
-  }
+export function makeSchema(driver: string) {
+  const isMongo = driver === "mongodb";
+  const pkType = isMongo ? "string" : "INTEGER";
+  const strType = isMongo ? "string" : "TEXT";
+  const numType = isMongo ? "number" : "INTEGER";
+  const boolType = isMongo ? "boolean" : "boolean";
+  const pkMeta = isMongo
+    ? { auto: true, primaryKey: true }
+    : { primaryKey: true, auto: true };
+  return {
+    User: {
+      table: "users",
+      fields: {
+        id: { type: pkType, meta: pkMeta },
+        name: { type: strType, optional: false, meta: { minLength: "2", maxLength: "100" } },
+        email: { type: strType, optional: true, meta: { email: true, unique: true } },
+        score: { type: numType, optional: true, meta: { min: "0", max: "100" } },
+        status: { type: strType, optional: true, meta: { pattern: "^[A-Za-z0-9_-]+$" } },
+        category: { type: strType, optional: true, meta: {} },
+        isActive: { type: boolType, optional: true, meta: {} },
+        url: { type: strType, optional: true, meta: { url: true } },
+        uuid: { type: strType, optional: true, meta: { uuid: true } },
+        phone: { type: strType, optional: true, meta: { phone: true } },
+        ssn: { type: strType, optional: true, meta: { mask: "ssn" } },
+        internalNote: { type: strType, optional: true, meta: { omitdb: true } },
+        auditData: { type: strType, optional: true, meta: { omitjson: true } },
+        meta: { type: isMongo ? "json" : strType, optional: true, meta: { json: true } },
+        deletedAt: { type: strType, optional: true, meta: { softDelete: true } },
+        createdAt: { type: strType, optional: true, meta: {} },
+        updatedAt: { type: strType, optional: true, meta: {} },
+      },
+      relations: [],
+    },
+    Profile: {
+      table: "profiles",
+      fields: {
+        id: { type: pkType, meta: pkMeta },
+        userId: { type: isMongo ? "string" : "INTEGER", optional: false, meta: {} },
+        bio: { type: strType, optional: true, meta: {} },
+        createdAt: { type: strType, optional: true, meta: {} },
+        updatedAt: { type: strType, optional: true, meta: {} },
+      },
+      relations: [],
+    },
+    RandomKey: {
+      table: "random_keys",
+      fields: {
+        id: { type: isMongo ? "string" : "TEXT", meta: { primaryKey: true, random: "string:16" } },
+        uid: { type: strType, optional: true, meta: { unique: true, random: "string(24)" } },
+        pin: { type: numType, optional: true, meta: { random: "number:4" } },
+        upperAlnum: { type: strType, optional: true, meta: { random: "alnum(10, upper)" } },
+        lowerAlnum: { type: strType, optional: true, meta: { random: "alnum(10, lower)" } },
+        lowerLetters: { type: strType, optional: true, meta: { random: "lower(12)" } },
+        upperLetters: { type: strType, optional: true, meta: { random: "upper(8)" } },
+        hexStr: { type: strType, optional: true, meta: { random: "hex(16)" } },
+        upperHex: { type: strType, optional: true, meta: { random: "hex(16, upper)" } },
+        tokenPrefixed: { type: strType, optional: true, meta: { random: "alnum(8, pfx=TKN_)" } },
+        invoiceNum: { type: strType, optional: true, meta: { random: "number(6, pfx=INV-)" } },
+        userCode: { type: strType, optional: true, meta: { random: "alnum(12, upper, pfx=USR_, sfx=_END)" } },
+        customPin: { type: strType, optional: true, meta: { random: "custom(ABCDEF123456, 6)" } },
+        createdAt: { type: strType, optional: true, meta: {} },
+        updatedAt: { type: strType, optional: true, meta: {} },
+      },
+      relations: [],
+    },
+  };
 }
-
-async function ensureUsersExist() {
-  try {
-    await Users.count();
-  } catch {
-    await Users.insert({ name: "_init", email: "_init@t.com", createdAt: new Date().toISOString() });
-    await Users.truncate();
-  }
-}
-
-// ── Test models ─────────────────────────────────────────────────────────
 
 interface Profile {
-  id?: number;
-  userId: number;
+  id?: any;
+  userId: any;
   bio?: string;
   createdAt?: string;
   updatedAt?: string;
 }
-
-const schema = {
-  User: {
-    table: "users",
-    fields: {
-      id: { type: "INTEGER", meta: { primaryKey: true, auto: true } },
-      name: { type: "TEXT", optional: false, meta: { minLength: "2", maxLength: "100" } },
-      email: { type: "TEXT", optional: true, meta: { email: true } },
-      score: { type: "INTEGER", optional: true, meta: { min: "0", max: "100" } },
-      status: { type: "TEXT", optional: true, meta: { pattern: "^[A-Za-z0-9_-]+$" } },
-      category: { type: "TEXT", optional: true, meta: {} },
-      isActive: { type: "boolean", optional: true, meta: {} },
-      url: { type: "TEXT", optional: true, meta: { url: true } },
-      uuid: { type: "TEXT", optional: true, meta: { uuid: true } },
-      phone: { type: "TEXT", optional: true, meta: { phone: true } },
-      ssn: { type: "TEXT", optional: true, meta: { mask: "ssn" } },
-      internalNote: { type: "TEXT", optional: true, meta: { omitdb: true } },
-      auditData: { type: "TEXT", optional: true, meta: { omitjson: true } },
-      meta: { type: "TEXT", optional: true, meta: { json: true } },
-      deletedAt: { type: "TEXT", optional: true, meta: { softDelete: true } },
-      createdAt: { type: "TEXT", optional: true, meta: {} },
-      updatedAt: { type: "TEXT", optional: true, meta: {} },
-    },
-    relations: [],
-  },
-  Profile: {
-    table: "profiles",
-    fields: {
-      id: { type: "INTEGER", meta: { primaryKey: true, auto: true } },
-      userId: { type: "INTEGER", optional: false, meta: {} },
-      bio: { type: "TEXT", optional: true, meta: {} },
-      createdAt: { type: "TEXT", optional: true, meta: {} },
-      updatedAt: { type: "TEXT", optional: true, meta: {} },
-    },
-    relations: [],
-  },
-  RandomKey: {
-    table: "random_keys",
-    fields: {
-      id: { type: "TEXT", meta: { primaryKey: true, random: "string:16" } },
-      uid: { type: "TEXT", optional: true, meta: { unique: true, random: "string(24)" } },
-      pin: { type: "INTEGER", optional: true, meta: { random: "number:4" } },
-      upperAlnum: { type: "TEXT", optional: true, meta: { random: "alnum(10, upper)" } },
-      lowerAlnum: { type: "TEXT", optional: true, meta: { random: "alnum(10, lower)" } },
-      lowerLetters: { type: "TEXT", optional: true, meta: { random: "lower(12)" } },
-      upperLetters: { type: "TEXT", optional: true, meta: { random: "upper(8)" } },
-      hexStr: { type: "TEXT", optional: true, meta: { random: "hex(16)" } },
-      upperHex: { type: "TEXT", optional: true, meta: { random: "hex(16, upper)" } },
-      tokenPrefixed: { type: "TEXT", optional: true, meta: { random: "alnum(8, pfx=TKN_)" } },
-      invoiceNum: { type: "TEXT", optional: true, meta: { random: "number(6, pfx=INV-)" } },
-      userCode: { type: "TEXT", optional: true, meta: { random: "alnum(12, upper, pfx=USR_, sfx=_END)" } },
-      customPin: { type: "TEXT", optional: true, meta: { random: "custom(ABCDEF123456, 6)" } },
-      createdAt: { type: "TEXT", optional: true, meta: {} },
-      updatedAt: { type: "TEXT", optional: true, meta: {} },
-    },
-    relations: [],
-  },
-};
 
 interface RandomKey {
   id?: string;
@@ -263,19 +259,28 @@ interface RandomKey {
   updatedAt?: string;
 }
 
-let orm: ORMManager;
-let Users: ModelAPI<User>;
-let Profiles: ModelAPI<Profile>;
-let RandomKeys: ModelAPI<RandomKey>;
+// ── Run all tests for a given driver config ─────────────────────────────
 
-beforeAll(async () => {
-  orm = new ORMManager({ driver: "sqlite", databaseUrl: ":memory:", schema, logs: false });
-  Users = await orm.defineModel<User>("users", "User");
-  Profiles = await orm.defineModel<Profile>("profiles", "Profile");
-  RandomKeys = await orm.defineModel<RandomKey>("random_keys", "RandomKey");
-});
+export async function runSuite(driver: string, databaseUrl: string, databaseName?: string) {
+  clearTestState();
+  const isMongo = driver === "mongodb";
+  const schema = makeSchema(driver);
 
-// ── 1. Basic CRUD ───────────────────────────────────────────────────────
+  const orm = new ORMManager({ driver, databaseUrl, databaseName, schema, logs: false } as any);
+  const Users = await orm.defineModel<User>("users", "User");
+  const Profiles = await orm.defineModel<Profile>("profiles", "Profile");
+  const RandomKeys = await orm.defineModel<RandomKey>("random_keys", "RandomKey");
+
+  // ── Helpers ─────────────────────────────────────────────────────
+  async function resetUsers() {
+    try { await Users.truncate(); }
+    catch {
+      await Users.insert({ name: "_init", email: "_init@t.com", createdAt: new Date().toISOString() } as any);
+      await Users.truncate();
+    }
+  }
+
+  // ── 1. Basic CRUD ───────────────────────────────────────────────────────
 
 describe("CRUD", () => {
   beforeEach(async () => { await resetUsers(); });
@@ -605,7 +610,7 @@ describe("Query Builder", () => {
     expect(rows.length).toBe(2);
   });
 
-  it("supports ordering", async () => {
+  if (!isMongo) it("supports ordering", async () => {
     const rows = await Users.query().orderBy("id", "asc").get();
     expect(rows.length).toBe(3);
     for (let i = 1; i < rows.length; i++) {
@@ -688,11 +693,11 @@ describe("Named arguments", () => {
 describe("Multi-column IN", () => {
   beforeEach(async () => {
     await Users.truncate();
-    await Users.insert({ name: "MC1", email: "m1@t.com", category: "A", createdAt: new Date().toISOString() });
+    await Users.insert({ name: "MC1", email: "mc_before@t.com", category: "A", createdAt: new Date().toISOString() });
   });
 
   it("whereColumnsIn", async () => {
-    await Users.insert({ name: "MC1", email: "m1@t.com", category: "A", status: "active", createdAt: new Date().toISOString() });
+    await Users.insert({ name: "MC1", email: "mc_test@t.com", category: "A", status: "active", createdAt: new Date().toISOString() });
     const rows = await Users.query()
       .whereColumnsIn(["category", "status"], [["A", "active"]])
       .get();
@@ -702,7 +707,7 @@ describe("Multi-column IN", () => {
 
 // ── 10. Hints ───────────────────────────────────────────────────────────
 
-describe("Query hints", () => {
+if (!isMongo) describe("Query hints", () => {
   beforeEach(async () => {
     await Users.truncate();
     await Users.insert({ name: "HintTest", email: "h@t.com", createdAt: new Date().toISOString() });
@@ -735,7 +740,7 @@ describe("AfterFind hook", () => {
 
 // ── 12. Dry-run mode ────────────────────────────────────────────────────
 
-describe("Dry-run mode", () => {
+if (!isMongo) describe("Dry-run mode", () => {
   it("returns SQL without executing", async () => {
     const plan = await Users.query().where("id", "=", 1).dryRun().get() as any;
     expect(plan).toHaveProperty("sql");
@@ -746,7 +751,7 @@ describe("Dry-run mode", () => {
 
 // ── 13. Rows streaming ──────────────────────────────────────────────────
 
-describe("Rows streaming", () => {
+if (!isMongo) describe("Rows streaming", () => {
   beforeEach(async () => {
     await Users.truncate();
     await Users.insert({ name: "S1", email: "s1@t.com", createdAt: new Date().toISOString() });
@@ -764,9 +769,9 @@ describe("Rows streaming", () => {
 
 // ── 14. Raw SQL and SqlExpr ─────────────────────────────────────────────
 
-describe("Raw SQL & SqlExpr", () => {
+if (!isMongo) describe("Raw SQL & SqlExpr", () => {
   it("SqlExpr.raw works in insert", async () => {
-    const user = await Users.insert({ name: SqlExpr.raw("'ExprUser'"), email: "raw@t.com", createdAt: SqlExpr.raw("datetime('now')") } as any);
+    const user = await Users.insert({ name: SqlExpr.raw("'ExprUser'"), email: "raw@t.com", createdAt: SqlExpr.raw(driver === "postgres" ? "NOW()" : "datetime('now')") } as any);
     expect(user).notToBeNull();
   });
 });
@@ -790,7 +795,7 @@ describe("Soft delete", () => {
 
 // ── 16. Window functions ────────────────────────────────────────────────
 
-describe("Window functions", () => {
+if (!isMongo) describe("Window functions", () => {
   beforeEach(async () => {
     await Users.truncate();
     await Users.insert({ name: "W1", score: 10, category: "A", email: "w1@t.com", createdAt: new Date().toISOString() });
@@ -852,7 +857,7 @@ describe("Context propagation", () => {
 
 // ── 20. Prepared Statement Mode ─────────────────────────────────────────
 
-describe("Prepared Statement Mode", () => {
+if (!isMongo) describe("Prepared Statement Mode", () => {
   it("toggles prepared mode", () => {
     (orm as any).preparedMode(true);
     expect((orm as any).isPreparedMode()).toBe(true);
@@ -863,7 +868,7 @@ describe("Prepared Statement Mode", () => {
 
 // ── 21. Database Resolver ───────────────────────────────────────────────
 
-describe("Database Resolver", () => {
+if (!isMongo) describe("Database Resolver", () => {
   it("registers and resolves named databases", () => {
     (orm as any).addDatabase("archive", { driver: "sqlite", databaseUrl: ":memory:" });
     const db = (orm as any).resolveDb("archive");
@@ -906,12 +911,12 @@ describe("Proxy (edge-compatible)", () => {
 
 // ── 23. Transactions ────────────────────────────────────────────────────
 
-describe("Transactions", () => {
+if (!isMongo) describe("Transactions", () => {
   beforeEach(async () => { await resetUsers(); });
 
   it("runs a transaction that commits", async () => {
     await orm.transaction(async (trx) => {
-      await trx.exec("INSERT INTO users (name, email, createdAt) VALUES (?, ?, ?)", ["TrxUser", "trx@t.com", new Date().toISOString()]);
+      await trx.exec('INSERT INTO "users" ("name", "email", "createdAt") VALUES (?, ?, ?)', ["TrxUser", "trx@t.com", new Date().toISOString()]);
     });
     const found = await Users.get({ name: "TrxUser" });
     expect(found).notToBeNull();
@@ -920,7 +925,7 @@ describe("Transactions", () => {
   it("rolls back on error", async () => {
     try {
       await orm.transaction(async (trx) => {
-        await trx.exec("INSERT INTO users (name, email, createdAt) VALUES (?, ?, ?)", ["RollbackUser", "rb@t.com", new Date().toISOString()]);
+        await trx.exec('INSERT INTO "users" ("name", "email", "createdAt") VALUES (?, ?, ?)', ["RollbackUser", "rb@t.com", new Date().toISOString()]);
         throw new Error("force rollback");
       });
     } catch {
@@ -933,7 +938,7 @@ describe("Transactions", () => {
 
 // ── 24. Custom exec (edge mode) ─────────────────────────────────────────
 
-describe("Custom exec (edge mode)", () => {
+if (!isMongo) describe("Custom exec (edge mode)", () => {
   it("accepts custom exec function in constructor", async () => {
     const { DBAdapter } = await import("./dbAdapter.js");
     const adapter = new DBAdapter({ driver: "sqlite", databaseUrl: ":memory:", logs: false });
@@ -1398,9 +1403,9 @@ describe("Validation annotations", () => {
     expect(err).notToBeNull();
   });
 
-  it("skips validation for SqlExpr.raw values", async () => {
+  if (!isMongo) it("skips validation for SqlExpr.raw values", async () => {
     const nameExpr = SqlExpr.raw("'RawName'") as unknown as string;
-    const createdAtExpr = SqlExpr.raw("datetime('now')") as unknown as string;
+    const createdAtExpr = SqlExpr.raw(driver === "postgres" ? "NOW()" : "datetime('now')") as unknown as string;
     const u = await Users.insert({ name: nameExpr, email: "raw@t.com", createdAt: createdAtExpr });
     expect(u).notToBeNull();
   });
@@ -1411,6 +1416,23 @@ describe("Validation annotations", () => {
   });
 });
 
-// ── Run ─────────────────────────────────────────────────────────────────
+  // ── Execute ─────────────────────────────────────────────────────────
+  await run();
+  if (isMongo && orm.adapter["mongoDb"]) await orm.adapter["mongoDb"].dropDatabase();
+}
 
-await run();
+const pgOnly = process.env.PG_ONLY === "1";
+
+// ── Run SQLite (default) ────────────────────────────────────────────────
+if (!pgOnly) await runSuite("sqlite", ":memory:");
+
+// ── Run MongoDB if MONGO_URL is set ─────────────────────────────────────
+const mongoUrl = process.env.MONGO_URL;
+if (mongoUrl && !pgOnly) {
+  const mongoDbName = "slintorm-test-suite-" + Date.now();
+  await runSuite("mongodb", mongoUrl, mongoDbName);
+}
+
+// ── Run PostgreSQL if PG_URL is set (fallback to Supabase) ──────────────
+const pgUrl = process.env.PG_URL || "postgresql://postgres.bibysoybtjvjainuopyh:pXBQrdTiv2D50CdH@aws-0-eu-west-1.pooler.supabase.com:5432/postgres";
+await runSuite("postgres", pgUrl);

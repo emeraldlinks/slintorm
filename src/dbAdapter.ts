@@ -20,9 +20,11 @@ export class DBAdapter {
   private pgClient: any = null;
   private mongoClient: any = null;
   private mongoDb: any = null;
+  private _mongoObjectId: any = null;
   private connected = false;
   private stmtCache: Map<string, any> = new Map();
   private stmtCacheMax = 200;
+  private _mongoSession: any = null;
 
   // Read replicas
   private replicaPools: { sqlite?: any; mysql?: any[]; pg?: any[] } = {};
@@ -206,13 +208,16 @@ export class DBAdapter {
           const mod = await import("mongodb");
           const mongodb = await this.defaultExport<any>(mod);
           const MongoClientClass = mongodb.MongoClient ?? mongodb;
+          this._mongoObjectId = mongodb.ObjectId;
           this.mongoClient = new MongoClientClass(this.config.databaseUrl!);
           await this.mongoClient.connect();
           this.mongoDb = this.mongoClient.db(this.config.databaseName);
         } catch (err) {
-          throw new Error(
-            `MongoDB driver not found. Install it:\n  npm install mongodb\n\nOriginal error: ${(err as any)?.message ?? err}`
-          );
+          const msg = (err as any)?.message ?? String(err);
+          const hint = msg.includes("Cannot find module") || msg.includes("not found")
+            ? `MongoDB driver not found. Install it:\n  npm install mongodb\n\n`
+            : "";
+          throw new Error(`${hint}MongoDB connection failed: ${msg}`);
         }
         break;
       }
@@ -271,7 +276,12 @@ export class DBAdapter {
 
       case "postgres": {
         if (this.logs) console.log("EXEC (postgres):", sqlOrOp, params);
-        const res = await this.pgClient!.query(sqlOrOp, params);
+        let pgSql = sqlOrOp;
+        if (params?.length && pgSql.includes("?")) {
+          let idx = 0;
+          pgSql = pgSql.replace(/\?/g, () => `$${++idx}`);
+        }
+        const res = await this.pgClient!.query(pgSql, params);
         return { rows: res.rows, changes: res.rowCount ?? 0 };
       }
 
@@ -279,20 +289,84 @@ export class DBAdapter {
         if (this.logs) console.log("EXEC (mongodb):", sqlOrOp, params);
         if (!this.mongoDb) throw new Error("MongoDB not initialized");
         const cmd = JSON.parse(sqlOrOp);
+
+        // Map id ↔ _id transparently for MongoDB
+        const OID = this._mongoObjectId;
+        const toObjectId = (v: any) =>
+          typeof v === "string" && /^[0-9a-fA-F]{24}$/.test(v) && OID ? new OID(v) : v;
+        const mongoId = (key: string) => key === "id" ? "_id" : key;
+        const mapIdToMongo = (obj: any): any => {
+          if (!obj || typeof obj !== "object") return obj;
+          if (Array.isArray(obj)) return obj.map(mapIdToMongo);
+          const out: any = {};
+          for (const [k, v] of Object.entries(obj)) {
+            out[mongoId(k)] = toObjectId(v);
+          }
+          return out;
+        };
+        const mapMongoToId = (obj: any): any => {
+          if (!obj || typeof obj !== "object") return obj;
+          if (Array.isArray(obj)) return obj.map(mapMongoToId);
+          const out: any = {};
+          for (let [k, v] of Object.entries(obj)) {
+            if (k === "_id") { k = "id"; v = String(v); }
+            out[k] = v;
+          }
+          return out;
+        };
+
+        const filter = cmd.filter ? mapIdToMongo(cmd.filter) : {};
         const col = this.mongoDb.collection(cmd.collection);
+        const sess = this._mongoSession ? { session: this._mongoSession } : {};
         switch (cmd.action) {
-          case "find":
-            return { rows: await col.find(cmd.filter || {}).toArray() };
-          case "insert":
-            await col.insertMany(cmd.data);
-            return { rows: cmd.data };
+          case "find": {
+            let cursor = col.find(filter, sess);
+            if (cmd.sort) cursor = cursor.sort(cmd.sort);
+            if (cmd.skip) cursor = cursor.skip(cmd.skip);
+            if (cmd.limit) cursor = cursor.limit(cmd.limit);
+            const rows = await cursor.toArray();
+            return { rows: rows.map(mapMongoToId) };
+          }
+          case "insert": {
+            const data = cmd.data.map((d: any) => mapIdToMongo(d));
+            await col.insertMany(data, sess);
+            return { rows: data.map(mapMongoToId) };
+          }
           case "update": {
-            const r = await col.updateMany(cmd.filter, { $set: cmd.data });
+            const setData = mapIdToMongo(cmd.data);
+            const r = await col.updateMany(filter, { $set: setData }, sess);
             return { rows: [], changes: r.modifiedCount };
           }
           case "delete": {
-            const r = await col.deleteMany(cmd.filter);
+            const r = await col.deleteMany(filter, sess);
             return { rows: [], changes: r.deletedCount };
+          }
+          case "count":
+            return { rows: [{ count: await col.countDocuments(filter, sess) }] };
+          case "createCollection": {
+            const names = await this.mongoDb.listCollections({ name: cmd.collection }, { nameOnly: true, ...sess }).toArray();
+            if (!names.length) await this.mongoDb.createCollection(cmd.collection, sess);
+            return { rows: [] };
+          }
+          case "aggregate": {
+            const rows = await col.aggregate(cmd.pipeline || [], { ...sess }).toArray();
+            return { rows: rows.map(mapMongoToId) };
+          }
+          case "createIndex": {
+            await col.createIndex(cmd.spec, { ...(cmd.options || {}), ...sess });
+            return { rows: [] };
+          }
+          case "listIndexes": {
+            try {
+              const indexes = await col.listIndexes(sess).toArray();
+              return { rows: indexes };
+            } catch {
+              return { rows: [] };
+            }
+          }
+          case "collectionExists": {
+            const names = await this.mongoDb.listCollections({ name: cmd.collection }, { nameOnly: true, ...sess }).toArray();
+            return { rows: [], exists: names.length > 0 };
           }
           default:
             throw new Error(`Unknown Mongo action ${cmd.action}`);
@@ -301,6 +375,34 @@ export class DBAdapter {
 
       default:
         throw new Error(`Unsupported driver: ${this.driver}`);
+    }
+  }
+
+  async startMongoTransaction(): Promise<any> {
+    if (this.driver !== "mongodb" || !this.mongoClient) return null;
+    const session = this.mongoClient.startSession();
+    session.startTransaction();
+    this._mongoSession = session;
+    return session;
+  }
+
+  async commitMongoTransaction(): Promise<void> {
+    if (!this._mongoSession) return;
+    try {
+      await this._mongoSession.commitTransaction();
+    } finally {
+      await this._mongoSession.endSession();
+      this._mongoSession = null;
+    }
+  }
+
+  async abortMongoTransaction(): Promise<void> {
+    if (!this._mongoSession) return;
+    try {
+      await this._mongoSession.abortTransaction();
+    } finally {
+      await this._mongoSession.endSession();
+      this._mongoSession = null;
     }
   }
 

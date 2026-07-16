@@ -48,12 +48,12 @@ const RELATION_KEY_SET = new Set<string>([
 // ==== MIGRATOR CLASS ====
 export class Migrator {
   private exec: ExecFn;
-  private driver: "sqlite" | "postgres" | "mysql";
+  private driver: "sqlite" | "postgres" | "mysql" | "mongodb";
 
   // Per-instance so multiple Migrator instances / test runs don't share state
   private processedTables = new Set<string>();
 
-  constructor(exec: ExecFn, driver?: "sqlite" | "postgres" | "mysql") {
+  constructor(exec: ExecFn, driver?: "sqlite" | "postgres" | "mysql" | "mongodb") {
     this.exec = exec;
     this.driver = driver || "sqlite";
   }
@@ -119,9 +119,9 @@ export class Migrator {
 
     for (const [name, model] of Object.entries(schema)) {
       if (!model.table) model.table = name.toLowerCase();
-      this.ensureTimestamps(model);
+      if (this.driver !== "mongodb") this.ensureTimestamps(model);
       await this.ensureTable(model.table, model.fields, model.relations || []);
-      await this.applyDefaults(model.table, model.fields);
+      if (this.driver !== "mongodb") await this.applyDefaults(model.table, model.fields);
     }
   }
 
@@ -158,6 +158,10 @@ export class Migrator {
   ) {
     table = table.toLowerCase();
     if (this.processedTables.has(table)) return;
+
+    if (this.driver === "mongodb") {
+      return this.ensureMongoIndexes(table, schema);
+    }
 
     // Heuristic: ensure `id` gets PK + auto when the generator left them out
     // (skip auto if @random is present — app generates the value, not the DB)
@@ -231,19 +235,6 @@ export class Migrator {
       }
 
       // ---- NULLABILITY -----------------------------------------------
-      // A column is nullable when ANY of these are true:
-      //   • @nullable / nullable meta is present
-      //   • The TS type includes "undefined" (optional field marked with ?)
-      //   • FieldInfo.optional is true (schema-based definition)
-      //   • It is an enum without an explicit default
-      //       (avoids NOT NULL failures on existing rows during migration)
-      //   • It has @softDelete
-      //
-      // A column is NOT NULL when:
-      //   • @unique is present (unique columns must be NOT NULL)
-      //   • "not null" / "notnull" is explicitly set in meta
-      //   • none of the nullable conditions above apply
-
       const isNullableMeta   = this.hasM(meta, "nullable");
       const isOptionalType   = typeStr.includes("undefined");
       const isOptionalField  = !!(info as any).optional;
@@ -256,7 +247,6 @@ export class Migrator {
         meta["not null"] === true   ||
         meta["notnull"]  === true;
 
-      // Unique columns are implicitly NOT NULL regardless of other flags
       let isNullable: boolean;
       if (isUnique) {
         isNullable = false;
@@ -357,7 +347,6 @@ export class Migrator {
       }
 
       // ---- INDEX (single-column) ------------------------------------
-      // Supports @index, @index:unique, @index:where:condition
       const indexVal = this.m(meta, "index");
       if (indexVal) {
         const indexStr = String(indexVal);
@@ -417,8 +406,6 @@ export class Migrator {
 
     // ---- CREATE OR ALTER TABLE --------------------------------------
     if (!exists) {
-      // Fallback PK: if no PK was declared and an `id` column exists,
-      // make it AUTOINCREMENT so SQLite last_insert_rowid() works reliably.
       if (!primaryDeclared && this.driver === "sqlite") {
         const idIdx = colsSql.findIndex((c) => c.startsWith('"id"'));
         if (idIdx >= 0) {
@@ -435,28 +422,20 @@ export class Migrator {
     } else {
       const existingCols = await this.getExistingColumns(table);
 
-      // Build the set of valid column names from this schema run so we can
-      // drop any orphan columns that an earlier, buggier migrator version
-      // accidentally created (e.g. a stray "fields" or "relations" column).
       const validCols = new Set(
         colsSql
           .map((c) => c.match(/^"([^"]+)"/)?.[1]?.toLowerCase())
           .filter(Boolean) as string[]
       );
 
-      // Drop orphan columns (SQLite 3.35+, Postgres, MySQL 8.0.29+)
       for (const existingCol of existingCols) {
         if (validCols.has(existingCol)) continue;
-        // Never drop timestamp / soft-delete columns automatically
         if (["createdat", "updatedat", "deletedat"].includes(existingCol)) continue;
         try {
           await this.exec(`ALTER TABLE "${table}" DROP COLUMN "${existingCol}"`);
-        } catch {
-          // Older SQLite versions don't support DROP COLUMN — that's fine
-        }
+        } catch {}
       }
 
-      // ---- Column rename via @rename:oldName --------------------------
       for (const [col, info] of Object.entries(schema)) {
         const renameVal = this.m(info?.meta, "rename");
         if (renameVal) {
@@ -464,22 +443,17 @@ export class Migrator {
           if (existingCols.includes(oldName) && !existingCols.includes(col.toLowerCase())) {
             try {
               await this.exec(`ALTER TABLE "${table}" RENAME COLUMN "${oldName}" TO "${col}"`);
-            } catch {
-              // Fallback: some databases don't support RENAME COLUMN
-            }
+            } catch {}
           }
         }
       }
 
-      // Add missing columns — never touch existing ones
       for (const colDef of colsSql) {
         const m = colDef.match(/^"([^"]+)"/);
         if (!m) continue;
         const colName = m[1].toLowerCase();
         if (existingCols.includes(colName)) continue;
 
-        // SQLite cannot add a NOT NULL column without a DEFAULT to an
-        // existing table. Inject a safe default when none is present.
         let safeColDef = colDef.replace(/\s+PRIMARY KEY(\s+AUTOINCREMENT)?/i, "");
         if (
           this.driver === "sqlite" &&
@@ -491,15 +465,12 @@ export class Migrator {
 
         try {
           await this.exec(`ALTER TABLE "${table}" ADD COLUMN ${safeColDef}`);
-        } catch {
-          // Ignore duplicate-column errors on concurrent runs
-        }
+        } catch {}
       }
     }
 
     this.processedTables.add(table);
 
-    // ---- COMMENTS (Postgres) ----------------------------------------
     for (const c of commentSql) {
       try { await this.exec(c); } catch {}
     }
@@ -512,7 +483,7 @@ export class Migrator {
       try { await this.exec(idx); } catch {}
     }
 
-    // ---- Multi-column indexes (from @index:(col1,col2) meta) -------
+    // ---- Multi-column indexes ------------------------------------
     const compositeIndexes: { cols: string[]; unique: boolean; where?: string }[] = [];
     for (const [col, info] of Object.entries(schema)) {
       const indexVal = this.m(info?.meta, "index");
@@ -520,7 +491,6 @@ export class Migrator {
       const indexStr = String(indexVal);
       const parenMatch = indexStr.match(/^\((.+)\)$/);
       if (!parenMatch) continue;
-      // This field defines a composite index: the field itself + other columns
       const otherCols = parenMatch[1].split(",").map(c => c.trim()).filter(Boolean);
       const allCols = [col, ...otherCols.filter(c => c !== col)];
       const unique = indexStr.includes("unique") || indexStr.includes(":unique");
@@ -582,11 +552,48 @@ export class Migrator {
       );
     }
 
-    // ---- POST-CREATE CONSTRAINTS (unique / FK on existing tables) ---
     const existingFKsNow = await this.getExistingFKs(table);
     for (const fk of postConstraints) {
       if (existingFKsNow.includes(fk.toLowerCase())) continue;
       try { await this.exec(fk); } catch {}
+    }
+  }
+
+  private async ensureMongoIndexes(table: string, schema: Record<string, FieldInfo>) {
+    this.processedTables.add(table);
+    await this.exec(JSON.stringify({ collection: table, action: "createCollection" }));
+    const existing = await this.getExistingIndexes(table);
+    const existingNames = new Set(existing.map((i: any) => i.name || String(i).toLowerCase()));
+
+    for (const [col, info] of Object.entries(schema)) {
+      if (!info?.type) continue;
+      if (this.isRelationPlaceholder(info)) continue;
+      if (this.hasM(info.meta, "omitmigrate")) continue;
+
+      const isUnique = this.hasM(info.meta, "unique");
+      const indexVal = this.m(info.meta, "index");
+      const hasIndex = !!indexVal || isUnique;
+
+      if (!hasIndex) continue;
+
+      const spec: Record<string, 1 | -1> = { [col]: 1 };
+      const options: Record<string, any> = {};
+
+      if (isUnique || (typeof indexVal === "string" && indexVal.includes("unique"))) {
+        options.unique = true;
+      }
+
+      const idxName = `idx_${table}_${col}`;
+      if (existingNames.has(idxName)) continue;
+
+      try {
+        await this.exec(JSON.stringify({
+          collection: table,
+          action: "createIndex",
+          spec,
+          options: { ...options, name: idxName },
+        }));
+      } catch {}
     }
   }
 
@@ -659,6 +666,7 @@ export class Migrator {
   // ----------------------------------------------------------------
 
   async diffSchema(table: string, schema: Record<string, FieldInfo>, relations?: Relation[], dryRun = false): Promise<string[]> {
+    if (this.driver === "mongodb") return [];
     const statements: string[] = [];
     const tableLower = table.toLowerCase();
     const exists = await this.tableExists(tableLower);
@@ -717,6 +725,10 @@ export class Migrator {
   // ----------------------------------------------------------------
 
   private async tableExists(table: string): Promise<boolean> {
+    if (this.driver === "mongodb") {
+      const res = await this.exec(JSON.stringify({ collection: table, action: "collectionExists" }));
+      return res.exists ?? false;
+    }
     let query = "";
     let params: any[] = [];
     switch (this.driver) {
@@ -738,6 +750,7 @@ export class Migrator {
   }
 
   private async getExistingColumns(table: string): Promise<string[]> {
+    if (this.driver === "mongodb") return [];
     let res: any;
     switch (this.driver) {
       case "sqlite":
@@ -764,6 +777,10 @@ export class Migrator {
   }
 
   private async getExistingIndexes(table: string): Promise<string[]> {
+    if (this.driver === "mongodb") {
+      const res = await this.exec(JSON.stringify({ collection: table, action: "listIndexes" }));
+      return (res.rows || []).map((i: any) => String(i.name).toLowerCase());
+    }
     let res: any;
     switch (this.driver) {
       case "sqlite":
@@ -792,6 +809,7 @@ export class Migrator {
   }
 
   private async getExistingFKs(table: string): Promise<string[]> {
+    if (this.driver === "mongodb") return [];
     let res: any;
     switch (this.driver) {
       case "sqlite":

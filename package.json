@@ -1,6 +1,6 @@
 {
   "name": "slintorm",
-  "version": "1.9.5",
+  "version": "1.9.6",
   "description": "Minimal fully typed orm for typescript",
   "license": "MIT",
   "author": "Joseph Christopher",
@@ -35,7 +35,9 @@
   "scripts": {
     "build": "tsc && tsc-alias",
     "prepare": "npm run build",
-    "test": "tsx src/example.ts",
+    "test": "tsx src/pg-example.ts",
+    "test:mongo": "MONGO_URL=\"mongodb+srv://slintorm-test2:vncxgh1236@cluster0.ceuhji6.mongodb.net/?appName=Cluster0\" tsx mongo-test.ts",
+    "test:pg": "PG_ONLY=1 node --import tsx/esm src/slintorm.test.ts",
     "test:suite": "node --import tsx/esm src/slintorm.test.ts",
     "test:types": "tsc --noEmit src/types.test.ts",
     "cli": "tsx src/bin/cli.ts"

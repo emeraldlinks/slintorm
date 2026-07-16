@@ -29,7 +29,63 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
   // Expose buildSql publicly so static union() can call it without TS errors.
   public buildSql() {
     const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
-    if (isMongo) return super.buildSql();
+    if (isMongo) {
+      if (this._groupBy.length || this._aggregates.length) {
+        const pipeline: any[] = [];
+        const filter = this.buildMongoFilter();
+        if (filter && Object.keys(filter).length) pipeline.push({ $match: filter });
+        if (this._groupBy.length) {
+          const groupId: Record<string, string> = {};
+          for (const col of this._groupBy) groupId[col] = `$${col}`;
+          const groupStage: Record<string, any> = { _id: groupId };
+          for (const agg of this._aggregates) {
+            const match = agg.match(/^(COUNT|SUM|AVG|MIN|MAX)\((.+?)\)(?:\s+AS\s+(\w+))?$/i);
+            if (match) {
+              const [, fn, col, alias] = match;
+              const key = alias || agg;
+              const field = col === "*" ? undefined : col;
+              if (fn.toUpperCase() === "COUNT") groupStage[key] = { $sum: 1 };
+              else if (fn.toUpperCase() === "SUM") groupStage[key] = { $sum: `$${field}` };
+              else if (fn.toUpperCase() === "AVG") groupStage[key] = { $avg: `$${field}` };
+              else if (fn.toUpperCase() === "MIN") groupStage[key] = { $min: `$${field}` };
+              else if (fn.toUpperCase() === "MAX") groupStage[key] = { $max: `$${field}` };
+            }
+          }
+          pipeline.push({ $group: groupStage });
+          const projectStage: Record<string, any> = { _id: 0 };
+          for (const col of this._groupBy) projectStage[col] = "$_id." + col;
+          for (const agg of this._aggregates) {
+            const match = agg.match(/^[^(]+\((.+?)\)(?:\s+AS\s+(\w+))?$/i);
+            if (match) {
+              const key = match[2] || match[0];
+              projectStage[key] = 1;
+            }
+          }
+          pipeline.push({ $project: projectStage });
+        } else {
+          for (const agg of this._aggregates) {
+            const match = agg.match(/^(COUNT|SUM|AVG|MIN|MAX)\((.+?)\)(?:\s+AS\s+(\w+))?$/i);
+            if (match) {
+              const [, fn, col, alias] = match;
+              const key = alias || agg;
+              const field = col === "*" ? undefined : col;
+              const groupStage: Record<string, any> = { _id: null };
+              if (fn.toUpperCase() === "COUNT") groupStage[key] = { $sum: 1 };
+              else if (fn.toUpperCase() === "SUM") groupStage[key] = { $sum: `$${field}` };
+              else if (fn.toUpperCase() === "AVG") groupStage[key] = { $avg: `$${field}` };
+              else if (fn.toUpperCase() === "MIN") groupStage[key] = { $min: `$${field}` };
+              else if (fn.toUpperCase() === "MAX") groupStage[key] = { $max: `$${field}` };
+              pipeline.push({ $group: groupStage });
+              const projectStage: Record<string, any> = { _id: 0 };
+              projectStage[key] = 1;
+              pipeline.push({ $project: projectStage });
+            }
+          }
+        }
+        return { sql: JSON.stringify({ collection: this.table, action: "aggregate", pipeline }), params: [] };
+      }
+      return super.buildSql();
+    }
 
     const base = super.buildSql();
     let sql = base.sql;
@@ -309,7 +365,6 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
    * and those conditions are wrapped in parentheses.
    */
   andWhereGroup(fn: (qb: AdvancedQueryBuilder<T>) => void) {
-    const dialect = Dialects[this.orm?.dialect || "sqlite"];
     const child = new AdvancedQueryBuilder<T>(
       this.table, this.dir, this.exec, this.modelName, this.schema, this.orm
     );
@@ -317,7 +372,7 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
     const { sql: groupSql, params: groupParams } = child._buildWhereSql(0);
     if (groupSql) {
       this._where.push({
-        raw: `(${groupSql})`,
+        raw: `(${groupSql.replace(/\$\d+/g, "?")})`,
         rawParams: groupParams,
         kind: "and",
       });
@@ -331,7 +386,6 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
    * and those conditions are wrapped in parentheses.
    */
   orWhereGroup(fn: (qb: AdvancedQueryBuilder<T>) => void) {
-    const dialect = Dialects[this.orm?.dialect || "sqlite"];
     const child = new AdvancedQueryBuilder<T>(
       this.table, this.dir, this.exec, this.modelName, this.schema, this.orm
     );
@@ -339,7 +393,7 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
     const { sql: groupSql, params: groupParams } = child._buildWhereSql(0);
     if (groupSql) {
       this._where.push({
-        raw: `(${groupSql})`,
+        raw: `(${groupSql.replace(/\$\d+/g, "?")})`,
         rawParams: groupParams,
         kind: "or",
       });
@@ -353,10 +407,12 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
    * Example: .whereRaw("name = :name AND email = :email", { name: "Alice", email: "a@b.com" })
    */
   namedWhere(rawSql: string, namedParams: Record<string, any>): this {
+    const isPg = this.orm?.dialect === "postgres";
+    let idx = 0;
     const paramNames: string[] = [];
     const resolvedSql = rawSql.replace(/:([a-zA-Z_]\w*)/g, (_, name) => {
       paramNames.push(name);
-      return "?";
+      return isPg ? `$${++idx}` : "?";
     });
     const params = paramNames.map((n) => namedParams[n]);
     this._where.push({ raw: resolvedSql, rawParams: params, kind: "and" });
@@ -369,6 +425,16 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
    */
   async countWithGroup(groupColumn: keyof T & string): Promise<{ count: number; [key: string]: any }[]> {
     await (this as any)._resolvePendingRelated();
+    const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
+    if (isMongo) {
+      const pipeline: any[] = [];
+      const filter = this.buildMongoFilter();
+      if (filter && Object.keys(filter).length) pipeline.push({ $match: filter });
+      pipeline.push({ $group: { _id: `$${String(groupColumn)}`, count: { $sum: 1 } } });
+      pipeline.push({ $project: { _id: 0, [String(groupColumn)]: "$_id", count: 1 } });
+      const res = await this.exec(JSON.stringify({ collection: this.table, action: "aggregate", pipeline }), []);
+      return (res.rows || []).map((r: any) => ({ ...r, count: parseInt(r.count, 10) }));
+    }
     const dialect = Dialects[this.orm?.dialect || "sqlite"];
     const quotedCol = dialect.quoteIdentifier(String(groupColumn));
     const { sql: whereSql, params } = this._buildWhereSql(0);

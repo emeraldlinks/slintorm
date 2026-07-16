@@ -6,6 +6,7 @@ import { getRandomMeta, generateRandomFromAnnotation } from "./annotations.js";
 import { validateItem } from "./validations.js";
 import { applySecurityOnWrite, applySecurityOnRead } from "./security.js";
 import type { RelationDef, EntityWithUpdate } from "./types.js";
+import { SqlExpr } from "./types.js";
 import { AdvancedQueryBuilder } from "./extra_clauses.js";
 import { ExtendedQueryBuilder, Validator, ValidationError } from "./extensions.js";
 import type { FieldRules } from "./extensions.js";
@@ -45,7 +46,7 @@ export type ModelAPI<T extends object> = {
   max(column: keyof T & string, filter?: Partial<T>): Promise<number>;
   exists(filter: Partial<T>): Promise<boolean>;
   truncate(): Promise<void>;
-  insertMany(items: T[]): Promise<number>;
+  insertMany(items: T[]): Promise<T[]>;
   updateMany(filter: Partial<T>, data: Partial<T>): Promise<number>;
   deleteMany(filter: Partial<T>): Promise<number>;
   upsert(filter: Partial<T>, data: T): Promise<"inserted" | "updated">;
@@ -132,12 +133,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       Object.keys(schemas).find((k) => schemas[k].table === tableName) ||
       tableName;
 
-    const sqlDriver =
-      adapter.driver === "sqlite" ||
-      adapter.driver === "postgres" ||
-      adapter.driver === "mysql"
-        ? adapter.driver
-        : undefined;
+    const sqlDriver = adapter.driver as "sqlite" | "postgres" | "mysql" | "mongodb" | undefined;
 
     const modelSchema = schemas[name] || { fields: {}, relations: [] as RelationDef[] };
     const versionField = Object.entries(modelSchema?.fields || {}).find(
@@ -249,9 +245,18 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
     function fillRandomFields(item: Partial<T>) {
       for (const [col, def] of Object.entries(modelSchema.fields || {})) {
-        const r = getRandomMeta((def as any)?.meta);
+        const meta = (def as any)?.meta;
+        const r = getRandomMeta(meta);
         if (r && (item as any)[col] === undefined) {
           (item as any)[col] = generateRandomFromAnnotation(r);
+        }
+        // For MongoDB, auto-increment PKs use UUID instead of SERIAL
+        if (driver === "mongodb" && (item as any)[col] === undefined) {
+          const isAuto = meta?.auto || meta?.["@auto"];
+          const isPk = meta?.primaryKey || meta?.["@primaryKey"] || col === "id";
+          if (isAuto && isPk) {
+            (item as any)[col] = generateRandomFromAnnotation(true);
+          }
         }
       }
     }
@@ -347,7 +352,16 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         const isRandomPk = pkFieldMeta && (pkFieldMeta.random || pkFieldMeta["@random"]);
 
         if (driver === "mongodb") {
-          await adapter.exec(JSON.stringify({ collection: tableName, action: "insert", data: [item] }));
+          const result = await adapter.exec(JSON.stringify({ collection: tableName, action: "insert", data: [item] }));
+          const row = result?.rows?.[0];
+          if (row) {
+            const cleaned = stripOmitJson(stripOmitDb(row, modelSchema?.fields), modelSchema.fields);
+            if (Object.keys(rawSecret).length) Object.assign(cleaned, rawSecret);
+            const pk = modelSchema?.primaryKey || "id";
+            const pkVal = (cleaned as any)[pk];
+            if (hooks?.onCreateAfter) await hooks.onCreateAfter(cleaned);
+            return attachEntityMethods(cleaned, { [pk]: pkVal } as Partial<T>, this);
+          }
         } else {
           const itemValue = (c: string) => (item as any)[c];
           const isJsonField = (col: string) => {
@@ -364,11 +378,20 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
             if (typeof value === "object") return isJsonField(c);
             return true;
           });
-          const values = cols.map((c) => serializeValue(c, (item as any)[c]));
           const wrap = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
-          const placeholders = driver === "postgres"
-            ? cols.map((_, i) => `$${i + 1}`).join(", ")
-            : cols.map(() => "?").join(", ");
+          const phAndParams: { ph: string; p: any[] }[] = [];
+          const pgIndex = { current: 0 };
+          for (const c of cols) {
+            const v = itemValue(c);
+            if (v instanceof SqlExpr) {
+              phAndParams.push({ ph: v.sql, p: v.params || [] });
+            } else {
+              pgIndex.current++;
+              phAndParams.push({ ph: driver === "postgres" ? `$${pgIndex.current}` : "?", p: [serializeValue(c, v)] });
+            }
+          }
+          const placeholders = phAndParams.map(x => x.ph).join(", ");
+          const values = phAndParams.flatMap(x => x.p);
           const sql = driver === "postgres"
             ? `INSERT INTO ${wrap(tableName)} (${cols.map(wrap).join(", ")}) VALUES (${placeholders}) RETURNING *`
             : `INSERT INTO ${wrap(tableName)} (${cols.map(wrap).join(", ")}) VALUES (${placeholders})`;
@@ -381,8 +404,10 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           if (driver === "postgres" && result?.rows?.[0]) {
             const row = result.rows[0];
             Object.assign(row, rawSecret);
-            if (hooks?.onCreateAfter) await hooks.onCreateAfter(row);
-            return row as any;
+            const cleaned = applyMasks(stripOmitJson(stripOmitDb(mapBooleans(mapJson(row, modelSchema.fields), modelSchema.fields), modelSchema.fields), modelSchema.fields), modelSchema.fields);
+            const pkVal = (cleaned as any)[pkFieldName];
+            if (hooks?.onCreateAfter) await hooks.onCreateAfter(cleaned);
+            return attachEntityMethods(cleaned, { [pkFieldName]: pkVal } as Partial<T>, this) as any;
           }
 
           if (insertedId) (item as any).id = insertedId;
@@ -499,6 +524,9 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         if (!record) return null;
         record = mapBooleans(record, modelSchema.fields);
         record = mapJson(record, modelSchema.fields);
+        for (const k of Object.keys(modelSchema.fields || {})) {
+          if (!(k in (record as any))) (record as any)[k] = null;
+        }
         record = stripOmitDb(record, modelSchema.fields);
         record = stripOmitJson(record, modelSchema.fields);
         record = applyMasks(record, modelSchema.fields);
@@ -558,12 +586,22 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       },
 
       async exists(filter: Partial<T>) {
+        if (driver === "mongodb") {
+          const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "find", filter: filter ?? {}, limit: 1 }));
+          return !!res.rows.length;
+        }
         const { clause, params } = buildWhereClause(filter) as { clause: string; params: any[] };
         const res = await adapter.exec(`SELECT 1 FROM ${q(tableName)} WHERE ${clause} LIMIT 1`, params);
         return !!res.rows.length;
       },
 
-      async truncate() { await adapter.exec(`DELETE FROM ${q(tableName)}`); },
+      async truncate() {
+        if (driver === "mongodb") {
+          await adapter.exec(JSON.stringify({ collection: tableName, action: "delete", filter: {} }));
+        } else {
+          await adapter.exec(`DELETE FROM ${q(tableName)}`);
+        }
+      },
 
       async sum(column: keyof T & string, filter?: Partial<T>) { return scalarAggregate("SUM", column, filter); },
       async avg(column: keyof T & string, filter?: Partial<T>) { return scalarAggregate("AVG", column, filter); },
@@ -619,8 +657,15 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         }
 
         if (driver === "mongodb") {
-          await adapter.exec(JSON.stringify({ collection: tableName, action: "insert", data: prepared }));
-          return [];
+          const result = await adapter.exec(JSON.stringify({ collection: tableName, action: "insert", data: prepared }));
+          const rows = result?.rows || [];
+          return rows.map((row: any, i: number) => {
+            const cleaned = stripOmitJson(stripOmitDb(row, modelSchema?.fields), modelSchema.fields);
+            if (Object.keys(rawSecrets[i] || {}).length) Object.assign(cleaned, rawSecrets[i] || {});
+            const pk = modelSchema?.primaryKey || "id";
+            const pkVal = (row as any)[pk];
+            return attachEntityMethods(cleaned, { [pk]: pkVal } as Partial<T>, this);
+          });
         }
 
         // SQLite / MySQL — batch INSERT, then fetch by ID range
@@ -761,12 +806,14 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           const values = cols.map((c) => serializeValue(c, row[c]));
           const conflictCols = filterCols.map((c) => `"${c}"`).join(", ");
           const updateSet = cols.filter((c) => !filterCols.includes(c)).map((c) => `"${c}" = EXCLUDED."${c}"`).join(", ");
-          await adapter.exec(
+          const result = await adapter.exec(
             `INSERT INTO "${tableName}" (${cols.map((c) => `"${c}"`).join(", ")}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(", ")})
-             ON CONFLICT (${conflictCols}) DO UPDATE SET ${updateSet}`,
+             ON CONFLICT (${conflictCols}) DO UPDATE SET ${updateSet}
+             RETURNING (xmax = 0) AS _inserted`,
             values
           );
-          return "inserted" as const;
+          const wasInserted = result.rows?.[0]?._inserted === true;
+          return wasInserted ? "inserted" as const : "updated" as const;
         }
         if (driver === "mysql") {
           const cols = Object.keys(data).filter((c) => !isOmitDb(modelSchema.fields?.[c]));

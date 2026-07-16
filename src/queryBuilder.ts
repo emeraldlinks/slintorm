@@ -226,8 +226,20 @@ export class QueryBuilder<T extends Record<string, any>> {
     return this;
   }
 
+  private _mongoExtraFilter: Record<string, any> | null = null;
+
   whereColumnsIn<K extends keyof T>(columns: K[], values: Array<Array<T[K]>>) {
     if (!columns.length || !values.length) return this;
+    const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
+    if (isMongo) {
+      const orClauses = values.map((tuple) => {
+        const cond: Record<string, any> = {};
+        columns.forEach((col, i) => { cond[String(col)] = tuple[i]; });
+        return cond;
+      });
+      this._mongoExtraFilter = { $or: orClauses };
+      return this;
+    }
     const dialect = Dialects[this.orm?.dialect || "sqlite"];
     let idx = 0;
     const ph = values.map(() => `(${columns.map(() => dialect.formatPlaceholder(idx++)).join(", ")})`).join(", ");
@@ -503,6 +515,10 @@ export class QueryBuilder<T extends Record<string, any>> {
       filter[w.column as string] = this._mongoOp(w.op!, w.value);
     }
     if (orClauses.length) filter["$or"] = orClauses;
+    if (this._mongoExtraFilter) {
+      if (filter.$or) filter.$and = [filter.$or.length ? { $or: filter.$or } : {}, this._mongoExtraFilter];
+      else Object.assign(filter, this._mongoExtraFilter);
+    }
     return filter;
   }
 
@@ -524,11 +540,12 @@ export class QueryBuilder<T extends Record<string, any>> {
     const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
 
     if (isMongo) {
+      const mongoId = (key: string) => key === "id" ? "_id" : key;
       const mongoCmd = {
         collection: this.table, action: "find",
         filter: this.buildMongoFilter(),
         projection: this._selects?.length ? Object.fromEntries((this._selects as string[]).map((c) => [c, 1])) : undefined,
-        sort: this._orderBy.length ? Object.fromEntries(this._orderBy.map((o) => { const [col, dir] = o.split(" "); return [col, dir === "DESC" ? -1 : 1]; })) : undefined,
+        sort: this._orderBy.length ? Object.fromEntries(this._orderBy.map((o) => { const [col, dir] = o.split(" "); return [mongoId(col), dir === "DESC" ? -1 : 1]; })) : undefined,
         limit: this._limit ?? undefined,
         skip: this._offset ?? undefined,
       };
@@ -856,14 +873,14 @@ export class QueryBuilder<T extends Record<string, any>> {
 
     const hasValues = (arr: any[]) => Array.isArray(arr) && arr.length > 0;
 
-    const buildWhereClauseForPreload = (fieldName: string, targetTable: string): { sql: string; params: any[] } => {
+    const buildWhereClauseForPreload = (fieldName: string, targetTable: string, startIndex = 0): { sql: string; params: any[] } => {
       const filterWheres = this._filteredPreloads?.get(fieldName);
       if (!filterWheres?.length) return { sql: "", params: [] };
       const origWhere = this._where;
       const origTable = this.table;
       this._where = filterWheres;
       this.table = targetTable;
-      const result = this._buildWhereSql(0);
+      const result = this._buildWhereSql(startIndex);
       this._where = origWhere;
       this.table = origTable;
       return { sql: result.sql ? ` AND (${result.sql})` : "", params: result.params };
@@ -873,7 +890,7 @@ export class QueryBuilder<T extends Record<string, any>> {
       (await this.exec(JSON.stringify({ collection: targetTable, action: "find", filter }), [])).rows || [];
 
     const sqlFetch = async (targetTable: string, colName: string, ids: any[], pk: string, fieldName?: string) => {
-      const fc = fieldName ? buildWhereClauseForPreload(fieldName, targetTable) : { sql: "", params: [] };
+      const fc = fieldName ? buildWhereClauseForPreload(fieldName, targetTable, ids.length) : { sql: "", params: [] };
       const orderBy = fieldName && this._preloadOrders?.has(fieldName) ? this._preloadOrders.get(fieldName)!.toUpperCase() : "ASC";
       const limitVal = fieldName && this._preloadLimits?.has(fieldName) ? this._preloadLimits.get(fieldName) : 0;
       const limitClause = limitVal ? ` LIMIT ${limitVal}` : "";
@@ -893,7 +910,7 @@ export class QueryBuilder<T extends Record<string, any>> {
       foreignKey: string, relatedKey: string, parentIds: any[],
       fieldName?: string
     ) => {
-      const fc = fieldName ? buildWhereClauseForPreload(fieldName, targetTable) : { sql: "", params: [] };
+      const fc = fieldName ? buildWhereClauseForPreload(fieldName, targetTable, parentIds.length) : { sql: "", params: [] };
       const orderBy = fieldName && this._preloadOrders?.has(fieldName) ? this._preloadOrders.get(fieldName)!.toUpperCase() : "ASC";
       const limitVal = fieldName && this._preloadLimits?.has(fieldName) ? this._preloadLimits.get(fieldName) : 0;
       const limitClause = limitVal ? ` LIMIT ${limitVal}` : "";
@@ -1070,6 +1087,9 @@ export class QueryBuilder<T extends Record<string, any>> {
   // ── Utilities ─────────────────────────────────────────────────────────────────
   private sanitizeRow(row: any, schemaFields: Record<string, any>, explicitSelects: Set<string> | null): any {
     let clean: Record<string, any> = this.mapJson(mapBooleans(row, schemaFields), schemaFields);
+    for (const k of Object.keys(schemaFields)) {
+      if (!(k in clean)) clean[k] = null;
+    }
     for (const [k, v] of Object.entries(schemaFields)) {
       const meta = (v as any)?.meta;
       if (meta?.omitdb || meta?.["@omitdb"] || meta?.omit || meta?.["@omit"]) {
@@ -1126,6 +1146,16 @@ export class QueryBuilder<T extends Record<string, any>> {
 
   async countDistinct(column: keyof T & string): Promise<number> {
     await this._resolvePendingRelated();
+    const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
+    if (isMongo) {
+      const pipeline: any[] = [];
+      const filter = this.buildMongoFilter();
+      if (filter && Object.keys(filter).length) pipeline.push({ $match: filter });
+      pipeline.push({ $group: { _id: `$${String(column)}` } });
+      pipeline.push({ $count: "count" });
+      const res = await this.exec(JSON.stringify({ collection: this.table, action: "aggregate", pipeline }), []);
+      return parseInt(res.rows?.[0]?.count ?? "0", 10);
+    }
     const dialect = Dialects[this.orm?.dialect || "sqlite"];
     const { sql: whereSql, params } = this._buildWhereSql(0);
     let sql = `SELECT COUNT(DISTINCT ${dialect.quoteIdentifier(String(column))}) as count FROM ${dialect.quoteIdentifier(this.table)}`;
