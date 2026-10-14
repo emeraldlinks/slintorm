@@ -1,5 +1,6 @@
 import { QueryBuilder, Dialects } from "./queryBuilder.js";
 import type { OpComparison } from "./types.js";
+import { assertSafeOperator, quoteLiteral } from "./quoting.js";
 
 type CTEDefinition = {
   name: string;
@@ -136,17 +137,21 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
     if (this._union) {
       const sqls = this._union.queries.map((q) => q.buildSql().sql);
       const unionAll = this._union.all ? " ALL" : "";
-      sql = `(${sql})\nUNION${unionAll}\n(${sqls.join(`\nUNION${unionAll}\n`)})`;
+      // Each side is already a complete SELECT. Parenthesising them —
+      // especially the LEFT operand — is invalid SQL: SQLite rejects
+      // `(SELECT ...) UNION (SELECT ...)` outright with a syntax error, and
+      // PostgreSQL/MySQL reject it too.
+      sql = [sql, ...sqls].join(`\nUNION${unionAll}\n`);
     }
     if (this._intersect) {
       const sqls = this._intersect.queries.map((q) => q.buildSql().sql);
       const intersectAll = this._intersect.all ? " ALL" : "";
-      sql = `(${sql})\nINTERSECT${intersectAll}\n(${sqls.join(`\nINTERSECT${intersectAll}\n`)})`;
+      sql = [sql, ...sqls].join(`\nINTERSECT${intersectAll}\n`);
     }
     if (this._except) {
       const sqls = this._except.queries.map((q) => q.buildSql().sql);
       const exceptAll = this._except.all ? " ALL" : "";
-      sql = `(${sql})\nEXCEPT${exceptAll}\n(${sqls.join(`\nEXCEPT${exceptAll}\n`)})`;
+      sql = [sql, ...sqls].join(`\nEXCEPT${exceptAll}\n`);
     }
 
     // ---- Optimizer / Index / Comment hints ----------------------------------
@@ -261,23 +266,30 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
   // ── Joins ──────────────────────────────────────────────────────────────────
   rightJoin(table: string, onLeft: string, op: string, onRight: string) {
     if (this.orm?.dialect === "sqlite") throw new Error("RIGHT JOIN is not supported on SQLite");
-    this._joins.push(`RIGHT JOIN ${table} ON ${onLeft} ${op} ${onRight}`);
+    this._joins.push(`RIGHT JOIN ${this._q(table)} ON ${this._qcol(onLeft)} ${assertSafeOperator(op)} ${this._qcol(onRight)}`);
     return this;
   }
 
   fullOuterJoin(table: string, onLeft: string, op: string, onRight: string) {
     if (this.orm?.dialect === "sqlite") throw new Error("FULL OUTER JOIN is not supported on SQLite");
-    this._joins.push(`FULL OUTER JOIN ${table} ON ${onLeft} ${op} ${onRight}`);
+    this._joins.push(`FULL OUTER JOIN ${this._q(table)} ON ${this._qcol(onLeft)} ${assertSafeOperator(op)} ${this._qcol(onRight)}`);
     return this;
   }
 
+  /**
+   * NOTE: a LATERAL join takes a *subquery*, not an identifier, so `table`
+   * cannot be escaped and must never come from untrusted input. The operator
+   * and both column references are validated.
+   */
   lateralJoin(table: string, onLeft: string, op: string, onRight: string, lateralType: "INNER" | "LEFT" = "INNER") {
-    this._joins.push(`${lateralType} JOIN LATERAL ${table} ON ${onLeft} ${op} ${onRight}`);
+    this._joins.push(
+      `${lateralType === "LEFT" ? "LEFT" : "INNER"} JOIN LATERAL ${table} ON ${this._qcol(onLeft)} ${assertSafeOperator(op)} ${this._qcol(onRight)}`,
+    );
     return this;
   }
 
   crossJoin(table: string) {
-    this._joins.push(`CROSS JOIN ${table}`);
+    this._joins.push(`CROSS JOIN ${this._q(table)}`);
     return this;
   }
 
@@ -287,7 +299,7 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
     const idx = this._countParams();
     if (this.orm?.dialect === "postgres") {
       this._where.push({
-        raw: `to_tsvector('${config}', ${dialect.quoteIdentifier(column)}) @@ plainto_tsquery('${config}', ${dialect.formatPlaceholder(idx)})`,
+        raw: `to_tsvector(${quoteLiteral(config)}, ${dialect.quoteIdentifier(column)}) @@ plainto_tsquery(${quoteLiteral(config)}, ${dialect.formatPlaceholder(idx)})`,
         rawParams: [query],
         kind: "and",
       });

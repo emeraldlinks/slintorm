@@ -1,0 +1,26 @@
+# Who reviews changes to what.
+#
+# GitHub only enforces CODEOWNERS for the default branch and when the
+# requesting user has push access, so this is a routing aid rather than a
+# hard gate. Replace the placeholders with real handles before relying on it.
+
+*                       @emeraldlinks
+/src/                   @emeraldlinks
+/.github/workflows/     @emeraldlinks
+
+# Security-sensitive surfaces. A change here is the one most likely to cause
+# silent data disclosure, so it deserves an explicit second pair of eyes.
+src/security.ts         @emeraldlinks
+src/proxy.ts            @emeraldlinks
+src/postgrest.ts        @emeraldlinks
+src/quoting.ts          @emeraldlinks
+src/runtime.ts          @emeraldlinks
+src/context-store.ts    @emeraldlinks
+
+# Test infrastructure.
+src/slintorm.test.ts    @emeraldlinks
+src/postgrest.test.ts   @emeraldlinks
+/.github/workflows/     @emeraldlinks
+
+# Generated artifacts — never hand-edit; regenerate with `npx slintorm generate`.
+src/schema/             @emeraldlinks

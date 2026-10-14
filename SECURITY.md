@@ -4,6 +4,69 @@ SlintORM provides three field-level security annotations: `@hash`, `@encrypt`, a
 
 ---
 
+## Row-level security
+
+### The design gap, stated honestly
+
+SlintORM propagates the tenant to Postgres and then lets the **database** decide
+what a session may see. That is the right shape — but note what is enforced
+where:
+
+- **Enforced by Postgres**: the policy itself. RLS rules are correct, auditable,
+  and applied per statement regardless of what the application does.
+- **Enforced by SlintORM**: that the right `rls.*` setting reaches the
+  connection. This is application state, so it carries application risk.
+
+That split is why the RLS bugs this project had were all on the SlintORM side of
+the line, and none on the Postgres side.
+
+What is now handled:
+
+- Context is per-request via `AsyncLocalStorage`, so concurrent requests cannot
+  overwrite each other's tenant (`orm.runWithAuthContext()` is the safe form).
+- The session variable is **reset** when a context key is dropped. Previously it
+  survived, so a request with no context inherited the previous request's
+  tenant — a fail-open leak.
+- `set_config` and the query it scopes are serialised, so context cannot
+  interleave between two requests.
+- `rls: true` **throws** if it cannot actually be applied — with a custom `exec`,
+  or on a non-Postgres driver — instead of reporting itself active while doing
+  nothing.
+- `poolSize > 1` **throws** when combined with `rls: true`. A pool can hand a
+  query a connection that never received the tenant context.
+
+### Recommendation
+
+For multi-tenant applications, prefer this shape:
+
+```ts
+// 1. Policies live in Postgres and are the real control.
+//    CREATE POLICY tenant_isolation ON orders
+//      USING (tenant_id = current_setting('rls.tenant_id', true));
+
+// 2. The application DB user must NOT have BYPASSRLS. Superusers bypass RLS,
+//    so use a dedicated role — never the owner.
+
+// 3. Set identity from a VERIFIED session, never from a raw request header.
+orm.runWithAuthContext({ tenant_id: session.tenantId }, async () => {
+  return db.Order.query().get();
+});
+```
+
+Always test that isolation actually works by attempting to read another
+tenant's row and asserting it returns nothing. A policy that silently matches
+everything looks identical to one that works.
+
+---
+
+## Reporting a vulnerability
+
+Do not open a public issue for a security bug. Email the maintainer directly
+(see the repository's `package.json` `author` / `bugs` fields). Please include a
+reproduction, the affected version, and the impact.
+
+---
+
 ## @hash — password hashing
 
 ### Syntax
@@ -15,7 +78,9 @@ password?: string;
 
 ### Behavior
 
-- On **write**: the value is hashed using PBKDF2 (SHA-256, 100k iterations) with a random 16-byte salt. The stored format is `pbkdf2$<base64-salt>$<base64-hash>`.
+- On **write**: the value is hashed with **PBKDF2-HMAC-SHA256 at 600,000
+  iterations** and a random 16-byte salt. Stored format:
+  `pbkdf2$<iterations>$<base64-salt>$<base64-hash>`.
 - On **read**: the raw hash string is returned, augmented with a `.verify()` method for comparing against the original plaintext.
 
 ```typescript
@@ -23,6 +88,18 @@ const user = await Users.get({ id: 1 });
 const ok = await user.password.verify("correct-horse-battery-staple");
 // true if password matches, false otherwise
 ```
+
+> **On iteration count and algorithm.** Earlier releases documented "100k
+> iterations" and a 3-part storage format; neither matched the implementation.
+> Both are now stated accurately above.
+>
+> An earlier default was a memory-hard "Balloon" hash that took **136 seconds**
+> per operation — roughly 417× slower than PBKDF2 at 600k, which made any
+> signup or login route an unauthenticated denial-of-service vector. It was also
+> a homegrown implementation rather than the published algorithm, so it was not
+> interoperable or auditable. **It has been removed.** PBKDF2 at 600k is the
+> only algorithm. Legacy `balloon$…` hashes still verify correctly, so existing
+> rows keep working — re-hash them on next successful login.
 
 ### Generated type
 

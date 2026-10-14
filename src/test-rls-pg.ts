@@ -21,7 +21,14 @@ import { default as pg } from "pg";
  * are properly filtered.
  */
 
-const databaseUrl = "postgresql://postgres.bibysoybtjvjainuopyh:pXBQrdTiv2D50CdH@aws-0-eu-west-1.pooler.supabase.com:5432/postgres";
+const databaseUrl = process.env.PG_ADMIN_URL ?? process.env.DATABASE_URL;
+if (!databaseUrl) {
+  throw new Error(
+    "Set PG_ADMIN_URL (or DATABASE_URL) to a PostgreSQL connection string.\n" +
+      "  PG_ADMIN_URL=postgresql://user:pass@host:5432/db npx tsx src/test-rls-pg.ts\n" +
+      "Never hardcode a connection string — commit env vars, not credentials.",
+  );
+}
 // For RLS to work you need a non-BYPASSRLS user — set via env when running the test:
 //   DATABASE_URL=postgresql://app_user:pass@host:5432/db npx tsx src/test-rls-pg.ts
 const appDbUrl = process.env.DATABASE_URL || databaseUrl;

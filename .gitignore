@@ -18,7 +18,9 @@ build/
 
 # Temp/scratch files
 tmp_*.ts
+tmp/
 verify-all.ts
+verify-security.ts
 src/schema/
 
 
@@ -30,3 +32,7 @@ Thumbs.db
 *.js
 !jest.config.js
 !eslint.config.js
+
+# Coverage output
+coverage/
+.nyc_output/

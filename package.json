@@ -11,17 +11,42 @@
   },
   "files": [
     "README.md",
-    "dist"
+    "dist",
+    "LICENSE",
+    "SECURITY.md",
+    "CONTRIBUTING.md"
   ],
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/src/index.d.ts",
+      "edge-light": "./dist/src/browser.js",
+      "workerd": "./dist/src/browser.js",
+      "deno": "./dist/src/browser.js",
       "browser": "./dist/src/browser.js",
       "import": "./dist/src/index.js",
-      "require": "./dist/src/index.cjs",
       "default": "./dist/src/index.js"
+    },
+    "./browser": {
+      "types": "./dist/src/browser.d.ts",
+      "import": "./dist/src/browser.js",
+      "default": "./dist/src/browser.js"
+    },
+    "./edge": {
+      "types": "./dist/src/browser.d.ts",
+      "import": "./dist/src/browser.js",
+      "default": "./dist/src/browser.js"
+    },
+    "./postgrest": {
+      "types": "./dist/src/postgrest.d.ts",
+      "import": "./dist/src/postgrest.js",
+      "default": "./dist/src/postgrest.js"
+    },
+    "./proxy": {
+      "types": "./dist/src/proxy.d.ts",
+      "import": "./dist/src/proxy.js",
+      "default": "./dist/src/proxy.js"
     },
     "./package.json": "./package.json"
   },
@@ -33,27 +58,38 @@
     "slintorm": "dist/src/bin/cli.js"
   },
   "scripts": {
-    "build": "tsc && tsc-alias",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && tsc-alias",
     "prepare": "npm run build",
-    "test": "tsx src/pg-example.ts",
-    "test:mongo": "MONGO_URL=\"mongodb+srv://slintorm-test2:vncxgh1236@cluster0.ceuhji6.mongodb.net/?appName=Cluster0\" tsx mongo-test.ts",
-    "test:pg": "PG_ONLY=1 node --import tsx/esm src/slintorm.test.ts",
+    "test": "npm run test:suite",
+    "test:sqlite": "npm run test:suite",
+    "test:pg": "PG_ONLY=1 npm run test:suite",
+    "test:mongo": "MONGO_ONLY=1 npm run test:suite",
+    "test:all": "node --import tsx/esm src/slintorm.test.ts",
     "test:suite": "node --import tsx/esm src/slintorm.test.ts",
-    "test:types": "tsc --noEmit src/types.test.ts",
+    "test:types": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src --max-warnings=249",
+    "lint:fix": "eslint src --fix",
+    "coverage": "c8 --reporter=text --reporter=json-summary --reporter=lcov --include=src --exclude='src/**/*.test.ts' --exclude='src/schema/**' --exclude='src/bin/**' node --import tsx/esm src/slintorm.test.ts",
+    "coverage:check": "npm run coverage && node -e \"const s=require('./coverage/coverage-summary.json');const p=s.total.lines.pct;console.log('line coverage: '+p+'%');if(p<60){console.error('below the 60% floor');process.exit(1)}\"",
+    "check": "npm run lint && npm run test:types && npm run test:suite",
+    "example:pg": "tsx src/pg-example.ts",
+    "example:sqlite": "tsx src/example.ts",
     "cli": "tsx src/bin/cli.ts"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/node": "^24.13.2",
     "@types/pg": "^8.15.5",
     "@types/sqlite3": "^3.1.11",
+    "c8": "^12.0.0",
+    "eslint": "^9.39.5",
     "mongodb": "^7.4.0",
     "mysql2": "^3.22.5",
     "ts-node": "^10.9.2",
     "tsc-alias": "^1.8.16",
     "tsx": "^4.22.4",
     "typescript": "^5.9.3",
-    "uvu": "^0.5.6",
-    "vitest": "^4.1.9"
+    "typescript-eslint": "^8.71.2"
   },
   "dependencies": {
     "pg": "^8.22.0"

@@ -8,6 +8,14 @@
 
 import type { ExecFn, OpComparison, AfterFindHook } from "./types.ts";
 import { parseMaskAnnotation, applyMask, isMasked } from "./mask.js";
+import {
+  quoteIdentifier,
+  assertSafeOperator,
+  assertSafeDirection,
+  assertSafeHint,
+  quoteLiteral,
+  quoteColumnRef,
+} from "./quoting.js";
 
 type RelationMeta = {
   fieldName: string;
@@ -43,22 +51,30 @@ export const Dialects: Record<string, DialectAdapter> = {
   sqlite: {
     formatPlaceholder: () => "?",
     caseInsensitiveLike: (col) => `LOWER(${col}) LIKE LOWER(?)`,
-    quoteIdentifier: (n) => `"${n}"`,
+    quoteIdentifier: (n) => quoteIdentifier("sqlite", n),
   },
   postgres: {
     formatPlaceholder: (i) => `$${i + 1}`,
     caseInsensitiveLike: (col, i) => `${col} ILIKE $${i + 1}`,
-    quoteIdentifier: (n) => `"${n}"`,
+    quoteIdentifier: (n) => quoteIdentifier("postgres", n),
   },
   mysql: {
     formatPlaceholder: () => "?",
     caseInsensitiveLike: (col) => `${col} LIKE ?`,
-    quoteIdentifier: (n) => `\`${n}\``,
+    quoteIdentifier: (n) => quoteIdentifier("mysql", n),
   },
   mongodb: {
     formatPlaceholder: () => "?",
     caseInsensitiveLike: (col) => col,
-    quoteIdentifier: (n) => n,
+    quoteIdentifier: (n) => quoteIdentifier("mongodb", n),
+  },
+  // PostgREST is Postgres on the wire, so it uses Postgres identifier quoting.
+  // Queries never become SQL on this path (see buildPostgrestCommand), but the
+  // entry must exist so Dialects[dialect] is never undefined.
+  postgrest: {
+    formatPlaceholder: (i) => `$${i + 1}`,
+    caseInsensitiveLike: (col, i) => `${col} ILIKE $${i + 1}`,
+    quoteIdentifier: (n) => quoteIdentifier("postgres", n),
   },
 };
 
@@ -86,7 +102,7 @@ interface WhereClause {
 export class QueryBuilder<T extends Record<string, any>> {
   protected _selects: (keyof T | string)[] | null = null;
   protected _where: WhereClause[] = [];
-  protected _orderBy: string[] = [];
+  protected _orderBy: { col: string; dir: "ASC" | "DESC" }[] = [];
   protected _limit: number | null = null;
   protected _offset: number | null = null;
   protected _joins: string[] = [];
@@ -102,6 +118,16 @@ export class QueryBuilder<T extends Record<string, any>> {
   private static _resultCache = new Map<string, { data: any; expires: number }>();
   protected _afterFindHooks: AfterFindHook<T>[] = [];
   protected _hints: string[] = [];
+
+  /** Quote an identifier for this builder's dialect. */
+  protected _q(name: string): string {
+    return quoteIdentifier((this.orm?.dialect as any) ?? "sqlite", name);
+  }
+
+  /** Quote a possibly-qualified column reference for this builder's dialect. */
+  protected _qcol(ref: string): string {
+    return quoteColumnRef((this.orm?.dialect as any) ?? "sqlite", ref);
+  }
   protected _dryRun = false;
   protected _withoutMasking = false;
 
@@ -255,7 +281,10 @@ export class QueryBuilder<T extends Record<string, any>> {
 
   // ── ORDER / LIMIT / OFFSET / PAGINATE ───────────────────────────────────────
   orderBy<K extends keyof T>(column: K, dir: "asc" | "desc" = "asc") {
-    this._orderBy.push(`${String(column)} ${dir.toUpperCase()}`);
+    // `keyof T` is erased at runtime, so a caller can pass arbitrary input
+    // here (e.g. orderBy(req.query.sort)). The column is escaped by
+    // quoteIdentifier; the direction has no escape mechanism, so allowlist it.
+    this._orderBy.push({ col: String(column), dir: assertSafeDirection(dir) });
     return this;
   }
 
@@ -263,14 +292,22 @@ export class QueryBuilder<T extends Record<string, any>> {
   offset(n: number) { this._offset = n; return this; }
 
   hint(sql: string) {
-    this._hints.push(sql);
+    this._hints.push(assertSafeHint(sql));
     return this;
   }
   indexHint(...indexes: string[]) {
-    this._hints.push(`USE INDEX (${indexes.join(", ")})`);
+    // Index names are identifiers, not free text.
+    const names = indexes.map((i) => this._q(i));
+    this._hints.push(`USE INDEX (${names.join(", ")})`);
     return this;
   }
   commentHint(comment: string) {
+    // Previously `/* ${comment} */`, which a `*/` in the value escaped.
+    if (comment.includes("*/") || comment.includes("/*")) {
+      throw new Error(
+        `Unsafe comment hint rejected (contains a comment delimiter): ${JSON.stringify(comment)}`,
+      );
+    }
     this._hints.push(`/* ${comment} */`);
     return this;
   }
@@ -309,13 +346,13 @@ export class QueryBuilder<T extends Record<string, any>> {
 
   // ── JOINS ────────────────────────────────────────────────────────────────────
   join(table: string, onLeft: string, op: string, onRight: string) {
-    const clause = `JOIN ${table} ON ${onLeft} ${op} ${onRight}`;
+    const clause = `JOIN ${this._q(table)} ON ${this._qcol(onLeft)} ${assertSafeOperator(op)} ${this._qcol(onRight)}`;
     if (!this._joins.includes(clause)) this._joins.push(clause);
     return this;
   }
 
   leftJoin(table: string, onLeft: string, op: string, onRight: string) {
-    const clause = `LEFT JOIN ${table} ON ${onLeft} ${op} ${onRight}`;
+    const clause = `LEFT JOIN ${this._q(table)} ON ${this._qcol(onLeft)} ${assertSafeOperator(op)} ${this._qcol(onRight)}`;
     if (!this._joins.includes(clause)) this._joins.push(clause);
     return this;
   }
@@ -443,9 +480,20 @@ export class QueryBuilder<T extends Record<string, any>> {
       if (!steps.length) continue;
 
       const lastStep = steps[steps.length - 1];
-      const finalSql = `SELECT ${dialect.quoteIdentifier(lastStep.targetPK)} FROM ${dialect.quoteIdentifier(lastStep.targetTable)} WHERE ${dialect.quoteIdentifier(column)} ${op} ${dialect.formatPlaceholder(0)}`;
+
+      // Which column do we need from the final table?
+      //   parentOwnsFK (many-to-one): the parent holds the FK, so the target's
+      //     PK is the value we must match back against the parent's FK.
+      //   !parentOwnsFK (one-to-many): the FK lives on the TARGET, so we need
+      //     the FK value itself — that is the parent's PK.
+      // This always selected the target PK, which for a one-to-many compared
+      // parent IDs against CHILD ids. Whenever the id sequences overlapped it
+      // returned the wrong rows with no error, and only returned nothing when
+      // they happened not to line up.
+      const selectCol = lastStep.parentOwnsFK ? lastStep.targetPK : lastStep.foreignKey;
+      const finalSql = `SELECT ${dialect.quoteIdentifier(selectCol)} FROM ${dialect.quoteIdentifier(lastStep.targetTable)} WHERE ${dialect.quoteIdentifier(column)} ${op} ${dialect.formatPlaceholder(0)}`;
       const finalRes = await this.exec(finalSql, [value]);
-      let matchingIds: any[] = (finalRes.rows || []).map((r: any) => r[lastStep.targetPK]);
+      let matchingIds: any[] = (finalRes.rows || []).map((r: any) => r[selectCol]);
 
       if (!matchingIds.length) { this._where.push({ raw: "1 = 0", rawParams: [], kind: "and" }); continue; }
 
@@ -501,7 +549,164 @@ export class QueryBuilder<T extends Record<string, any>> {
   }
 
   // ── MongoDB helpers ──────────────────────────────────────────────────────────
+
+  /**
+   * Raw SQL cannot be translated to a Mongo filter, so it must be refused.
+   *
+   * This previously did `if (w.raw) continue;` — the condition vanished and the
+   * query returned UNFILTERED rows with no error. A silently-wrong result set
+   * is far more dangerous than a thrown one: an auth filter that quietly does
+   * nothing looks exactly like a working one until it leaks.
+   */
+  protected _assertNoRawForMongo(): void {
+    const raw = this._where.find((w) => w.raw);
+    if (!raw) return;
+    throw new Error(
+      `whereRaw()/SqlExpr.raw() is not supported on MongoDB and was not applied.\\n` +
+        `SQL text has no Mongo equivalent, so it cannot be translated silently.\\n` +
+        `Rewrite this condition using the Mongo-compatible builder ` +
+        `(where/in/between/like/orWhereGroup), or use a SQL driver.\\n\\n` +
+        `Offending clause: ${String(raw.raw).slice(0, 200)}`,
+    );
+  }
+
+  /**
+   * Refuse a SQL-only construct on MongoDB instead of ignoring it.
+   *
+   * Joins were silently dropped: the Mongo command is built as
+   * collection/action/filter/projection/sort/limit/skip with no join concept,
+   * so a `join()` call produced a single-collection query that looked correct
+   * and returned rows from the wrong set.
+   */
+  protected _assertMongoSupported(feature: string): void {
+    if (this._joins.length > 0) {
+      throw new Error(
+        `${feature}() with a SQL JOIN is not supported on MongoDB and was not applied.\\n` +
+          `The Mongo query path has no join stage, so the JOIN would have been silently ` +
+          `dropped and the result set would be wrong.\\n\\n` +
+          `Use preload()/relatedTo() to fetch related collections, which is the ` +
+          `Mongo-native equivalent, or use a SQL driver.`,
+      );
+    }
+  }
+
+  // ── PostgREST (edge) helpers ─────────────────────────────────────────────────
+  //   PostgREST has no SQL surface, so a raw WHERE clause cannot be translated.
+  //   Refuse it rather than silently dropping it, exactly as on Mongo.
+
+  protected _assertPostgrestSupported(): void {
+    const raw = this._where.find((w) => w.raw);
+    if (raw) {
+      throw new Error(
+        `whereRaw()/SqlExpr.raw() cannot be translated to PostgREST and was not applied.\\n` +
+          `PostgREST exposes a structured query API, not SQL, so there is nothing to ` +
+          `send. Rewrite this condition with where()/in()/between()/like(), or use a ` +
+          `SQL driver.\\n\\nOffending clause: ${String(raw.raw).slice(0, 200)}`,
+      );
+    }
+if (this._joins.length > 0) {
+      throw new Error(
+        `join() cannot be translated to PostgREST.\n` +
+          `Use PostgREST embedded resources instead — declare the relation on the ` +
+          `model and call preload("relation"). That selects it in the same round ` +
+          `trip (select=*,relation(*)), which is the PostgREST-native equivalent.`,
+      );
+    }
+if ((this as any)._having) {
+      throw new Error(
+        `having() cannot be translated to PostgREST.\n` +
+          `PostgREST applies aggregates server-side via count=exact and ` +
+          `aggregate functions in select; filter the result in application code.`,
+      );
+    }
+  }
+
+  /**
+   * Translate the accumulated query state into a PostgREST command.
+   *
+   * This is the edge equivalent of buildSql(). The result is JSON-encoded and
+   * handed to `exec`, which routes it to PostgrestClient over fetch.
+   */
+  buildPostgrestCommand(op: "select" | "insert" | "update" | "delete", data?: any): any {
+    this._assertPostgrestSupported();
+
+    // PostgREST resolves relations in the SAME request via embedded resources
+    // (`select=*,posts(*)`), which is the edge equivalent of preload() — one
+    // round trip, no N+1. The SQL preload path would emit a JOIN this transport
+    // cannot express.
+    const embedded: string[] = [];
+    for (const path of this._preloads) {
+      const rel = this.schema?.[this.modelName]?.relations?.find(
+        (r: any) => r.fieldName === path || r.fieldName === path.split(".")[0],
+      );
+      if (rel) embedded.push(`${rel.fieldName}(*)`);
+    }
+
+    const filters: any[] = [];
+    const orFilters: any[][] = [];
+
+    for (const w of this._where) {
+      if (w.kind === "or") {
+        // A bare `or` collects into an implicit OR group.
+        orFilters.push([{ column: String(w.column), op: String(w.op ?? "="), value: w.value }]);
+        continue;
+      }
+      if (w.kind === "null")    { filters.push({ column: String(w.column), op: "IS", value: null }); continue; }
+      if (w.kind === "notnull") { filters.push({ column: String(w.column), op: "NOT IS", value: null }); continue; }
+      if (w.kind === "in")      { filters.push({ column: String(w.column), op: "IN", value: w.value }); continue; }
+      if (w.kind === "notin")   { filters.push({ column: String(w.column), op: "NOT IN", value: w.value }); continue; }
+      if (w.kind === "between") {
+        filters.push({ column: String(w.column), op: ">=", value: w.value[0] });
+        filters.push({ column: String(w.column), op: "<=", value: w.value[1] });
+        continue;
+      }
+      filters.push({
+        column: String(w.column),
+        op: String(w.op ?? "="),
+        value: w.value,
+        negate: String(w.op ?? "").toUpperCase().startsWith("NOT "),
+      });
+    }
+
+    const softField = this._softDeleteFieldFor("postgrest");
+    if (softField) filters.push({ column: softField, op: "IS", value: null });
+
+    return {
+      op,
+      table: this.table,
+      select: [
+        ...(this._selects?.length ? (this._selects as string[]).map(String) : ["*"]),
+        ...embedded,
+      ],
+      filters,
+      orFilters: orFilters.length ? orFilters : undefined,
+      order: this._orderBy.length
+        ? this._orderBy.map((o) => ({
+            // PostgREST wants `column` and a lowercase direction; the internal
+            // shape is `{ col, dir }` with dir already uppercased.
+            column: o.col,
+            dir: o.dir.toLowerCase() as "asc" | "desc",
+          }))
+        : undefined,
+      limit: this._limit ?? undefined,
+      offset: this._offset ?? undefined,
+      data,
+      returning: op !== "select",
+    };
+  }
+
+  /** Name of the @softDelete field on this model, if it declares one. */
+  protected _softDeleteFieldFor(_dialect: string): string | null {
+    const fields = this.schema?.[this.modelName]?.fields || {};
+    for (const [k, v] of Object.entries(fields as Record<string, any>)) {
+      const m = v?.meta;
+      if (m?.softDelete || m?.["@softDelete"]) return k;
+    }
+    return null;
+  }
+
   protected buildMongoFilter(): Record<string, any> {
+    this._assertNoRawForMongo();
     const filter: Record<string, any> = {};
     const orClauses: Record<string, any>[] = [];
     for (const w of this._where) {
@@ -511,7 +716,6 @@ export class QueryBuilder<T extends Record<string, any>> {
       if (w.kind === "in")      { filter[w.column as string] = { $in: w.value }; continue; }
       if (w.kind === "notin")   { filter[w.column as string] = { $nin: w.value }; continue; }
       if (w.kind === "between") { filter[w.column as string] = { $gte: w.value[0], $lte: w.value[1] }; continue; }
-      if (w.raw) continue;
       filter[w.column as string] = this._mongoOp(w.op!, w.value);
     }
     if (orClauses.length) filter["$or"] = orClauses;
@@ -537,15 +741,25 @@ export class QueryBuilder<T extends Record<string, any>> {
 
   // ── SQL builder ──────────────────────────────────────────────────────────────
   protected buildSql(): { sql: string; params: any[] } {
-    const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
+    const dialectName = this.orm?.dialect || "sqlite";
+    const isMongo = dialectName === "mongodb";
+    const isPostgrest = dialectName === "postgrest";
+
+    if (isPostgrest) {
+      return {
+        sql: JSON.stringify(this.buildPostgrestCommand("select")),
+        params: [],
+      };
+    }
 
     if (isMongo) {
+      this._assertMongoSupported("join");
       const mongoId = (key: string) => key === "id" ? "_id" : key;
       const mongoCmd = {
         collection: this.table, action: "find",
         filter: this.buildMongoFilter(),
         projection: this._selects?.length ? Object.fromEntries((this._selects as string[]).map((c) => [c, 1])) : undefined,
-        sort: this._orderBy.length ? Object.fromEntries(this._orderBy.map((o) => { const [col, dir] = o.split(" "); return [mongoId(col), dir === "DESC" ? -1 : 1]; })) : undefined,
+        sort: this._orderBy.length ? Object.fromEntries(this._orderBy.map((o) => [mongoId(o.col), o.dir === "DESC" ? -1 : 1])) : undefined,
         limit: this._limit ?? undefined,
         skip: this._offset ?? undefined,
       };
@@ -570,10 +784,9 @@ export class QueryBuilder<T extends Record<string, any>> {
     if (whereSql) sql += " WHERE " + whereSql;
 
     if (this._orderBy.length) {
-      sql += " ORDER BY " + this._orderBy.map((c) => {
-        const [col, dir] = c.split(" ");
-        return `${dialect.quoteIdentifier(col)} ${dir || ""}`;
-      }).join(", ");
+      sql += " ORDER BY " + this._orderBy
+        .map(({ col, dir }) => `${dialect.quoteIdentifier(col)} ${dir}`)
+        .join(", ");
     }
 
     if (this._limit != null) sql += " LIMIT " + this._limit;
@@ -648,7 +861,7 @@ export class QueryBuilder<T extends Record<string, any>> {
       const ph = dialect.formatPlaceholder(paramIndex++);
       params.push(w.value);
       // quoteRef correctly handles dotted refs: "users.name" → "users"."name"
-      parts.push(`${connector}${quoteRef(qualify(w.column))} ${w.op} ${ph}`);
+      parts.push(`${connector}${quoteRef(qualify(w.column))} ${assertSafeOperator(w.op ?? "=")} ${ph}`);
     }
 
     return { sql: parts.join(""), params: params.map(p => typeof p === "boolean" ? Number(p) : p) };
@@ -731,8 +944,13 @@ export class QueryBuilder<T extends Record<string, any>> {
     }
 
     if (this._preloads.length) {
-      this._preloadCache.clear();
-      rows = await this.applyPreloads(rows);
+      // On PostgREST the relations were already resolved as embedded resources
+      // inside the single select=*,relation(*) request — running the SQL
+      // preload path as well would re-query and clobber that shape.
+      if ((this.orm?.dialect || "sqlite") !== "postgrest") {
+        this._preloadCache.clear();
+        rows = await this.applyPreloads(rows);
+      }
     }
 
     const schemaFields = this.schema![this.modelName]?.fields ?? {};
@@ -801,6 +1019,10 @@ export class QueryBuilder<T extends Record<string, any>> {
    * @example await Users.query().where("status","=","inactive").delete()
    */
   async delete(): Promise<number> {
+    if ((this.orm?.dialect || "sqlite") === "postgrest") {
+      const res = await this.exec(JSON.stringify(this.buildPostgrestCommand("delete")), []);
+      return res.changes ?? 0;
+    }
     const isMongo = (this.orm?.dialect || "sqlite") === "mongodb";
     if (isMongo) {
       const mongoCmd = { collection: this.table, action: "delete", filter: this.buildMongoFilter() };
@@ -919,7 +1141,21 @@ export class QueryBuilder<T extends Record<string, any>> {
         const junction = await mongoFetch(through, { [foreignKey]: { $in: parentIds } });
         const targetIds = Array.from(new Set(junction.map((j) => j[relatedKey])));
         if (!hasValues(targetIds)) return { junctionRows: [], relatedRows: [] };
-        return { junctionRows: junction, relatedRows: await mongoFetch(targetTable, { [targetPK]: { $in: targetIds }, ...(fc.sql ? {} : {}) }) };
+
+        // A filtered many-to-many preload must apply the filter to the RELATED
+        // collection. This previously spread `{}` unconditionally — the shape
+        // read as intent but always evaluated to an empty object — so the
+        // preload returned every related row regardless of the filter.
+        if (fc.sql) {
+          throw new Error(
+            `A filtered many-to-many preload is not supported on MongoDB and was not applied.\\n` +
+              `The junction lookup succeeded but the filter on "${fieldName}" would have ` +
+              `been dropped, returning unfiltered related rows.\\n\\n` +
+              `Either load the relation unfiltered and filter in application code, or ` +
+              `use a SQL driver.`,
+          );
+        }
+        return { junctionRows: junction, relatedRows: await mongoFetch(targetTable, { [targetPK]: { $in: targetIds } }) };
       }
       const ph = parentIds.map((_, i) => dialect.formatPlaceholder(i)).join(", ");
       const sql =
@@ -1077,7 +1313,20 @@ export class QueryBuilder<T extends Record<string, any>> {
 
     for (const root of Object.keys(grouped)) {
       const relation = relations.find((r) => r.fieldName === root);
-      if (!relation) continue;
+      if (!relation) {
+        // Previously `continue` — a typo'd or misnamed preload was dropped
+        // silently and the result set came back with the relation simply
+        // missing, indistinguishable from "no related rows".
+        const known = relations.map((r) => r.fieldName);
+        throw new Error(
+          `preload("${root}"): "${root}" is not a relation on model "${this.modelName}".\n` +
+            (known.length
+              ? `Available relations: ${known.join(", ")}.`
+              : `This model declares no relations at all.`) +
+            `\nA preload that silently does nothing returns rows with the ` +
+            `relation absent, which looks identical to "no related records".`,
+        );
+      }
       await fetchRelation(relation, rows);
     }
 
@@ -1085,6 +1334,7 @@ export class QueryBuilder<T extends Record<string, any>> {
   }
 
   // ── Utilities ─────────────────────────────────────────────────────────────────
+
   private sanitizeRow(row: any, schemaFields: Record<string, any>, explicitSelects: Set<string> | null): any {
     let clean: Record<string, any> = this.mapJson(mapBooleans(row, schemaFields), schemaFields);
     for (const k of Object.keys(schemaFields)) {

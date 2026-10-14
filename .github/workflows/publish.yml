@@ -1,24 +1,64 @@
 name: Publish
 
+# Publishing is now separated from testing (previously one job ran the suite
+# and then `npm publish` on every push to main) and is gated on a real tag.
+# `npm publish --access public` requires a tag, so version provenance is
+# reconstructable from git — previously 111 commits and 87 published versions
+# carried zero tags.
+
 on:
   push:
-    branches: [main]
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write # provenance
 
 jobs:
-  test:
+  verify:
+    name: verify before publish
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [22]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+      - run: npm run lint
+      - run: npm run test:sqlite
+      - run: npm run test:types
+      - name: Refuse to publish if the version does not match the tag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::tag $TAG does not match package.json version $PKG"
+            exit 1
+          fi
+      - name: Refuse to publish if dist contains inline credentials
+        run: |
+          if grep -rEi 'postgres(ql)?://[^"'"'"'[:space:]]+:[^"'"'"'[:space:]]+@|mongodb(\+srv)?://[^"'"'"'[:space:]]+:[^"'"'"'[:space:]]+@' dist/ ; then
+            echo "::error::credential found in dist/ — refusing to publish"
+            exit 1
+          fi
+
+  publish:
+    name: publish
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
           registry-url: https://registry.npmjs.org
       - run: npm ci
-      - run: npm run test:suite
-      - run: npm run test:types
-      - run: npm publish
+      - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

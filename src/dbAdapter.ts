@@ -1,4 +1,6 @@
 import type { SQLExecResult, DBDriver, ExecFn } from "./types.ts";
+import { assertDriverSupported } from "./runtime.js";
+import { quoteIdentifier } from "./quoting.js";
 
 // ─── DBAdapter ────────────────────────────────────────────────────────────────
 // SERVERLESS / EDGE CHANGES:
@@ -10,6 +12,69 @@ import type { SQLExecResult, DBDriver, ExecFn } from "./types.ts";
 //  5. Prepared-statement cache kept for sqlite only (it's still valid in Node).
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Render bound parameters for logging.
+ *
+ * Values are user data — access tokens, card numbers, emails, national IDs.
+ * With `logs: true` these were written to stdout verbatim, which is how PII
+ * ends up in CI output and log aggregation. Redact unless explicitly opted in.
+ */
+function redactParams(params: any[], include: boolean): any {
+  if (include) return params;
+  return params.map((_, i) => `$${i + 1}`);
+}
+
+/**
+ * Classify a driver load/connect failure.
+ *
+ * These used to collapse into "driver not found. Install it: npm install X",
+ * which is actively misleading in the single most common failure mode: running
+ * on Vercel Edge / Cloudflare Workers / Deno, where the driver IS installed but
+ * the runtime has no TCP sockets, so `import("pg")` fails for a reason
+ * `npm install` can never fix.
+ */
+function describeDriverFailure(
+  driver: string,
+  pkg: string,
+  err: any,
+): Error {
+  const msg = String(err?.message ?? err);
+  const isMissing =
+    err?.code === "ERR_MODULE_NOT_FOUND" ||
+    err?.code === "MODULE_NOT_FOUND" ||
+    /Cannot find (module|package)/i.test(msg) ||
+    /Did you mean to import/i.test(msg);
+
+  if (isMissing) {
+    return new Error(
+      `${driver} driver not found. Install it:\n  npm install ${pkg}\n\nOriginal error: ${msg}`
+    );
+  }
+
+  // Everything else is a connection or runtime problem, not a packaging one.
+  const looksLikeNoTcp =
+    /TCP|net\.Socket|node:net|EACCES|EPERM|not supported|Workers|edge runtime/i.test(msg);
+
+  return new Error(
+    `Failed to connect to ${driver}.\n\n` +
+      `The ${pkg} driver IS installed — this is not a missing-package problem.\n` +
+      (looksLikeNoTcp
+        ? `It looks like the runtime cannot open TCP sockets:\n  ${msg}\n\n` +
+          `This is expected on Vercel Edge, Cloudflare Workers, and Deno Deploy.\n` +
+          `The \`pg\` driver needs a real TCP socket, which V8 isolates do not provide.\n\n` +
+          `Options:\n` +
+          `  1. Use the Node.js runtime instead of the edge runtime.\n` +
+          `  2. Use an HTTP-based driver and pass it as \`exec\` (see slintorm/browser):\n` +
+          `       new ORMManager({ driver: 'postgres', exec: neonExec({ url }), schema })\n` +
+          `  3. Run createProxyServer() on a Node host and use proxyExec() from the edge.\n\n`
+        : `Original error: ${msg}\n\n`) +
+      `Check that the host is reachable, the credentials are correct, and the ` +
+      `connection string is well-formed.\n` +
+      `NOTE: every Postgres error used to be reported as "driver not found" here. ` +
+      `The real cause is above.`
+  );
+}
+
 export class DBAdapter {
   driver?: DBDriver;
   dir?: string;
@@ -18,6 +83,10 @@ export class DBAdapter {
   private sqliteDb: any = null;
   private mysqlConn: any = null;
   private pgClient: any = null;
+  /** Non-null when `poolSize > 1` was requested. */
+  private pgPool: any = null;
+  /** Shared in-flight connect promise — prevents duplicate connections. */
+  private _connecting: Promise<void> | null = null;
   private mongoClient: any = null;
   private mongoDb: any = null;
   private _mongoObjectId: any = null;
@@ -36,13 +105,30 @@ export class DBAdapter {
     databaseName?: string;
     dir?: string;
     logs?: boolean;
+    /**
+     * Include bound parameter VALUES in log output. Defaults to false.
+     *
+     * These are user data: with `logs: true` and this off, the SQL text is
+     * logged but values are replaced by placeholders. Only enable this in a
+     * local terminal where the values are yours.
+     */
+    logParams?: boolean;
     replicas?: string[];  // connection URLs for read replicas
     poolSize?: number;    // connection pool size (PG/MySQL)
     exec?: ExecFn;        // custom exec function (bypasses TCP — use in edge/serverless)
+    /** PostgREST base URL, e.g. https://<project>.supabase.co/rest/v1 */
+    postgrestUrl?: string;
+    /** PostgREST api key (sent as `apikey` + Bearer). */
+    postgrestKey?: string;
+    postgrestSchema?: string;
+    postgrestHeaders?: Record<string, string> | (() => Record<string, string>);
+    /** Injectable fetch for runtimes without a global one (or for tests). */
+    fetch?: typeof fetch;
     [key: string]: any;
   } = {};
 
   private logs = false;
+  private logParams = false;
 
   constructor(
     config: {
@@ -51,15 +137,19 @@ export class DBAdapter {
       databaseName?: string;
       dir?: string;
       logs?: boolean;
+      logParams?: boolean;
       exec?: ExecFn;
       [key: string]: any;
     } = {}
   ) {
     this.config = config;
     this.driver = config.driver ?? "sqlite";
+    // Fail at construction, not on the first query in production.
+    assertDriverSupported(this.driver);
     this.dir = config.dir;
     this.schema = config.schema;
     this.logs = !!config.logs;
+    this.logParams = config.logParams === true && !!config.logs;
     if (config.exec) {
       this.customExec = config.exec;
       this.connected = true;
@@ -76,8 +166,18 @@ export class DBAdapter {
   }
 
   async connect() {
-    if (this.connected) return;
+    // Without this, N concurrent first-queries during a cold start all pass the
+    // `connected` check (it is only set AFTER the await below) and each open
+    // their own connection — leaking all but one.
+    if (!this._connecting) {
+      this._connecting = (async () => {
+        await this._connectOnce();
+      })();
+    }
+    await this._connecting;
+  }
 
+  private async _connectOnce(): Promise<void> {
     switch (this.driver) {
       case "sqlite": {
         const filename = this.config.databaseUrl || ":memory:";
@@ -179,9 +279,7 @@ export class DBAdapter {
             uri: this.config.databaseUrl,
           });
         } catch (err) {
-          throw new Error(
-            `MySQL driver not found. Install it:\n  npm install mysql2\n\nOriginal error: ${(err as any)?.message ?? err}`
-          );
+          throw describeDriverFailure("MySQL", "mysql2", err);
         }
         break;
       }
@@ -190,15 +288,33 @@ export class DBAdapter {
         try {
           const mod = await import("pg");
           const pg = await this.defaultExport<any>(mod);
-          const PgClient = pg.Client ?? pg;
-          this.pgClient = new PgClient({
-            connectionString: this.config.databaseUrl,
-          });
-          await this.pgClient.connect();
+
+          // `poolSize` was accepted but never read — the adapter always opened
+          // ONE dedicated connection. In serverless that means one connection
+          // per cold-start replica, which is the textbook route to Postgres
+          // max_connections exhaustion. Honour the option now.
+          const poolSize = Number(this.config.poolSize ?? 0) || 0;
+          if (poolSize > 1) {
+            const PoolCtor = pg.Pool;
+            if (!PoolCtor) {
+              throw new Error("poolSize > 1 requires pg's Pool export, which this build of `pg` does not provide.");
+            }
+            this.pgPool = new PoolCtor({
+              connectionString: this.config.databaseUrl,
+              max: poolSize,
+            });
+            this.pgClient = this.pgPool;
+            // Validate eagerly so a bad URL fails at connect(), not at query().
+            await this.pgPool.query("SELECT 1");
+          } else {
+            const ClientCtor = pg.Client ?? pg;
+            this.pgClient = new ClientCtor({
+              connectionString: this.config.databaseUrl,
+            });
+            await this.pgClient.connect();
+          }
         } catch (err) {
-          throw new Error(
-            `Postgres driver not found. Install it:\n  npm install pg\n\nOriginal error: ${(err as any)?.message ?? err}`
-          );
+          throw describeDriverFailure("Postgres", "pg", err);
         }
         break;
       }
@@ -217,10 +333,16 @@ export class DBAdapter {
           const hint = msg.includes("Cannot find module") || msg.includes("not found")
             ? `MongoDB driver not found. Install it:\n  npm install mongodb\n\n`
             : "";
-          throw new Error(`${hint}MongoDB connection failed: ${msg}`);
+          throw new Error(`${hint}MongoDB connection failed: ${msg}`, { cause: err });
         }
         break;
       }
+
+      case "postgrest":
+        // Nothing to connect: PostgREST is stateless HTTP. The client is built
+        // lazily on first exec so importing this module stays socket-free.
+        this.connected = true;
+        break;
 
       default:
         throw new Error(`Driver "${this.driver}" not implemented`);
@@ -230,10 +352,49 @@ export class DBAdapter {
     if (this.onConnect) await this.onConnect();
   }
 
+  private _pgrest: any = null;
+
+  private async execPostgrest(commandOrJson: string): Promise<SQLExecResult> {
+    if (!this._pgrest) {
+      const { PostgrestClient } = await import("./postgrest.js");
+      const url = this.config.postgrestUrl ?? (this.config.databaseUrl || "");
+      this._pgrest = new PostgrestClient({
+        url,
+        key: this.config.postgrestKey ?? (this.config.databaseUrl || undefined),
+        schema: this.config.postgrestSchema,
+        headers: this.config.postgrestHeaders,
+        fetch: this.config.fetch,
+      });
+    }
+
+    let cmd: any;
+    try {
+      cmd = typeof commandOrJson === "string" ? JSON.parse(commandOrJson) : commandOrJson;
+    } catch {
+      throw new Error(
+        "The PostgREST path expected a JSON command but received something else. " +
+          "This usually means raw SQL was passed to a postgrest-driver instance — " +
+          "PostgREST has no SQL surface. Use the query builder instead.",
+      );
+    }
+
+    if (this.logs) console.log("EXEC (postgrest):", JSON.stringify(cmd));
+    const r = await this._pgrest.execute(cmd);
+    // `total` carries the Content-Range count used by Model.count().
+    return { rows: r.rows, changes: r.changes, lastID: null, total: r.total } as any;
+  }
+
   async exec(sqlOrOp: string, params: any[] = []): Promise<SQLExecResult> {
     if (this.customExec) {
       return this.customExec(sqlOrOp, params);
     }
+
+    // PostgREST rides on fetch — no driver package, no TCP socket. This is the
+    // branch that makes Vercel Edge / Workers / Deno actually work.
+    if (this.driver === "postgrest") {
+      return this.execPostgrest(sqlOrOp);
+    }
+
     await this.connect();
 
     switch (this.driver) {
@@ -241,7 +402,7 @@ export class DBAdapter {
         const sql = sqlOrOp.trim();
         try {
           if (/^(SELECT|PRAGMA|WITH)/i.test(sql)) {
-            if (this.logs) console.log("EXEC (sqlite select):", sql, params);
+            if (this.logs) console.log("EXEC (sqlite select):", sql, redactParams(params, this.logParams));
             let stmt = this.stmtCache.get(sql);
             if (!stmt) {
               stmt = { _prepared: sql }; // placeholder for cache key
@@ -254,18 +415,18 @@ export class DBAdapter {
             const rows = await this.sqliteDb!.all(sql, params);
             return { rows: Array.isArray(rows) ? rows : [] };
           } else {
-            if (this.logs) console.log("EXEC (sqlite run):", sql, params);
+            if (this.logs) console.log("EXEC (sqlite run):", sql, redactParams(params, this.logParams));
             const result = await this.sqliteDb!.run(sql, params);
             return { rows: [], changes: result?.changes, lastID: result?.lastID ?? result?.lastInsertRowid };
           }
         } catch (err) {
-          if (this.logs) console.error("SQL ERROR:", sql, params, (err as any)?.message ?? err);
+          if (this.logs) console.error("SQL ERROR:", sql, redactParams(params, this.logParams), (err as any)?.message ?? err);
           throw err;
         }
       }
 
       case "mysql": {
-        if (this.logs) console.log("EXEC (mysql):", sqlOrOp, params);
+        if (this.logs) console.log("EXEC (mysql):", sqlOrOp, redactParams(params, this.logParams));
         const [result] = await this.mysqlConn!.execute(sqlOrOp, params);
         if (Array.isArray(result)) {
           return { rows: result };
@@ -275,7 +436,7 @@ export class DBAdapter {
       }
 
       case "postgres": {
-        if (this.logs) console.log("EXEC (postgres):", sqlOrOp, params);
+        if (this.logs) console.log("EXEC (postgres):", sqlOrOp, redactParams(params, this.logParams));
         let pgSql = sqlOrOp;
         if (params?.length && pgSql.includes("?")) {
           let idx = 0;
@@ -286,7 +447,7 @@ export class DBAdapter {
       }
 
       case "mongodb": {
-        if (this.logs) console.log("EXEC (mongodb):", sqlOrOp, params);
+        if (this.logs) console.log("EXEC (mongodb):", sqlOrOp, redactParams(params, this.logParams));
         if (!this.mongoDb) throw new Error("MongoDB not initialized");
         const cmd = JSON.parse(sqlOrOp);
 
@@ -415,13 +576,16 @@ export class DBAdapter {
         if (this.mysqlConn) await this.mysqlConn.end();
         break;
       case "postgres":
-        if (this.pgClient) await this.pgClient.end();
+        if (this.pgPool) await this.pgPool.end();
+        else if (this.pgClient) await this.pgClient.end();
+        this.pgPool = null;
         break;
       case "mongodb":
         if (this.mongoClient) await this.mongoClient.close();
         break;
     }
     this.connected = false;
+    this._connecting = null;
   }
 
   async connectReplicas() {
@@ -457,7 +621,7 @@ export class DBAdapter {
     this.replicaIndex = (this.replicaIndex + 1) % replicas.length;
     const replica = replicas[this.replicaIndex];
 
-    if (this.logs) console.log("EXEC (read replica):", sqlOrOp, params);
+    if (this.logs) console.log("EXEC (read replica):", sqlOrOp, redactParams(params, this.logParams));
     try {
       if (this.driver === "postgres") {
         const res = await replica.query(sqlOrOp, params);
@@ -476,9 +640,11 @@ export class DBAdapter {
     await this.connect();
     switch (this.driver) {
       case "sqlite":
-        return await this.sqliteDb!.all(`PRAGMA table_info(${table})`, []);
+        // PRAGMA does not accept bound parameters, so the identifier must be
+        // quoted — it was interpolated raw here.
+        return await this.sqliteDb!.all(`PRAGMA table_info(${quoteIdentifier("sqlite", table)})`, []);
       case "mysql":
-        return (await this.mysqlConn!.execute(`DESCRIBE ${table}`))[0];
+        return (await this.mysqlConn!.execute(`DESCRIBE ${quoteIdentifier("mysql", table)}`))[0];
       case "postgres": {
         const res = await this.pgClient!.query(
           `SELECT column_name, data_type, is_nullable
@@ -488,10 +654,11 @@ export class DBAdapter {
         );
         return res.rows;
       }
-      case "mongodb":
+      case "mongodb": {
         if (!this.mongoDb) return [];
         const sample = await this.mongoDb.collection(table).findOne({});
         return sample ? Object.keys(sample).map((k) => ({ name: k })) : [];
+      }
       default:
         return [];
     }

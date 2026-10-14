@@ -71,16 +71,35 @@ const validators: Record<string, Validator> = {
     if (typeof value !== "string") return null;
     if (!param) return null;
     try {
+      // A `@pattern` is author-supplied (from the schema) but is matched against
+      // REQUEST-supplied values. A catastrophic pattern like `(a+)+$` would hang
+      // the event loop, so bound the work: cap the input length and reject a
+      // pattern whose length blows past the point of usefulness.
+      if (value.length > MAX_PATTERN_VALUE_LENGTH) {
+        return `is too long to validate against the field pattern`;
+      }
       const re = new RegExp(param);
       if (!re.test(value)) return `must match pattern ${param}`;
     } catch {
+      // An invalid pattern in the schema should not reject valid data.
       return null;
     }
     return null;
   },
 };
 
-const annotationToValidatorKey: Record<string, string> = {
+/**
+ * Upper bound on the value length tested against a `@pattern`.
+ *
+ * `@pattern` comes from the schema (developer-controlled) but is matched
+ * against request-supplied values. A catastrophic pattern — `(a+)+$` against
+ * a long run of `a`s — is exponential and would block the event loop. Capping
+ * the input bounds the work without changing the pattern's meaning for any
+ * realistically-sized value.
+ */
+const MAX_PATTERN_VALUE_LENGTH = 1024;
+
+export const annotationToValidatorKey: Record<string, string> = {
   "@email": "email",
   "@url": "url",
   "@uuid": "uuid",

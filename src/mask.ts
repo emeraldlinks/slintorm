@@ -1,25 +1,43 @@
 // mask.ts — zero-dependency output masking for @mask annotation
 // Masks are applied on read paths only; DB always stores the real value.
+//
+// Masking FAILS CLOSED. When a value cannot be parsed as the expected type,
+// the presets below return a full mask of the same length rather than the
+// original string. Returning the input unchanged — which is what these did —
+// means any unparseable value (a short SSN, an email with no "@", a truncated
+// card number) was disclosed in full, so the failure mode was "reveal
+// everything" precisely when the value looked least like what it claimed.
 
 const MASK_CHAR = "*";
 
+/** A mask that preserves visible length but reveals nothing. */
+function maskAll(val: string): string {
+  return MASK_CHAR.repeat(Math.max(1, val.length));
+}
+
 function maskPresetCreditcard(val: string): string {
   const digits = val.replace(/\D/g, "");
-  if (digits.length <= 4) return val;
+  // Too few digits to reveal a "last 4" without revealing the whole value.
+  if (digits.length <= 4) return maskAll(val);
   const last4 = digits.slice(-4);
   return `****-****-****-${last4}`;
 }
 
 function maskPresetSsn(val: string): string {
   const digits = val.replace(/\D/g, "");
-  if (digits.length <= 4) return val;
+  if (digits.length <= 4) return maskAll(val);
   const last4 = digits.slice(-4);
   return `***-**-${last4}`;
 }
 
 function maskPresetEmail(val: string): string {
   const atIdx = val.indexOf("@");
-  if (atIdx <= 0) return val;
+  // No "@" — this is not an email address, so do not reveal the domain (or
+  // anything else). Keep the leading character for UI shape only.
+  if (atIdx <= 0) {
+    const lead = val[0] ?? "";
+    return `${lead}${MASK_CHAR.repeat(Math.max(1, val.length - 1))}`;
+  }
   const name = val.slice(0, atIdx);
   const domain = val.slice(atIdx);
   const first = name[0];
@@ -28,7 +46,7 @@ function maskPresetEmail(val: string): string {
 
 function maskPresetPhone(val: string): string {
   const digits = val.replace(/\D/g, "");
-  if (digits.length <= 4) return val;
+  if (digits.length <= 4) return maskAll(val);
   const last4 = digits.slice(-4);
   const masked = MASK_CHAR.repeat(Math.max(3, digits.length - 4));
   return `${masked}-${last4}`;
@@ -98,7 +116,6 @@ export function parseMaskAnnotation(val: string | boolean): MaskDirective {
 export function applyMask(raw: any, directive: MaskDirective): any {
   if (raw === null || raw === undefined) return raw;
   const val = String(raw);
-  const char = "_maskChar" in arguments ? MASK_CHAR : MASK_CHAR;
   switch (directive) {
     case "creditcard":
       return maskPresetCreditcard(val);

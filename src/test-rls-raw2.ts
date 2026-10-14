@@ -1,7 +1,18 @@
 import { default as pg } from "pg";
 
+// Admin connection used to provision a throwaway NOBYPASSRLS role.
 // Try direct connection (not pooler)
-const databaseUrl = "postgresql://postgres.bibysoybtjvjainuopyh:pXBQrdTiv2D50CdH@aws-0-eu-west-1.pooler.supabase.com:5432/postgres";
+const databaseUrl = process.env.PG_ADMIN_URL ?? process.env.DATABASE_URL;
+if (!databaseUrl) {
+  throw new Error(
+    "Set PG_ADMIN_URL (or DATABASE_URL) to a PostgreSQL connection string.\n" +
+      "  PG_ADMIN_URL=postgresql://user:pass@host:5432/db npx tsx src/test-rls-raw2.ts",
+  );
+}
+
+// Derive host/db from the admin URL so nothing is hardcoded twice.
+const admin = new URL(databaseUrl);
+const ROLE_PASSWORD = process.env.RLS_TEST_ROLE_PASSWORD ?? `test123_${Date.now()}`;
 
 async function main() {
   const client = new pg.Client({ connectionString: databaseUrl });
@@ -11,7 +22,9 @@ async function main() {
   const roleName = `rls_user_${Date.now()}`;
   try {
     await client.query(`DROP ROLE IF EXISTS "${roleName}"`);
-    await client.query(`CREATE ROLE "${roleName}" WITH LOGIN PASSWORD 'test123' NOBYPASSRLS`);
+    await client.query(
+      `CREATE ROLE "${roleName}" WITH LOGIN PASSWORD '${ROLE_PASSWORD.replace(/'/g, "''")}' NOBYPASSRLS`,
+    );
     console.log(`Created role: ${roleName}`);
   } catch(e) {
     console.error("Failed to create role:", e);
@@ -45,7 +58,7 @@ async function main() {
 
   try {
     const userClient = new pg.Client({
-      connectionString: `postgresql://${roleName}:test123@aws-0-eu-west-1.pooler.supabase.com:5432/postgres`
+      connectionString: `${admin.protocol}//${roleName}:${encodeURIComponent(ROLE_PASSWORD)}@${admin.host}${admin.pathname}`,
     });
     await userClient.connect();
 

@@ -46,3 +46,22 @@ export {
 export { http } from "./http-driver.js";
 export { neonExec, tursoExec, planetscaleExec } from "./http-driver.js";
 export { proxyExec } from "./proxy.js";
+
+// PostgREST — the recommended edge path. Postgres over plain HTTPS via fetch,
+// so it needs no TCP socket and no driver package. Supabase exposes PostgREST
+// at https://<project-ref>.supabase.co/rest/v1, but any instance works.
+//
+//   import ORMManager, { PostgrestClient } from "slintorm/edge";
+//   const orm = new ORMManager({
+//     driver: "postgrest",
+//     postgrestUrl: process.env.SUPABASE_URL!,
+//     postgrestKey: process.env.SUPABASE_ANON_KEY!,
+//   });
+export {
+  PostgrestClient,
+  postgrestExec,
+  PostgrestError,
+  type PostgrestConfig,
+  type PostgrestCommand,
+  type PostgrestFilter,
+} from "./postgrest.js";

@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/test.ts",
+    "src/test-rls-pg.ts",
+    "src/test-rls-raw2.ts",
+    "src/*example*.ts",
+    "src/example.ts",
+    "src/schema/**"
+  ]
+}

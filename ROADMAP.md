@@ -1,5 +1,10 @@
 # SlintORM Annotation Roadmap
 
+> **Unreleased work that is implemented but not yet in a tagged release** is
+> listed under `CHANGELOG.md` → `[Unreleased]`. The `✅ Shipped` section below
+> only lists tagged versions, so this roadmap can be trusted as a record of what
+> has actually shipped.
+
 ## ✅ Shipped
 
 ### v1.9.1 — Row-Level Security

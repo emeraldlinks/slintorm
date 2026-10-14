@@ -1,6 +1,13 @@
 # SlintORM
 
-**A lightweight, GORM-inspired TypeScript ORM for SQLite, PostgreSQL, MySQL, and MongoDB — zero-config migrations, a full SQL query builder, and everything hangs off your model instances.**
+**A lightweight, GORM-inspired TypeScript ORM for SQLite, PostgreSQL, MySQL, MongoDB and PostgREST — zero-config migrations, a full SQL query builder, and everything hangs off your model instances.**
+
+> **Feature parity is not uniform across drivers.** SQL drivers get the full
+> query builder. MongoDB gets a complete CRUD engine — filters, preloads,
+> transactions, index migrations — but not SQL joins, CTEs, `UNION`, `HAVING`,
+> window functions, subqueries, or full-text search. Constructing one of those on
+> Mongo **throws** rather than silently returning unfiltered rows. On V8-isolate
+> edge runtimes use `driver: 'postgrest'`. See `SERVERLESS.md` for the matrix.
 
 No schema DSL to learn. No Prisma Client generation step. No separate import for every query feature. Write a TypeScript interface, annotate a few fields with comments, call `migrate()`, and start querying.
 
@@ -37,6 +44,7 @@ SlintORM aims for the GORM sweet spot: **automatic migrations, a real query buil
 | Context propagation               | ✅ Custom request context | ❌ | ❌ |
 | Database resolver (multi-DB)      | ✅ Switch DB per query | ❌ | ❌ |
 | Prepared statement mode           | ✅ | ❌ | ❌ |
+| Edge runtimes (Vercel Edge, Workers, Deno) | ✅ via PostgREST over `fetch` | ❌ | ⚠️ Accelerate |
 | FirstOrInit                       | ✅ Fetch or init unsaved instance | ❌ | ❌ |
 | FindInBatches                     | ✅ Chunked processing with callback | ❌ | ❌ |
 | AfterFind hook                    | ✅ Transform rows post-query | ❌ | ❌ |
@@ -188,13 +196,13 @@ interface Team {
 | `@length:N` | VARCHAR length |
 | `@mask:preset` | Mask output on read: ssn, creditcard, email, phone, showFirst:N, showLast:N, showBoth:F,L, char:X, pattern:... Bypass with `.withoutMasking()` |
 | `@omitdb` | Field never stored in database — excluded from INSERT/UPDATE/reads |
-| `@omitjson` | Stored in DB but stripped from all read results unless `.select()`ed |
+| `@omitjson` | Stored in DB but stripped from all read results **unless explicitly `.select()`ed**. This is a *default-output* control, not a hard guarantee: `query().select("ssn")` returns the raw value, because an explicit selection is a deliberate request for it. Do not use it to enforce access control — use RLS or application authorization |
 | `@omitmigrate` | No column created by migrator — manual DDL; field still usable in queries |
 | `@hash` | PBKDF2-hashed on write; `.verify(plaintext)` method attached on read for password comparison |
 | `@encrypt` | AES-256-GCM encrypted in DB, auto-decrypted on read (requires `encryptionKey` in constructor) |
 | `@secret` | `@hash` + `@omitjson` combined — hashed, excluded from JSON output |
 | `@json` | Serialize/deserialize this field as JSON automatically |
-| `@softDelete` | Marks the field (e.g. `deletedAt`) used for soft deletes; enables `withTrashed()`/`onlyTrashed()`/`restore()` |
+| `@softDelete` | Marks the field (e.g. `deletedAt`) for soft deletes. `delete()` sets it instead of erasing the row; `restore()` clears it; `forceDelete()` erases permanently. Reads exclude deleted rows unless you pass `{ withTrashed: true }` |
 | `@enum:(a,b,c)` | Restrict to a set of string values |
 | `@default:value` | Default value |
 | `@comment:text` | Column comment (where supported) |
@@ -246,16 +254,37 @@ This example uses SQLite — switch to PostgreSQL, MySQL, or MongoDB by changing
 In V8-isolate runtimes (Vercel Edge, Cloudflare Workers), pass a pre-built `schema` and a custom `exec` function that uses `fetch()` instead of TCP:
 
 ```ts
-import ORMManager from 'slintorm/browser';
-import { proxyExec } from 'slintorm/proxy';
-import schema from './schema/generated.json' assert { type: 'json' };
+import ORMManager from 'slintorm/edge';
+import schema from './schema/generated.json' with { type: 'json' };
 
+// PostgREST — Postgres over HTTPS via fetch. Works in any V8 isolate.
 const orm = new ORMManager({
-  exec: proxyExec({ endpoint: 'https://db-proxy.myapp.com/query' }),
+  driver: 'postgrest',
+  postgrestUrl: process.env.SUPABASE_URL!,     // https://<ref>.supabase.co/rest/v1
+  postgrestKey: process.env.SUPABASE_ANON_KEY!,
   schema,
 });
 
 const Users = await orm.defineModel<User>('users', 'User');
+```
+
+> `driver` is mandatory here. It defaults to `sqlite`, and omitting it makes the
+> ORM emit SQLite SQL against a Postgres HTTP endpoint.
+
+If you'd rather tunnel to a Node host you control, the proxy works too — it
+requires an auth token:
+
+```ts
+import { proxyExec } from 'slintorm/proxy';
+
+const orm = new ORMManager({
+  driver: 'postgres',                          // required — defaults to 'sqlite'
+  exec: proxyExec({
+    endpoint: 'https://db-proxy.myapp.com/query',
+    authToken: process.env.PROXY_AUTH_TOKEN!,   // required
+  }),
+  schema,
+});
 ```
 
 See the [Edge & Serverless](#edge--serverless) section for detailed setup.
@@ -582,7 +611,7 @@ await orm.transaction(async (trx) => {
 });
 ```
 
-`transaction()` wraps the callback in `BEGIN`/`COMMIT`, rolling back automatically on error (no-op wrapper on MongoDB, which has no implicit transaction here).
+`transaction()` wraps the callback in `BEGIN`/`COMMIT`, rolling back automatically on error. On MongoDB it uses a real client session (`startSession` / `startTransaction` / `commitTransaction` / `abortTransaction`) rather than being a no-op.
 
 For a flat list of statements without a callback, use `batch()`:
 
@@ -778,12 +807,13 @@ Run a lightweight proxy server on any Node.js host. Your edge function sends SQL
 **Client (edge function):**
 
 ```ts
-import ORMManager from 'slintorm/browser';
-import { proxyExec } from 'slintorm/proxy';
-import schema from './schema/generated.json' assert { type: 'json' };
+import ORMManager from 'slintorm/edge';
+import schema from './schema/generated.json' with { type: 'json' };
 
 const orm = new ORMManager({
-  exec: proxyExec({ endpoint: 'https://db-proxy.myapp.com/query' }),
+  driver: 'postgrest',
+  postgrestUrl: process.env.SUPABASE_URL!,
+  postgrestKey: process.env.SUPABASE_ANON_KEY!,
   schema,
   logs: false,
 });
@@ -903,12 +933,31 @@ SlintORM fills the niche for **quick iteration, flexible queries, and minimal fr
 
 ---
 
+## Not implemented yet
+
+Listed here rather than only in `ROADMAP.md`, because this is where you will look:
+
+- **`@sanitize`** — input transforms on write (`trim`, `lower`, `upper`, `stripTags`, `escape`).
+- **`@expires:Nd/Nh/Nm`** — automatic expiry on a timestamp field.
+- **`@cuid:create/update/delete`** — CUID-style identifiers.
+- **PostgREST: transactions, RLS context propagation, window functions, CTEs.** These
+  throw on that driver rather than degrading — see `SERVERLESS.md`.
+
+Everything else in the table above is implemented and covered by tests, except
+where the driver notes say otherwise.
+
+---
+
 ## Further reading
 
 - **`QUERY_BUILDER.md`** — full query builder & `ModelAPI` reference, every method with usage examples.
 - **`llms.txt`** — condensed reference for AI coding assistants working in a SlintORM codebase.
-- **`example.ts`** — a complete, runnable walkthrough exercising 42 feature sections of the library in one file.
-- **`SECURITY.md`** — full reference for `@hash`, `@encrypt`, `@secret` annotations with `.verify()` and `.decrypt()`.
-- **`src/security.ts`** — runtime implementation of `@hash`, `@encrypt`, `@secret` annotations: PBKDF2 hashing with `.verify()`, AES-256-GCM encryption/decryption.
-- **`src/proxy.ts`** — proxy client + server for running queries from edge runtimes (Vercel Edge, Cloudflare Workers).
+- **`SERVERLESS.md`** — the verified runtime/driver matrix, including the PostgREST edge path.
+- **`CONTRIBUTING.md`** — how to build, test, and run a single driver's suite.
+- **`SECURITY.md`** — full reference for `@hash`, `@encrypt`, `@secret`, and how to report a vulnerability.
+- **`CHANGELOG.md`** — including the breaking changes in the current unreleased version.
+- **`src/security.ts`** — runtime implementation of `@hash`, `@encrypt`, `@secret`: PBKDF2 hashing with `.verify()`, AES-256-GCM with AAD.
+- **`src/postgrest.ts`** — the edge transport: Postgres over HTTPS via `fetch`.
+- **`src/proxy.ts`** — proxy client + server for reaching a Node-hosted database from an edge runtime.
 - **`src/http-driver.ts`** — provider-specific HTTP drivers for Neon, Turso, and PlanetScale.
+- **`src/runtime.ts`** — runtime capability detection, so a TCP-only driver fails at construction on the edge.

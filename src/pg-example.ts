@@ -26,13 +26,24 @@ async function tryOrSkip(label: string, fn: () => Promise<any>) {
 // Main
 // ──────────────────────────────────────────────────────────────────────────
 
+const DATABASE_URL = process.env.DATABASE_URL;
+
 async function main() {
+  if (!DATABASE_URL) {
+    throw new Error(
+      "DATABASE_URL is not set.\n" +
+        "This walkthrough needs a real PostgreSQL database:\n" +
+        "  DATABASE_URL=postgresql://user:pass@host:5432/db tsx src/pg-example.ts\n" +
+        "Nothing is hardcoded — never commit a connection string to this repo.",
+    );
+  }
+
   const orm = new ORMManager<any>({
     driver: "postgres",
-    databaseUrl: "postgresql://postgres.bibysoybtjvjainuopyh:pXBQrdTiv2D50CdH@aws-0-eu-west-1.pooler.supabase.com:5432/postgres",
+    databaseUrl: DATABASE_URL,
     dir: "src",
     logs: false,
-    encryptionKey: "test-encryption-key-32-chars-minimum!!",
+    encryptionKey: process.env.ENCRYPTION_KEY ?? "test-encryption-key-32-chars-minimum!!",
   });
 
   await orm.migrate();
@@ -607,7 +618,7 @@ async function main() {
   // ──────────────────────────────────────────────────────────────────────────
   heading("34. Database Resolver — useDb");
 
-  (orm as any).addDatabase("archive", { driver: "postgres", databaseUrl: "postgresql://postgres.bibysoybtjvjainuopyh:pXBQrdTiv2D50CdH@aws-0-eu-west-1.pooler.supabase.com:5432/postgres", logs: false });
+  (orm as any).addDatabase("archive", { driver: "postgres", databaseUrl: DATABASE_URL, logs: false });
   const archiveDb = (orm as any).resolveDb("archive");
   archiveDb.exec('CREATE TABLE IF NOT EXISTS posts (id SERIAL PRIMARY KEY, title TEXT, "createdAt" TEXT, "updatedAt" TEXT)');
 
@@ -946,26 +957,25 @@ async function main() {
   // ──────────────────────────────────────────────────────────────────────────
   heading("Security — Balloon Hashing & PBKDF2");
 
-  // Default @hash annotation uses Balloon (memory-hard, SHA-256)
-  // For security, production uses space=65536 (2MB).  Demo uses tiny params.
+  // PBKDF2-HMAC-SHA256 @600k is the only algorithm. The previous Balloon
+  // default measured 136 s per hash and has been removed; legacy `balloon$`
+  // hashes still verify, so existing rows keep working.
   const { hashPassword, verifyPassword } = await import("./security.js");
 
-  // Balloon (tiny space=256 for demo; production uses space=65536)
-  const bHash = await hashPassword("my-password", { algo: "balloon", space: 256, time: 2, delta: 1 });
-  info(`Balloon prefix: ${bHash.split("$")[0]}`);
-  const parts = bHash.split("$");
-  info(`  format: balloon$${parts[1]}(space)$${parts[2]}(time)$${parts[3]}(delta)$${parts[4].slice(0,8)}...(salt)$${parts[5].slice(0,16)}...(hash)`);
-  ok(await verifyPassword("my-password", bHash) ? "Balloon .verify() OK" : "FAILED");
-  ok(!await verifyPassword("wrong", bHash) ? "Balloon rejects wrong" : "FAILED");
+  const pbkdf2Hash = await hashPassword("my-password");
+  info(`Hash prefix: ${pbkdf2Hash.split("$")[0]}`);
+  const parts = pbkdf2Hash.split("$");
+  info(`  format: pbkdf2$${parts[1]}(iterations)$${parts[2].slice(0,8)}...(salt)$${parts[3].slice(0,16)}...(hash)`);
+  ok(await verifyPassword("my-password", pbkdf2Hash) ? "PBKDF2 .verify() OK" : "FAILED");
+  ok(!await verifyPassword("wrong", pbkdf2Hash) ? "PBKDF2 rejects wrong" : "FAILED");
 
-  // PBKDF2 (backward compat)
+  // Explicit iteration count
   const pHash = await hashPassword("legacy", 1000);
   info(`PBKDF2 prefix: ${pHash.split("$")[0]}`);
   ok(await verifyPassword("legacy", pHash) ? "PBKDF2 .verify() OK" : "FAILED");
 
-  // @hash annotation on insert also defaults to Balloon (tested via User model)
-  // Note: Production uses space=65536 (2MB).  The example skips annotation
-  // round-trip to keep runtime fast — see example.ts section 43 for API demo.
+  // @hash on insert uses the same PBKDF2 default. The example skips the
+  // annotation round-trip to keep runtime fast — see section 43 for the API demo.
 
   // ──────────────────────────────────────────────────────────────────────────
   // 44. @encrypt with .decrypt
@@ -1071,4 +1081,9 @@ async function main() {
   console.log("\n=== Done ===");
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error(err);
+  // Fail loudly. Previously this was `main().catch(console.error)`, which
+  // exited 0 on any crash — an unfalsifiable "test".
+  process.exitCode = 1;
+});

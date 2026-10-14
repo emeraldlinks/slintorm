@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { createHash } from "node:crypto";
 
 import { Migrator, type SchemaModel } from "./migrator.js";
+import { quoteIdentifier } from "./quoting.js";
 import type { DBDriver, ExecFn, SQLExecResult } from "./types.js";
 
 export interface MigrationUnit {
@@ -211,7 +212,10 @@ export async function runDataMigrations(options: {
       names.push(mig.name);
       count++;
     } catch (err) {
-      throw new Error(`Data migration "${mig.name}" failed: ${(err as any)?.message || err}`);
+      throw new Error(
+        `Data migration "${mig.name}" failed: ${(err as any)?.message || err}`,
+        { cause: err },
+      );
     }
   }
 
@@ -333,7 +337,7 @@ async function ensureMigrationsTable(exec: ExecFn, driver: string) {
 }
 
 function quoteId(driver: string, name: string): string {
-  return driver === "mysql" ? `\`${name}\`` : `"${name}"`;
+  return quoteIdentifier((driver as any) ?? "sqlite", name);
 }
 
 async function getApplied(exec: ExecFn, driver?: string): Promise<{ id: number; name: string; batch: number; run_at: string }[]> {

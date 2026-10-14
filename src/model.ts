@@ -1,11 +1,12 @@
 import { DBAdapter } from "./dbAdapter.js";
 import { Migrator } from "./migrator.js";
 import { QueryBuilder, mapBooleans } from "./queryBuilder.js";
+import { quoteIdentifier } from "./quoting.js";
 import { parseMaskAnnotation, applyMask } from "./mask.js";
 import { getRandomMeta, generateRandomFromAnnotation } from "./annotations.js";
 import { validateItem } from "./validations.js";
 import { applySecurityOnWrite, applySecurityOnRead } from "./security.js";
-import type { RelationDef, EntityWithUpdate } from "./types.js";
+import type { RelationDef, EntityWithUpdate, SQLExecResult } from "./types.js";
 import { SqlExpr } from "./types.js";
 import { AdvancedQueryBuilder } from "./extra_clauses.js";
 import { ExtendedQueryBuilder, Validator, ValidationError } from "./extensions.js";
@@ -23,9 +24,7 @@ import type { FieldRules } from "./extensions.js";
 //      a non-PK field.  [BUG FIX #1]
 
 function q(driver: string, col: string) {
-  if (driver === "postgres") return `"${col}"`;
-  if (driver === "mysql") return `\`${col}\``;
-  return col;
+  return quoteIdentifier((driver as any) ?? "sqlite", col);
 }
 
 function placeholder(driver: string, index: number) {
@@ -36,8 +35,10 @@ export type ModelAPI<T extends object> = {
   insert(item: T): Promise<EntityWithUpdate<T> | null>;
   update(filter: Partial<T>, partial: Partial<T>): Promise<EntityWithUpdate<T> | null>;
   delete(filter: Partial<T>): Promise<T | Partial<T>>;
+  forceDelete(filter: Partial<T>): Promise<SQLExecResult>;
+  restore(filter: Partial<T>): Promise<void>;
   get(filter: Partial<T>): Promise<EntityWithUpdate<T> | null>;
-  getAll(): Promise<T[]>;
+  getAll(filter?: Partial<T>, opts?: { withTrashed?: boolean }): Promise<T[]>;
   query(): ExtendedQueryBuilder<T>;
   count(filter?: Partial<T>): Promise<number>;
   sum(column: keyof T & string, filter?: Partial<T>): Promise<number>;
@@ -93,14 +94,33 @@ async function loadSchema(adapterDir: string) {
     }
     throw new Error(`No schema file found in ${base} (tried .json, .js, .ts)`);
   } catch (err: any) {
-    // node:fs unavailable → edge runtime
-    if (err?.code === "ERR_MODULE_NOT_FOUND" || /Cannot find module.*node:fs/.test(String(err))) {
+    // node:fs unavailable → edge runtime.
+    // The message differs per runtime: Node says "Cannot find module", Deno and
+    // Workers say "Module not found" / "No such module", so match on the
+    // failure rather than on Node's exact wording. Previously only Node's
+    // phrasing was matched and other runtimes got the raw error back.
+    const message = String(err?.message ?? err);
+    const isModuleError =
+      err?.code === "ERR_MODULE_NOT_FOUND" ||
+      err?.code === "MODULE_NOT_FOUND" ||
+      /cannot find (module|package)/i.test(message) ||
+      /\bmodule not found\b/i.test(message) ||
+      /\bno such module\b/i.test(message) ||
+      /not implemented.*import/i.test(message) ||
+      /dynamically import|importing .* is not supported/i.test(message);
+
+    if (isModuleError) {
       throw new Error(
         "SlintORM: cannot load schema from disk in this runtime.\n" +
         "Generate the schema at build time (`npx slintorm generate`) and pass it " +
         "as the `schema` option:\n\n" +
-        "  import schema from './src/schema/generated.json' assert { type: 'json' };\n" +
-        "  const orm = new ORMManager({ driver: 'postgres', databaseUrl, schema });\n"
+        "  import schema from './src/schema/generated.json' with { type: 'json' };\n" +
+        "  const orm = new ORMManager({ driver: 'postgres', databaseUrl, schema });\n\n" +
+        "On a socketless runtime (Vercel Edge, Cloudflare Workers, Deno) use the\n" +
+        "PostgREST driver instead — it needs only fetch:\n\n" +
+        "  import ORMManager from 'slintorm/edge';\n" +
+        "  new ORMManager({ driver: 'postgrest', postgrestUrl, postgrestKey, schema });\n",
+        { cause: err },
       );
     }
     throw err;
@@ -172,25 +192,127 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       return merged;
     }
 
-    const driver = adapter.driver as "sqlite" | "postgres" | "mysql" | "mongodb" | undefined;
+    const driver = adapter.driver as "sqlite" | "postgres" | "mysql" | "mongodb" | "postgrest" | undefined;
     const migrator = new Migrator(adapter.exec.bind(adapter), sqlDriver);
 
+    const isPostgrest = driver === "postgrest";
+
+    const softDeleteEnabled = Object.values(modelSchema?.fields || {}).some((f: any) => {
+      const m = f?.meta;
+      return !!(m?.softDelete || m?.["@softDelete"]);
+    });
+    const softDeleteField = Object.keys(modelSchema?.fields || {}).find((k) => {
+      const m = (modelSchema.fields as any)[k]?.meta;
+      return !!(m?.softDelete || m?.["@softDelete"]);
+    }) ?? "deletedAt";
+
+    /** Build a PostgREST command from a plain filter object + data.
+     *  PostgREST is the edge path — Postgres over HTTP via fetch. */
+    const pgCmd = (
+      op: "select" | "insert" | "update" | "delete",
+      o: {
+        filter?: Record<string, any>;
+        select?: string[];
+        data?: any;
+        limit?: number;
+        offset?: number;
+        single?: boolean;
+        count?: boolean;
+        returning?: boolean;
+      } = {},
+    ) => {
+      const filters = Object.entries(o.filter ?? {}).map(([column, value]) => ({
+        column,
+        op: value === null ? "IS" : "=",
+        value,
+      }));
+      if (softDeleteEnabled && op === "select" && !(o.filter ?? {})[softDeleteField]) {
+        filters.push({ column: softDeleteField, op: "IS", value: null });
+      }
+      return JSON.stringify({
+        op,
+        table: tableName,
+        select: o.select ?? ["*"],
+        filters,
+        limit: o.limit,
+        offset: o.offset,
+        data: o.data,
+        single: o.single,
+        count: o.count ? "exact" : undefined,
+        returning: o.returning,
+      });
+    };
+
     async function ensure(item?: Partial<T>) {
+      // PostgREST is schema-first and stateless: there is no DDL to run, and
+      // tables are managed by migrations outside the request path.
+      if (isPostgrest) return;
       const schemaForTable = buildSchemaForItem(item);
       await migrator.ensureTable(tableName, schemaForTable?.fields || {}, schemaForTable?.relations);
     }
 
-    const q = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
+    /** Adds `deletedAt IS NULL` when the model is soft-delete and the caller
+     *  has not opted into seeing deleted rows. */
+    function applySoftDeleteFilter(
+      where: Record<string, any>,
+      withTrashed?: boolean,
+    ): Record<string, any> {
+      if (!softDeleteEnabled || withTrashed) return where;
+      return { ...where, [softDeleteField]: null };
+    }
+
+    const q = (c: string) => quoteIdentifier((driver as any) ?? "sqlite", c);
+
+    /**
+     * Known columns for this model, used to validate filter keys.
+     *
+     * Filter keys come from `Object.keys(filter)` and land in an IDENTIFIER
+     * position. Quote escaping alone is not enough here: a key like
+     * `name" OR 1=1 OR "` would previously terminate the identifier even when
+     * escaped-by-doubling is applied correctly only if the value itself were
+     * untrusted. Since filters are routinely built from request bodies
+     * (`Model.getAll(req.body)`), the key set must be constrained to columns
+     * this model actually declares.
+     */
+    const knownColumns = (): Set<string> =>
+      new Set(Object.keys(modelSchema?.fields || {}));
+
+    function assertFilterKeysAllowed(keys: string[], filter: Record<string, any>) {
+      const known = knownColumns();
+      if (known.size === 0) return; // No declared schema — nothing to check against.
+      const unknown = keys.filter((k) => !known.has(k));
+      if (unknown.length > 0) {
+        throw new Error(
+          `Unknown field(s) in filter for model "${name}": ${unknown.map((k) => JSON.stringify(k)).join(", ")}.\n` +
+            `Known fields: ${[...known].join(", ")}.\n` +
+            `This is almost always an unvalidated request body reaching the ORM.`,
+        );
+      }
+    }
 
     function buildWhereClause(filter: Partial<T>) {
       const keys = Object.keys(filter);
       if (!keys.length) throw new Error("Filter must contain at least one field");
       if (driver === "mongodb") return { mongoFilter: filter };
+      assertFilterKeysAllowed(keys, filter as Record<string, any>);
       const isPg = driver === "postgres";
-      const clause = keys
-        .map((k, i) => `${q(k)} = ${isPg ? `$${i + 1}` : "?"}`)
-        .join(" AND ");
-      const params = keys.map((k) => filter[k as keyof T]);
+
+      // A null/undefined value must become `IS NULL`, never `= ?`.
+      // In SQL, `col = NULL` evaluates to UNKNOWN and therefore matches no
+      // rows at all, so `{ deletedAt: null }` silently returned an empty set.
+      // `IS NULL` is what a caller writing that filter always meant.
+      const parts: string[] = [];
+      const params: any[] = [];
+      for (const k of keys) {
+        const v = (filter as Record<string, any>)[k];
+        if (v === null || v === undefined) {
+          parts.push(`${q(k)} IS NULL`);
+          continue;
+        }
+        params.push(v);
+        parts.push(`${q(k)} = ${isPg ? `$${params.length}` : "?"}`);
+      }
+      const clause = parts.join(" AND ");
       return { clause, params };
     }
 
@@ -343,13 +465,31 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
         validateItem(item, modelSchema?.fields);
         const rawSecret = captureRawSecret(item as unknown as Record<string, unknown>);
-        item = await applySecurityOnWrite(item as unknown as Record<string, unknown>, modelSchema?.fields, encryptionKey) as unknown as T;
+        item = await applySecurityOnWrite(
+          item as unknown as Record<string, unknown>,
+          modelSchema?.fields,
+          encryptionKey,
+          { table: tableName, rowId: (item as any)?.[modelSchema?.primaryKey || "id"] ?? null },
+        ) as unknown as T;
 
         let insertedId: number | undefined;
 
         const pkFieldName = modelSchema?.primaryKey || "id";
         const pkFieldMeta = modelSchema.fields?.[pkFieldName]?.meta;
         const isRandomPk = pkFieldMeta && (pkFieldMeta.random || pkFieldMeta["@random"]);
+
+        if (isPostgrest) {
+          // PostgREST returns the inserted row when asked (Prefer:
+          // return=representation), so the PK comes back without a re-read.
+          const payload = stripOmitDb(item as Record<string, any>, modelSchema?.fields) as Record<string, any>;
+          const result = await adapter.exec(pgCmd("insert", { data: payload, returning: true }));
+          const row = result?.rows?.[0] ?? payload;
+          const cleaned = stripOmitJson(stripOmitDb(row, modelSchema?.fields), modelSchema.fields);
+          if (Object.keys(rawSecret).length) Object.assign(cleaned, rawSecret);
+          const pk = modelSchema?.primaryKey || "id";
+          if (hooks?.onCreateAfter) await hooks.onCreateAfter(cleaned);
+          return attachEntityMethods(cleaned as unknown as T, { [pk]: (cleaned as any)[pk] } as Partial<T>, this);
+        }
 
         if (driver === "mongodb") {
           const result = await adapter.exec(JSON.stringify({ collection: tableName, action: "insert", data: [item] }));
@@ -378,7 +518,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
             if (typeof value === "object") return isJsonField(c);
             return true;
           });
-          const wrap = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
+          const wrap = (c: string) => quoteIdentifier((driver as any) ?? "sqlite", c);
           const phAndParams: { ph: string; p: any[] }[] = [];
           const pgIndex = { current: 0 };
           for (const c of cols) {
@@ -451,7 +591,34 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
         validateItem(data, modelSchema?.fields);
         const rawSecret = captureRawSecret(data as unknown as Record<string, unknown>);
-        data = await applySecurityOnWrite(data as unknown as Record<string, unknown>, modelSchema?.fields, encryptionKey) as unknown as Partial<T>;
+        // The PK is known on UPDATE, so @encrypt fields bind per-record.
+        data = await applySecurityOnWrite(
+          data as unknown as Record<string, unknown>,
+          modelSchema?.fields,
+          encryptionKey,
+          {
+            table: tableName,
+            rowId:
+              (data as any)?.[modelSchema?.primaryKey || "id"] ??
+              (before as any)?.[modelSchema?.primaryKey || "id"] ??
+              (where as any)?.[modelSchema?.primaryKey || "id"] ??
+              null,
+          },
+        ) as unknown as Partial<T>;
+
+        if (isPostgrest) {
+          const payload = stripOmitDb(data as Record<string, any>, modelSchema?.fields) as Record<string, any>;
+          const result = await adapter.exec(
+            pgCmd("update", { filter: where as Record<string, any>, data: payload, returning: true }),
+          );
+          const row = result?.rows?.[0];
+          if (!row) return null;
+          const cleaned = stripOmitJson(stripOmitDb(row, modelSchema?.fields), modelSchema.fields);
+          if (Object.keys(rawSecret).length) Object.assign(cleaned, rawSecret);
+          if (hooks?.onUpdateAfter) await hooks.onUpdateAfter(before, data);
+          const pk = modelSchema?.primaryKey || "id";
+          return attachEntityMethods(cleaned as unknown as T, { [pk]: (cleaned as any)[pk] } as Partial<T>, this);
+        }
 
         if (driver === "mongodb") {
           await adapter.exec(JSON.stringify({ collection: tableName, action: "update", filter: where, data }));
@@ -497,7 +664,17 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         const toDelete = needsRecord ? await this.get(filter) : null;
         await emit("beforeDelete", null, filter);
         if (hooks?.onDeleteBefore) await hooks.onDeleteBefore(toDelete || filter);
-        if (driver === "mongodb") {
+
+        // @softDelete means "mark deleted", not "erase". delete() previously
+        // issued a hard DELETE unconditionally, so `restore()` could never
+        // bring the row back — it updated a row that no longer existed. That
+        // is silent data loss for any model annotated @softDelete, and
+        // restore()/excludeDeleted() both already spoke in terms of deletedAt.
+        if (softDeleteEnabled) {
+          await this.updateMany(filter, { deletedAt: new Date().toISOString() } as any);
+        } else if (isPostgrest) {
+          await adapter.exec(pgCmd("delete", { filter: filter as Record<string, any> }));
+        } else if (driver === "mongodb") {
           await adapter.exec(JSON.stringify({ collection: tableName, action: "delete", filter }));
         } else {
           const { clause, params } = buildWhereClause(filter) as { clause: string; params: any[] };
@@ -508,15 +685,37 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         return toDelete || filter;
       },
 
-      async get(filter: Partial<T>) {
-        if (!Object.keys(filter).length) throw new Error("Get filter cannot be empty");
-        let record: T | null = null;
-
+      /** Permanently remove rows. On a @softDelete model `delete()` only hides
+       *  them, so this is needed to actually reclaim the storage. */
+      async forceDelete(filter: Partial<T>) {
+        if (!Object.keys(filter).length) throw new Error("forceDelete filter cannot be empty");
+        if (isPostgrest) {
+          return await adapter.exec(pgCmd("delete", { filter: filter as Record<string, any> }));
+        }
         if (driver === "mongodb") {
-          const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "find", filter }));
+          return await adapter.exec(JSON.stringify({ collection: tableName, action: "delete", filter }));
+        }
+        const { clause, params } = buildWhereClause(filter) as { clause: string; params: any[] };
+        return await adapter.exec(`DELETE FROM ${q(tableName)} WHERE ${clause}`, params);
+      },
+
+      async get(filter: Partial<T>, opts?: { withTrashed?: boolean }) {
+        if (!Object.keys(filter).length) throw new Error("Get filter cannot be empty");
+        // Reads ensure the table too. Only writes used to, so `insert()`
+        // auto-created a table that `getAll()` then reported as missing —
+        // the two halves of the same model behaved differently.
+        await ensure();
+        let record: T | null = null;
+        const where = applySoftDeleteFilter(filter as Record<string, any>, opts?.withTrashed);
+
+        if (isPostgrest) {
+          const res = await adapter.exec(pgCmd("select", { filter: where, limit: 1 }));
+          record = res.rows[0] || null;
+        } else if (driver === "mongodb") {
+          const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "find", filter: where }));
           record = res.rows[0] || null;
         } else {
-          const { clause, params } = buildWhereClause(filter) as { clause: string; params: any[] };
+          const { clause, params } = buildWhereClause(where as Partial<T>) as { clause: string; params: any[] };
           const res = await adapter.exec(`SELECT * FROM ${q(tableName)} WHERE ${clause} LIMIT 1`, params);
           record = res.rows[0] || null;
         }
@@ -530,7 +729,12 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         record = stripOmitDb(record, modelSchema.fields);
         record = stripOmitJson(record, modelSchema.fields);
         record = applyMasks(record, modelSchema.fields);
-        record = await applySecurityOnRead(record as unknown as Record<string, unknown>, modelSchema.fields, encryptionKey) as unknown as T;
+        record = await applySecurityOnRead(
+          record as unknown as Record<string, unknown>,
+          modelSchema.fields,
+          encryptionKey,
+          { table: tableName, rowId: (record as any)?.[modelSchema?.primaryKey || "id"] ?? null },
+        ) as unknown as T;
 
         const pkField = modelSchema?.primaryKey || "id";
         const pkValue = (record as any)[pkField];
@@ -541,14 +745,46 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         return attachEntityMethods(record, stableFilter, this);
       },
 
-      async getAll() {
-        const res = driver === "mongodb"
-          ? await adapter.exec(JSON.stringify({ collection: tableName, action: "find" }))
-          : await adapter.exec(`SELECT * FROM ${q(tableName)}`);
+      async getAll(filter?: Partial<T>, opts?: { withTrashed?: boolean }) {
+        // Previously this took NO arguments and emitted no WHERE clause, so
+        // `Model.getAll(req.body)` or `getAll({ tenantId })` silently returned
+        // the entire table. Callers going through `any`, a spread, or plain JS
+        // got every row with no error. It now accepts a filter, and a caller
+        // who passes one gets it applied.
+        if (arguments.length > 2) {
+          throw new Error(
+            `getAll() takes at most (filter?, opts?). Got ${arguments.length} arguments. ` +
+            `Did you mean to use query().where(...)?`,
+          );
+        }
+        await ensure();
+        const where = applySoftDeleteFilter(
+          (filter ?? {}) as Record<string, any>,
+          opts?.withTrashed,
+        );
+        assertFilterKeysAllowed(Object.keys(where), where);
+
+        const res = isPostgrest
+          ? await adapter.exec(pgCmd("select", { filter: where }))
+          : driver === "mongodb"
+          ? await adapter.exec(JSON.stringify({ collection: tableName, action: "find", filter: where }))
+          : Object.keys(where).length
+            ? await (async () => {
+                const { clause, params } = buildWhereClause(where as Partial<T>) as {
+                  clause: string; params: any[];
+                };
+                return adapter.exec(`SELECT * FROM ${q(tableName)} WHERE ${clause}`, params);
+              })()
+            : await adapter.exec(`SELECT * FROM ${q(tableName)}`);
         const rows = await Promise.all(res.rows.map(async (r: T) => {
           const row = mapJson(mapBooleans(r, modelSchema.fields), modelSchema.fields);
           const cleaned = applyMasks(stripOmitJson(stripOmitDb(row, modelSchema.fields), modelSchema.fields), modelSchema.fields);
-          return await applySecurityOnRead(cleaned as unknown as Record<string, unknown>, modelSchema.fields, encryptionKey) as unknown as T;
+          return await applySecurityOnRead(
+            cleaned as unknown as Record<string, unknown>,
+            modelSchema.fields,
+            encryptionKey,
+            { table: tableName, rowId: (cleaned as any)?.[modelSchema?.primaryKey || "id"] ?? null },
+          ) as unknown as T;
         }));
         return rows.map((r) => attachEntityMethods(r, filterFromRecord(r), this));
       },
@@ -564,38 +800,76 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           {
             dialect: adapter.driver,
             wrapEntity: async (r: T) => {
-              const secured = await applySecurityOnRead(r as unknown as Record<string, unknown>, modelSchema?.fields, encryptionKey) as unknown as T;
+              const secured = await applySecurityOnRead(
+                r as unknown as Record<string, unknown>,
+                modelSchema?.fields,
+                encryptionKey,
+                { table: tableName, rowId: (r as any)?.[modelSchema?.primaryKey || "id"] ?? null },
+              ) as unknown as T;
               return attachEntityMethods(secured, filterFromRecord(secured), self);
             },
           }
         );
       },
 
-      async count(filter?: Partial<T>) {
+      async count(filter?: Partial<T>, opts?: { withTrashed?: boolean }) {
+        await ensure();
+        const where = applySoftDeleteFilter((filter ?? {}) as Record<string, any>, opts?.withTrashed);
+        if (isPostgrest) {
+          // PostgREST returns the total in Content-Range when asked
+          // (Prefer: count=exact); fall back to fetching rows if unavailable.
+          const res = await adapter.exec(pgCmd("select", { filter: where, limit: 1, count: true }));
+          const total = (res as any).total;
+          if (typeof total === "number") return total;
+          const all = await adapter.exec(pgCmd("select", { filter: where, select: ["*"], count: true }));
+          return (all as any).total ?? all.rows.length;
+        }
         if (driver === "mongodb") {
-          const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "find", filter: filter ?? {} }));
+          const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "find", filter: where }));
           return res.rows.length;
         }
-        const isPg = driver === "postgres";
-        const keys = filter ? Object.keys(filter) : [];
-        const whereClause = keys.length
-          ? "WHERE " + keys.map((k, i) => `${q(k)} = ${isPg ? `$${i + 1}` : "?"}`).join(" AND ")
-          : "";
-        const res = await adapter.exec(`SELECT COUNT(*) as count FROM ${q(tableName)} ${whereClause}`, keys.map((k) => (filter as any)[k]));
+        // Reuse buildWhereClause rather than rebuilding the clause inline — the
+        // inline version skipped the schema allowlist and emitted `col = NULL`
+        // (never true in SQL), so count() disagreed with get()/query().
+        const hasFilter = Object.keys(where).length > 0;
+        const { clause, params } = hasFilter
+          ? buildWhereClause(where as Partial<T>) as { clause: string; params: any[] }
+          : { clause: "", params: [] as any[] };
+        const res = await adapter.exec(
+          `SELECT COUNT(*) as count FROM ${q(tableName)}${clause ? " WHERE " + clause : ""}`,
+          params,
+        );
         return parseInt(res.rows?.[0]?.count ?? "0", 10);
       },
 
-      async exists(filter: Partial<T>) {
-        if (driver === "mongodb") {
-          const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "find", filter: filter ?? {}, limit: 1 }));
+      async exists(filter: Partial<T>, opts?: { withTrashed?: boolean }) {
+        await ensure();
+        const where = applySoftDeleteFilter(filter as Record<string, any>, opts?.withTrashed);
+        if (isPostgrest) {
+          const res = await adapter.exec(pgCmd("select", { filter: where, limit: 1 }));
           return !!res.rows.length;
         }
-        const { clause, params } = buildWhereClause(filter) as { clause: string; params: any[] };
+        if (driver === "mongodb") {
+          const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "find", filter: where, limit: 1 }));
+          return !!res.rows.length;
+        }
+        const { clause, params } = buildWhereClause(where as Partial<T>) as { clause: string; params: any[] };
         const res = await adapter.exec(`SELECT 1 FROM ${q(tableName)} WHERE ${clause} LIMIT 1`, params);
         return !!res.rows.length;
       },
 
       async truncate() {
+        if (isPostgrest) {
+          // PostgREST has no "delete everything" shortcut that is safe to
+          // express as one request; delete by the primary key in batches.
+          const pk = modelSchema?.primaryKey || "id";
+          const res = await adapter.exec(pgCmd("select", { select: [pk] }));
+          const ids = res.rows.map((r: any) => r[pk]).filter((v: any) => v != null);
+          for (const id of ids) {
+            await adapter.exec(pgCmd("delete", { filter: { [pk]: id } }));
+          }
+          return ids.length;
+        }
         if (driver === "mongodb") {
           await adapter.exec(JSON.stringify({ collection: tableName, action: "delete", filter: {} }));
         } else {
@@ -623,11 +897,32 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           validateItem(row, modelSchema?.fields);
         }
         const rawSecrets = prepared.map((row) => captureRawSecret(row));
-        for (const row of prepared) {
-          await applySecurityOnWrite(row as unknown as Record<string, unknown>, modelSchema?.fields, encryptionKey);
+
+        if (isPostgrest) {
+          // PostgREST accepts an array body for a single bulk INSERT.
+          const payload = prepared.map((row) =>
+            stripOmitDb(row as Record<string, any>, modelSchema?.fields),
+          );
+          const result = await adapter.exec(pgCmd("insert", { data: payload, returning: true }));
+          const rowsOut = (result.rows.length ? result.rows : payload) as T[];
+          return rowsOut.map((row: any, i: number) => {
+            const cleaned = stripOmitJson(stripOmitDb(row, modelSchema?.fields), modelSchema.fields);
+            if (rawSecrets[i] && Object.keys(rawSecrets[i]).length) Object.assign(cleaned, rawSecrets[i]);
+            const pk = modelSchema?.primaryKey || "id";
+            return attachEntityMethods(cleaned as unknown as T, { [pk]: (cleaned as any)[pk] } as Partial<T>, this);
+          });
         }
 
-        const w = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
+        for (const row of prepared) {
+          await applySecurityOnWrite(
+            row as unknown as Record<string, unknown>,
+            modelSchema?.fields,
+            encryptionKey,
+            { table: tableName, rowId: (row as any)?.[modelSchema?.primaryKey || "id"] ?? null },
+          );
+        }
+
+        const w = (c: string) => quoteIdentifier((driver as any) ?? "sqlite", c);
         const cols = Object.keys(prepared[0]).filter((c) => {
           if (isOmitDb(modelSchema.fields?.[c])) return false;
           return prepared[0][c] !== undefined;
@@ -749,7 +1044,21 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         if ((data as any).updatedAt === undefined) (data as any).updatedAt = now;
 
         validateItem(data, modelSchema?.fields);
-        data = await applySecurityOnWrite(data as unknown as Record<string, unknown>, modelSchema?.fields, encryptionKey) as unknown as Partial<T>;
+        // updateMany has no single PK, so @encrypt binds at table level only.
+        data = await applySecurityOnWrite(
+          data as unknown as Record<string, unknown>,
+          modelSchema?.fields,
+          encryptionKey,
+          { table: tableName, rowId: (data as any)?.[modelSchema?.primaryKey || "id"] ?? null },
+        ) as unknown as Partial<T>;
+
+        if (isPostgrest) {
+          const payload = stripOmitDb(data as Record<string, any>, modelSchema?.fields);
+          const res = await adapter.exec(
+            pgCmd("update", { filter: filter as Record<string, any>, data: payload, returning: true }),
+          );
+          return res.changes ?? 0;
+        }
 
         if (driver === "mongodb") {
           const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "update", filter, data }));
@@ -757,29 +1066,56 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         }
 
         const isPg = driver === "postgres";
-        const w = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
         const setCols = Object.keys(data).filter((c) => !isOmitDb(modelSchema.fields?.[c]));
-        const whereCols = Object.keys(filter);
-        const setClause = setCols.map((c, i) => `${w(c)} = ${isPg ? `$${i + 1}` : "?"}`).join(", ");
-        const whereClause = whereCols.map((c, i) => `${w(c)} = ${isPg ? `$${setCols.length + i + 1}` : "?"}`).join(" AND ");
+        const setClause = setCols.map((c, i) => `${q(c)} = ${isPg ? `$${i + 1}` : "?"}`).join(", ");
+
+        // The WHERE side previously built its clause inline with a LOCAL `w()`
+        // quoter (a seventh divergent copy of quoteIdentifier) and applied no
+        // schema allowlist — so an unknown filter key reached an identifier
+        // position here too, and `col = NULL` never matched. Reuse the shared
+        // quoter and the allowlist.
+        assertFilterKeysAllowed(Object.keys(filter), filter as Record<string, any>);
+        const offset = setCols.length;
+        const whereParts: string[] = [];
+        const whereParams: any[] = [];
+        for (const c of Object.keys(filter)) {
+          const v = (filter as Record<string, any>)[c];
+          if (v === null || v === undefined) {
+            whereParts.push(`${q(c)} IS NULL`);
+            continue;
+          }
+          whereParams.push(v);
+          whereParts.push(`${q(c)} = ${isPg ? `$${offset + whereParams.length}` : "?"}`);
+        }
         const res = await adapter.exec(
-          `UPDATE ${w(tableName)} SET ${setClause} WHERE ${whereClause}`,
-          [...setCols.map((c) => serializeValue(c, (data as any)[c])), ...whereCols.map((c) => (filter as any)[c])]
+          `UPDATE ${q(tableName)} SET ${setClause} WHERE ${whereParts.join(" AND ")}`,
+          [...setCols.map((c) => serializeValue(c, (data as any)[c])), ...whereParams]
         );
         return res.changes ?? 0;
       },
 
       async deleteMany(filter: Partial<T>) {
         if (!Object.keys(filter).length) throw new Error("deleteMany filter cannot be empty");
+        if (isPostgrest) {
+          const res = await adapter.exec(pgCmd("delete", { filter: filter as Record<string, any> }));
+          return res.changes ?? 0;
+        }
         if (driver === "mongodb") {
           const res = await adapter.exec(JSON.stringify({ collection: tableName, action: "delete", filter }));
           return res.changes ?? 0;
         }
+        const w = (c: string) => quoteIdentifier((driver as any) ?? "sqlite", c);
         const isPg = driver === "postgres";
-        const w = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
-        const whereCols = Object.keys(filter);
-        const whereClause = whereCols.map((c, i) => `${w(c)} = ${isPg ? `$${i + 1}` : "?"}`).join(" AND ");
-        const res = await adapter.exec(`DELETE FROM ${w(tableName)} WHERE ${whereClause}`, whereCols.map((c) => (filter as any)[c]));
+        assertFilterKeysAllowed(Object.keys(filter), filter as Record<string, any>);
+        const whereParts: string[] = [];
+        const whereParams: any[] = [];
+        for (const c of Object.keys(filter)) {
+          const v = (filter as Record<string, any>)[c];
+          if (v === null || v === undefined) { whereParts.push(`${w(c)} IS NULL`); continue; }
+          whereParams.push(v);
+          whereParts.push(`${w(c)} = ${isPg ? `$${whereParams.length}` : "?"}`);
+        }
+        const res = await adapter.exec(`DELETE FROM ${w(tableName)} WHERE ${whereParts.join(" AND ")}`, whereParams);
         return res.changes ?? 0;
       },
 

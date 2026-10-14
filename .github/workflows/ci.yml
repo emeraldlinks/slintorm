@@ -1,0 +1,180 @@
+name: CI
+
+# Runs on pull requests as well as pushes — previously the only trigger was
+# push-to-main, so fork PRs bypassed every check.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Do not publish-style permissions here; read-only is enough.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Typecheck + build, no database required ───────────────────────────
+  build:
+    name: build (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Type tests
+        run: npm run test:types
+      - name: Lint
+        run: npm run lint
+      - name: Verify no credentials in the published bundle
+        run: |
+          if grep -rEi 'postgres(ql)?://[^"'"'"'[:space:]]+:[^"'"'"'[:space:]]+@|mongodb(\+srv)?://[^"'"'"'[:space:]]+:[^"'"'"'[:space:]]+@' dist/ ; then
+            echo "::error::A connection string with inline credentials was found in dist/."
+            exit 1
+          fi
+          echo "dist/ is credential-free."
+
+  # ── Edge (PostgREST) ──────────────────────────────────────────────────
+  # Always runs, no credentials needed: PostgREST is tested against a mock HTTP
+  # server. This is the path that makes Vercel Edge / Workers / Deno work, so it
+  # is gated on every PR rather than being treated as optional.
+  edge:
+    name: test · edge (postgrest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+      - name: PostgREST / edge suite
+        run: node --import tsx/esm src/postgrest.test.ts
+      - name: The edge entry must load with no Node built-ins available
+        run: |
+          node -e "
+            const mods = ['./dist/src/browser.js', './dist/src/postgrest.js'];
+            (async () => {
+              for (const m of mods) {
+                await import(m);
+                console.log('  ok  ' + m);
+              }
+            })().catch(e => { console.error('  FAIL', m, e.message); process.exit(1); });
+          "
+  sqlite:
+    name: test · sqlite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run test:sqlite
+      - name: Coverage
+        run: npm run coverage:check
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────
+  # This job is the one that would have caught HIGH-1/2/3 (RLS) — every RLS
+  # bug lived in Postgres code the old CI never loaded.
+  postgres:
+    name: test · postgres ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["16", "17"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.version }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: slintorm_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PG_ONLY: "1"
+      PG_URL: postgresql://postgres:postgres@localhost:5432/slintorm_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run test:pg
+
+  # ── MySQL ─────────────────────────────────────────────────────────────
+  # MySQL was implemented and advertised in the README's opening line but had
+  # zero tests and no CI job at all.
+  mysql:
+    name: test · mysql ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["8.0"]
+    services:
+      mysql:
+        image: mysql:${{ matrix.version }}
+        env:
+          MYSQL_ROOT_PASSWORD: mysql
+          MYSQL_DATABASE: slintorm_test
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pmysql"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MYSQL_ONLY: "1"
+      MYSQL_URL: mysql://root:mysql@127.0.0.1:3306/slintorm_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run test:mysql
+
+  # ── MongoDB ───────────────────────────────────────────────────────────
+  mongodb:
+    name: test · mongodb ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["7"]
+    services:
+      mongodb:
+        image: mongo:${{ matrix.version }}
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MONGO_ONLY: "1"
+      MONGO_URL: mongodb://localhost:27017
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run test:mongo

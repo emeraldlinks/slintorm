@@ -1,5 +1,6 @@
 // ==== IMPORTS ====
 import type { ExecFn } from "./types.ts";
+import { quoteIdentifier, quoteLiteral } from "./quoting.js";
 import { tsTypeToSqlType } from "./utils.js";
 
 // ==== INTERFACES ====
@@ -56,6 +57,13 @@ export class Migrator {
   constructor(exec: ExecFn, driver?: "sqlite" | "postgres" | "mysql" | "mongodb") {
     this.exec = exec;
     this.driver = driver || "sqlite";
+  }
+
+  /** Quote a table/column identifier for DDL.
+   *  DDL previously interpolated `"${name}"` raw, so an identifier containing
+   *  the dialect's delimiter produced invalid (or unsafe) SQL. */
+  private qt(name: string): string {
+    return quoteIdentifier(this.driver as any, name);
   }
 
   // ----------------------------------------------------------------
@@ -324,7 +332,7 @@ export class Migrator {
 
       // ---- ASSEMBLE COL DEF -----------------------------------------
       const parts = [
-        `"${col}"`,
+        `${this.qt(col)}`,
         sqlType,
         pkFragment,
         nullFrag,
@@ -342,7 +350,7 @@ export class Migrator {
       const comment = this.m(meta, "comment");
       if (comment && this.driver === "postgres") {
         commentSql.push(
-          `COMMENT ON COLUMN "${table}"."${col}" IS '${String(comment).replace(/'/g, "''")}'`
+          `COMMENT ON COLUMN ${this.qt(table)}.${this.qt(col)} IS '${String(comment).replace(/'/g, "''")}'`
         );
       }
 
@@ -360,7 +368,7 @@ export class Migrator {
           whereClause = ` WHERE ${whereMatch[1]}`;
         }
         indexSql.push(
-          `CREATE ${uniquePrefix}INDEX IF NOT EXISTS idx_${table}_${col} ON "${table}"("${col}")${whereClause}`
+          `CREATE ${uniquePrefix}INDEX IF NOT EXISTS ${this.qt(`idx_${table}_${col}`)} ON ${this.qt(table)}(${this.qt(col)})${whereClause}`
         );
       }
 
@@ -368,11 +376,11 @@ export class Migrator {
       if (isUnique) {
         if (!exists) {
           inlineConstraints.push(
-            `CONSTRAINT unq_${table}_${col} UNIQUE ("${col}")`
+            `CONSTRAINT ${this.qt(`unq_${table}_${col}`)} UNIQUE (${this.qt(col)})`
           );
         } else {
           postConstraints.push(
-            `ALTER TABLE "${table}" ADD CONSTRAINT unq_${table}_${col} UNIQUE ("${col}")`
+            `ALTER TABLE ${this.qt(table)} ADD CONSTRAINT ${this.qt(`unq_${table}_${col}`)} UNIQUE (${this.qt(col)})`
           );
         }
       }
@@ -392,15 +400,51 @@ export class Migrator {
         const matchVal   = this.m(meta, "match");
         const deferrable = this.hasM(meta, "deferrable");
 
+        // Referential actions are a closed set in SQL. Interpolating the
+        // annotation value raw meant a malformed `@onDelete` produced invalid
+        // or unsafe DDL.
+        const FK_ACTIONS = new Set([
+          "NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT",
+        ]);
+        const FK_MATCH = new Set(["FULL", "PARTIAL", "SIMPLE"]);
+
+        const action = (v: string | undefined, what: string): string | null => {
+          if (v == null || v === "") return null;
+          const up = String(v).trim().toUpperCase();
+          if (!FK_ACTIONS.has(up)) {
+            throw new Error(
+              `Invalid ${what} referential action ${JSON.stringify(v)} on ${this.driver}. ` +
+              `Expected one of: ${[...FK_ACTIONS].join(", ")}.`,
+            );
+          }
+          return up;
+        };
+
+        const onDeleteA = action(onDelete, "ON DELETE");
+        const onUpdateA = action(onUpdate, "ON UPDATE");
+        const matchA =
+          matchVal == null || matchVal === ""
+            ? null
+            : (() => {
+                const up = String(matchVal).trim().toUpperCase();
+                if (!FK_MATCH.has(up)) {
+                  throw new Error(
+                    `Invalid MATCH ${JSON.stringify(matchVal)} on ${this.driver}. ` +
+                    `Expected one of: ${[...FK_MATCH].join(", ")}.`,
+                  );
+                }
+                return up;
+              })();
+
         const fkStmt =
-          `FOREIGN KEY ("${col}") REFERENCES "${fkRef}"(id)` +
-          (onDelete   ? ` ON DELETE ${onDelete}`  : "") +
-          (onUpdate   ? ` ON UPDATE ${onUpdate}`  : "") +
-          (matchVal   ? ` MATCH ${matchVal}`      : "") +
+          `FOREIGN KEY (${this.qt(col)}) REFERENCES ${this.qt(fkRef)}(id)` +
+          (onDeleteA ? ` ON DELETE ${onDeleteA}`  : "") +
+          (onUpdateA ? ` ON UPDATE ${onUpdateA}`  : "") +
+          (matchA    ? ` MATCH ${matchA}`         : "") +
           (deferrable ? " DEFERRABLE INITIALLY DEFERRED" : "");
 
         if (!exists) inlineConstraints.push(fkStmt);
-        else         postConstraints.push(`ALTER TABLE "${table}" ADD ${fkStmt}`);
+        else         postConstraints.push(`ALTER TABLE ${this.qt(table)} ADD ${fkStmt}`);
       }
     }
 
@@ -415,7 +459,7 @@ export class Migrator {
       }
 
       const createSQL =
-        `CREATE TABLE IF NOT EXISTS "${table}" (\n` +
+        `CREATE TABLE IF NOT EXISTS ${this.qt(table)} (\n` +
         colsSql.concat(inlineConstraints).join(",\n") +
         `\n);`;
       await this.exec(createSQL);
@@ -432,7 +476,7 @@ export class Migrator {
         if (validCols.has(existingCol)) continue;
         if (["createdat", "updatedat", "deletedat"].includes(existingCol)) continue;
         try {
-          await this.exec(`ALTER TABLE "${table}" DROP COLUMN "${existingCol}"`);
+          await this.exec(`ALTER TABLE ${this.qt(table)} DROP COLUMN ${this.qt(existingCol)}`);
         } catch {}
       }
 
@@ -442,7 +486,7 @@ export class Migrator {
           const oldName = String(renameVal).toLowerCase();
           if (existingCols.includes(oldName) && !existingCols.includes(col.toLowerCase())) {
             try {
-              await this.exec(`ALTER TABLE "${table}" RENAME COLUMN "${oldName}" TO "${col}"`);
+              await this.exec(`ALTER TABLE ${this.qt(table)} RENAME COLUMN ${this.qt(oldName)} TO ${this.qt(col)}`);
             } catch {}
           }
         }
@@ -464,7 +508,7 @@ export class Migrator {
         }
 
         try {
-          await this.exec(`ALTER TABLE "${table}" ADD COLUMN ${safeColDef}`);
+          await this.exec(`ALTER TABLE ${this.qt(table)} ADD COLUMN ${safeColDef}`);
         } catch {}
       }
     }
@@ -506,9 +550,9 @@ export class Migrator {
       if (existingIndexes.includes(idxName)) continue;
       const uniquePrefix = ci.unique ? "UNIQUE " : "";
       const whereClause = ci.where ? ` WHERE ${ci.where}` : "";
-      const cols = ci.cols.map(c => `"${c}"`).join(", ");
+      const cols = ci.cols.map(c => this.qt(c)).join(", ");
       try {
-        await this.exec(`CREATE ${uniquePrefix}INDEX IF NOT EXISTS "${idxName}" ON "${table}"(${cols})${whereClause}`);
+        await this.exec(`CREATE ${uniquePrefix}INDEX IF NOT EXISTS ${this.qt(idxName)} ON ${this.qt(table)}(${cols})${whereClause}`);
       } catch {}
     }
 
@@ -528,7 +572,7 @@ export class Migrator {
           const deferrable = rel.meta?.deferrable;
 
           const fkStatement =
-            `ALTER TABLE "${table}" ADD FOREIGN KEY ("${fkCol}") REFERENCES "${refTable}"(id)` +
+            `ALTER TABLE ${this.qt(table)} ADD FOREIGN KEY (${this.qt(fkCol)}) REFERENCES ${this.qt(refTable)}(id)` +
             (onDelete   ? ` ON DELETE ${onDelete}`  : "") +
             (onUpdate   ? ` ON UPDATE ${onUpdate}`  : "") +
             (matchVal   ? ` MATCH ${matchVal}`      : "") +
@@ -536,7 +580,7 @@ export class Migrator {
 
           const uniqueStatement =
             rel.kind === "onetoone" && this.driver !== "sqlite"
-              ? `ALTER TABLE "${table}" ADD CONSTRAINT unique_${table}_${fkCol} UNIQUE ("${fkCol}")`
+              ? `ALTER TABLE ${this.qt(table)} ADD CONSTRAINT ${this.qt(`unique_${table}_${fkCol}`)} UNIQUE (${this.qt(fkCol)})`
               : null;
 
           if (!existingFKs.includes(fkStatement.toLowerCase())) {
@@ -623,7 +667,7 @@ export class Migrator {
 
       try {
         await this.exec(
-          `UPDATE "${table}" SET "${col}" = ${value} WHERE "${col}" IS NULL`
+          `UPDATE ${this.qt(table)} SET ${this.qt(col)} = ${value} WHERE ${this.qt(col)} IS NULL`
         );
       } catch {}
     }
@@ -634,7 +678,7 @@ export class Migrator {
   // ----------------------------------------------------------------
 
   private parseEnumValues(enumMeta: string): string[] {
-    const cleaned = String(enumMeta).replace(/^[\(\s]+|[\)\s]+$/g, "");
+    const cleaned = String(enumMeta).replace(/^[({\s]+|[)}\s]+$/g, "");
     return cleaned.split(",").map((v) => v.trim().replace(/^'|'$/g, ""));
   }
 
@@ -643,7 +687,7 @@ export class Migrator {
     col: string,
     values: string[]
   ): Promise<string> {
-    if (this.driver !== "postgres") return `"${table}_${col}_enum"`;
+    if (this.driver !== "postgres") return this.qt(`${table}_${col}_enum`);
     const typeName = `${table}_${col}_enum`;
     try {
       const res = (await this.exec(
@@ -682,7 +726,7 @@ export class Migrator {
         if (colDef) colsSql.push(colDef);
       }
       if (colsSql.length) {
-        statements.push(`CREATE TABLE IF NOT EXISTS "${tableLower}" (\n${colsSql.concat(inlineConstraints).join(",\n")}\n);`);
+        statements.push(`CREATE TABLE IF NOT EXISTS ${this.qt(tableLower)} (\n${colsSql.concat(inlineConstraints).join(",\n")}\n);`);
       }
     } else {
       const existingCols = await this.getExistingColumns(tableLower);
@@ -692,7 +736,7 @@ export class Migrator {
         const colName = col.toLowerCase();
         if (!existingCols.includes(colName)) {
           const colDef = await this._buildColumnDef(tableLower, col, info, true);
-          if (colDef) statements.push(`ALTER TABLE "${tableLower}" ADD COLUMN ${colDef};`);
+          if (colDef) statements.push(`ALTER TABLE ${this.qt(tableLower)} ADD COLUMN ${colDef};`);
         }
       }
     }
@@ -708,7 +752,7 @@ export class Migrator {
     const isJson = this.hasM(meta, "json");
     if (enumVal) {
       const enumValues = this.parseEnumValues(String(enumVal));
-      sqlType = this.driver === "postgres" ? `"${table}_${col}_enum"` : "VARCHAR(255)";
+      sqlType = this.driver === "postgres" ? this.qt(`${table}_${col}_enum`) : "VARCHAR(255)";
     } else if (isJson) {
       sqlType = this.driver === "postgres" ? "JSONB" : this.driver === "sqlite" ? "TEXT" : "JSON";
     } else if (info.type === "Date" || (info.type === "string" && col.toLowerCase().endsWith("at"))) {
@@ -717,7 +761,7 @@ export class Migrator {
       sqlType = tsTypeToSqlType(info.type);
     }
     if (!sqlType) return null;
-    return `"${col}" ${sqlType}`;
+    return `${this.qt(col)} ${sqlType}`;
   }
 
   // ----------------------------------------------------------------
@@ -754,7 +798,7 @@ export class Migrator {
     let res: any;
     switch (this.driver) {
       case "sqlite":
-        res = await this.exec(`PRAGMA table_info("${table}")`);
+        res = await this.exec(`PRAGMA table_info(${this.qt(table)})`);
         return (res.rows || []).map((r: any) => String(r.name).toLowerCase());
       case "postgres":
         res = await this.exec(
@@ -785,7 +829,7 @@ export class Migrator {
     switch (this.driver) {
       case "sqlite":
         res = await this.exec(
-          `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='${table}'`
+          `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=${quoteLiteral(table)}`
         );
         return (res.rows || []).map((r: any) => String(r.name).toLowerCase());
       case "postgres":
@@ -813,7 +857,7 @@ export class Migrator {
     let res: any;
     switch (this.driver) {
       case "sqlite":
-        res = await this.exec(`PRAGMA foreign_key_list("${table}")`);
+        res = await this.exec(`PRAGMA foreign_key_list(${this.qt(table)})`);
         return (res.rows || []).map((r: any) =>
           JSON.stringify(r).toLowerCase()
         );

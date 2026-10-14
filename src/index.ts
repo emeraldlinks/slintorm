@@ -12,6 +12,20 @@ import { DBAdapter } from "./dbAdapter.js";
 import { createModelFactory, type ModelAPI } from "./model.js";
 import { Migrator, type SchemaModel } from "./migrator.js";
 import { wrapExec } from "./db-error.js";
+import { quoteIdentifier } from "./quoting.js";
+import {
+  canUseTcpDrivers,
+  runtimeInfo,
+  type RuntimeInfo,
+} from "./runtime.js";
+import {
+  getCurrentContext,
+  setCurrentContext,
+  replaceCurrentContext,
+  runWithContext,
+  hasAsyncContext,
+  Mutex,
+} from "./context-store.js";
 import type { DBDriver, ExecFn } from "./types.js";
 import type { DataMigration } from "./migration-history.js";
 import type { Plugin, PluginEventType, OrmContext } from "./types.js";
@@ -21,11 +35,34 @@ export type { DataMigration } from "./migration-history.js";
 export type AnyModelMap = Record<string, object>;
 
 export type ORMManagerConfig<TModelMap extends AnyModelMap = AnyModelMap> = {
-  driver?: DBDriver;
+driver?: DBDriver;
+  /**
+   * PostgREST base URL. Required when `driver: "postgrest"`.
+   * Supabase: `https://<project-ref>.supabase.co/rest/v1`.
+   */
+  postgrestUrl?: string;
+  /** PostgREST api key — sent as `apikey` and as a Bearer token. */
+  postgrestKey?: string;
+  /** Postgres schema exposed by the service. Defaults to `public`. */
+  postgrestSchema?: string;
+  postgrestHeaders?: Record<string, string> | (() => Record<string, string>);
+  /** Injectable fetch, for runtimes without a global one (or for tests). */
+  fetch?: typeof fetch;
   databaseUrl?: string;
   databaseName?: string;
   dir?: string;
   logs?: boolean;
+  /**
+   * Log bound parameter VALUES in addition to SQL text. Defaults to false.
+   * Bound values are user data (tokens, card numbers, emails), so `logs: true`
+   * alone no longer writes them anywhere. Only enable in a local terminal.
+   */
+  /**
+   * Propagate plugin failures instead of isolating them. Off by default: a
+   * plugin observes the operation, so a bug in one should not break the write.
+   */
+  strictPlugins?: boolean;
+  logParams?: boolean;
   /** Pre-built schema — required when using the ORM in edge/serverless runtimes
    *  that have no filesystem access. Run `npx slintorm generate` during your
    *  build step, import the generated JSON, and pass it here. */
@@ -86,6 +123,7 @@ export async function createORM<TModelMap extends AnyModelMap = AnyModelMap>(
     databaseUrl: cfg.databaseUrl,
     dir: cfg.dir || "src",
     logs: cfg.logs,
+    logParams: cfg.logParams,
     schema: cfg.schema,
     modelMap: cfg.modelMap,
     replicas: cfg.replicas,
@@ -147,6 +185,7 @@ export default class ORMManager<
   readonly DB: ReadonlyDBStore<TModelMap> = {} as ReadonlyDBStore<TModelMap>;
   private _globalHooks: Map<string, ((event: GlobalHookEvent) => void | Promise<void>)[]> = new Map();
   private _plugins: Plugin[] = [];
+  private _onPluginError?: (info: { plugin: string; event: string; error: unknown }) => void;
   private _context: OrmContext = {};
   private _preparedMode = false;
   private _rls = false;
@@ -161,12 +200,39 @@ export default class ORMManager<
       databaseName: this.cfg.databaseName,
       dir: this.cfg.dir || "src",
       logs: this.cfg.logs,
+      logParams: this.cfg.logParams,
+      postgrestUrl: this.cfg.postgrestUrl,
+      postgrestKey: this.cfg.postgrestKey,
+      postgrestSchema: this.cfg.postgrestSchema,
+      postgrestHeaders: this.cfg.postgrestHeaders,
+      fetch: this.cfg.fetch,
       schema: this.cfg.schema,
       modelMap: this.cfg.modelMap,
       replicas: this.cfg.replicas,
       poolSize: this.cfg.poolSize,
       exec: this.cfg.exec,
     });
+
+    // Connection pooling and RLS context propagation are mutually exclusive.
+    //
+    // RLS works by issuing `SELECT set_config('rls.tenant_id', ...)` on the
+    // connection, which is SESSION-scoped. With a pool, the query that runs
+    // next may be handed a different connection that never received the tenant
+    // context — so it would execute under the previous tenant's identity, or
+    // with none set at all. That is a cross-tenant data leak, so refuse the
+    // combination rather than let it fail silently.
+    if (this.cfg.rls && (Number(this.cfg.poolSize) || 0) > 1) {
+      throw new Error(
+        `ORMManager: poolSize > 1 cannot be combined with rls: true.\n\n` +
+          `Row-level security propagates the tenant via a session-scoped ` +
+          `set_config() on the connection. A pool hands each query whichever ` +
+          `connection is free, so a query can run on a connection that never ` +
+          `received the tenant context — leaking data across tenants.\n\n` +
+          `Use a single dedicated connection (omit poolSize) for RLS, or ` +
+          `enforce isolation in a way that is bound to the statement rather ` +
+          `than the session.`,
+      );
+    }
 
     const sqlDriver = resolveDriver(this.adapter.driver);
     if (sqlDriver && !this.cfg.exec) {
@@ -177,29 +243,82 @@ export default class ORMManager<
     }
 
     this._rls = !!this.cfg.rls;
-    if (this._rls && sqlDriver === "postgres") {
+
+    if (this._rls) {
+      // HIGH-3: the wrapper below was only installed when NO custom exec was
+      // supplied, so `rls: true` + neonExec()/proxyExec()/etc. silently ran
+      // every query with no tenant setting while rlsEnabled() still said true.
+      // That is the worst possible failure shape: a security control that
+      // reports itself as active and is not.
+      if (sqlDriver !== "postgres") {
+        throw new Error(
+          `ORMManager: rls: true requires the postgres driver (got "${this.adapter.driver}"). ` +
+          `Row-level security is implemented with Postgres set_config() and has no ` +
+          `meaning for other databases. Either use postgres, or drop rls: true and ` +
+          `enforce tenant isolation in application code.`,
+        );
+      }
+      if (this.cfg.exec) {
+        throw new Error(
+          `ORMManager: rls: true cannot be combined with a custom \`exec\`.\n\n` +
+          `The RLS wrapper sets the tenant context via \`SELECT set_config(...)\` on the ` +
+          `adapter's own connection. A custom exec bypasses that entirely, so queries ` +
+          `would run with no tenant context while rlsEnabled() still returned true.\n\n` +
+          `This is exactly the combination used for edge deployments (neonExec, ` +
+          `tursoExec, proxyExec), which is where RLS matters most.\n\n` +
+          `Resolve it by either:\n` +
+          `  - letting SlintORM own the connection (no \`exec\`), or\n` +
+          `  - setting the tenant context yourself inside your exec, and dropping \`rls: true\`.`,
+        );
+      }
+
       const origExec = this.adapter.exec.bind(this.adapter);
       const lastRls: Record<string, string> = {};
+      // 2.4: set_config and the query it scopes must not interleave with
+      // another context's. A transaction-local set_config would remove the
+      // need for this, but it requires wrapping every query in BEGIN/COMMIT,
+      // which breaks queries already inside a user transaction. Serialise the
+      // context-applying critical section instead.
+      const rlsMutex = new Mutex();
+
       this.adapter.exec = async (sql: string, params?: any[]) => {
-        const ctx = this._context;
+        // 2.2: read the context from THIS async execution context, not from a
+        // single shared mutable field. Without this, two concurrent requests
+        // overwrite each other's tenant between withContext() and exec().
+        const ctx = getCurrentContext(this._context);
         const keys = Object.keys(ctx).filter(k => ctx[k] != null);
-        for (const key of keys) {
-          const val = String(ctx[key]);
-          if (lastRls[key] !== val) {
-            await origExec("SELECT set_config($1, $2, false)", [
-              `rls.${key}`,
-              val,
-            ]);
-            lastRls[key] = val;
-          }
+
+        // Nothing to apply and nothing stale to clear — run unserialised so
+        // queries with no RLS context keep full concurrency.
+        const stale = Object.keys(lastRls).filter(
+          (k) => !(k in ctx) || ctx[k] == null,
+        );
+        if (keys.length === 0 && stale.length === 0) {
+          return origExec(sql, params);
         }
-        // Clear any previously-set keys that are no longer in context
-        for (const prevKey of Object.keys(lastRls)) {
-          if (!(prevKey in ctx) || ctx[prevKey] == null) {
-            delete lastRls[prevKey];
+
+        return rlsMutex.run(async () => {
+          // HIGH-1: previously only the IN-MEMORY entry was deleted. The
+          // Postgres session variable set by `set_config(..., false)` is
+          // session-scoped and survived, so after clearContext() the next
+          // request with no context issued no set_config at all and ran under
+          // the PREVIOUS request's tenant. Fail-open cross-tenant leak.
+          for (const key of stale) {
+            await origExec("SELECT set_config($1, $2, false)", [`rls.${key}`, ""]);
+            delete lastRls[key];
           }
-        }
-        return origExec(sql, params);
+          for (const key of keys) {
+            const val = String(ctx[key]);
+            if (lastRls[key] !== val) {
+              await origExec("SELECT set_config($1, $2, false)", [
+                `rls.${key}`,
+                val,
+              ]);
+              lastRls[key] = val;
+            }
+          }
+          return origExec(sql, params);
+        });
       };
     }
   }
@@ -213,6 +332,28 @@ export default class ORMManager<
   //      the first time each model is used (schema is already known).
   async migrate() {
     if (!schemaGenerated) {
+      // Refuse on a socketless runtime BEFORE touching node:path / the
+      // filesystem. This used to import `node:path` and run
+      // snapshotCurrentGeneratedSchema() (which statically imports node:fs)
+      // unconditionally, so calling migrate() on Vercel Edge died with a raw
+      // module-not-found instead of the documented advice.
+      if (!canUseTcpDrivers() || typeof process === "undefined" || !process.cwd) {
+        throw new Error(
+          `ORMManager: migrate() cannot run in this runtime (${runtimeInfo().kind}).\n\n` +
+          `Migrations read TypeScript sources from disk and write migration ` +
+          `records, so they need node:fs and node:path. A V8 isolate has neither.\n\n` +
+          `Run migrations as a separate build step on Node, then deploy:\n\n` +
+          `  // scripts/migrate.ts  — Node only\n` +
+          `  const orm = new ORMManager({ driver: 'postgres', databaseUrl, dir: 'src' });\n` +
+          `  await orm.migrate();\n\n` +
+          `  // package.json\n` +
+          `  "build": "npm run migrate && next build"\n\n` +
+          `In the edge function, pass the pre-generated schema instead:\n` +
+          `  import schema from '../src/schema/generated.json' with { type: 'json' };\n` +
+          `  new ORMManager({ driver: 'postgrest', postgrestUrl, postgrestKey, schema });`,
+        );
+      }
+
       schemaGenerated = true;
 
       // Dynamic imports — keeps the edge bundle free of Node APIs
@@ -366,10 +507,16 @@ export default class ORMManager<
 
   async _emitGlobal(event: GlobalHookEvent) {
     const handlers = this._globalHooks.get(event.type);
-    if (!handlers?.length) return;
-    for (const handler of handlers) {
-      await handler(event);
+    if (handlers?.length) {
+      for (const handler of handlers) {
+        await handler(event);
+      }
     }
+
+    // Plugins must be dispatched unconditionally. This used to sit AFTER an
+    // early `return` when no global handler was registered, so `use(plugin)`
+    // silently did nothing unless the app had also called `orm.on(...)` for
+    // that event type — which made the documented extension point a no-op.
     await this._emitPlugin(event.type as PluginEventType, event);
   }
 
@@ -386,25 +533,116 @@ export default class ORMManager<
 
   async _emitPlugin(event: PluginEventType, ctx: any = {}) {
     for (const plugin of this._plugins) {
-      if (plugin.on) {
+      if (!plugin.on) continue;
+      try {
         await plugin.on(event, { ...ctx, context: this._context, orm: this });
+      } catch (err) {
+        // A plugin observes the operation; it should not be able to break it.
+        // A metrics or logging plugin that throws must not take down the write
+        // it is watching. Failures are reported rather than swallowed, and
+        // `strictPlugins: true` restores propagation for cases where a silent
+        // plugin failure would be worse (e.g. compliance audit trails).
+        if (this.cfg.strictPlugins) throw err;
+        if (this._onPluginError) this._onPluginError({ plugin: plugin.name, event, error: err });
+        else {
+          console.warn(
+            `[slintorm] plugin "${plugin.name}" threw during "${event}": ` +
+            `${(err as Error)?.message ?? err}`,
+          );
+        }
       }
     }
   }
 
-  // ── Context propagation ────────────────────────────────────────
-  withContext(ctx: OrmContext): this {
-    this._context = { ...this._context, ...ctx };
+  /** Install a handler for plugin failures (instead of the console warning). */
+  onPluginError(fn: (info: { plugin: string; event: string; error: unknown }) => void): this {
+    this._onPluginError = fn;
     return this;
+  }
+
+  // ── Context propagation ────────────────────────────────────────
+
+  /**
+   * Merge values into the current request context — for TRACING.
+   *
+   * ⚠️ When `rls: true` is set these keys ALSO become `rls.*` authorization
+   * settings in Postgres. That is why the identity path has its own method,
+   * `runWithAuthContext()`. Prefer that for anything a policy reads.
+   *
+   * For pure tracing that must never influence authorization, keep RLS off, or
+   * use a dedicated naming convention your policies never match.
+   *
+   * On Node this uses AsyncLocalStorage, so concurrent requests are isolated.
+   * Prefer `runWithContext()` — `withContext()` changes the context for the
+   * remainder of the current async scope, which is broader than one request.
+   */
+  withContext(ctx: OrmContext): this {
+    setCurrentContext(ctx, this._context);
+    return this;
+  }
+
+  /**
+   * Set the ROW-LEVEL-SECURITY context: these values become `rls.*` session
+   * settings that Postgres policies read.
+   *
+   * Use this for identity. Use `withContext()` for tracing. They are separate
+   * methods because conflating them is a security footgun: a team using
+   * `withContext({ userId })` purely to correlate logs would silently make
+   * `userId` an authorization setting, and any request header becomes a
+   * spoofable tenant.
+   *
+   * Only values you have authenticated may be passed here. Prefer
+   * `runWithAuthContext()` so the scope is explicit.
+   *
+   * @example
+   *   // identity comes from a verified session, never from the raw request
+   *   orm.runWithAuthContext({ tenant_id: session.tenantId }, async () => {
+   *     return db.Order.query().get();   // RLS filters by tenant
+   *   });
+   */
+  runWithAuthContext<R>(ctx: OrmContext, fn: () => R): R {
+    return runWithContext(ctx, this._context, fn);
+  }
+
+  /**
+   * Run `fn` with an ISOLATED context. This is the safe form: the context is
+   * scoped to `fn` and everything it awaits, so concurrent callers cannot
+   * observe each other's tenant.
+   *
+   *   await orm.runWithContext({ tenant_id: t }, async () => {
+   *     return db.Order.query().get();
+   *   });
+   */
+  runWithContext<R>(ctx: OrmContext, fn: () => R): R {
+    return runWithContext(ctx, this._context, fn);
   }
 
   getContext(): OrmContext {
-    return { ...this._context };
+    return { ...getCurrentContext(this._context) };
   }
 
   clearContext(): this {
-    this._context = {};
+    replaceCurrentContext({}, this._context);
     return this;
+  }
+
+  /** True when per-request context isolation (AsyncLocalStorage) is active. */
+  hasIsolatedContext(): boolean {
+    return hasAsyncContext();
+  }
+
+  /**
+   * True when this runtime can run the configured driver's default connection
+   * path. False means you are on a socketless runtime (Vercel Edge, Cloudflare
+   * Workers, a browser) and need `postgrest` or a custom `exec`.
+   */
+  edgeReady(): boolean {
+    return canUseTcpDrivers() || this.cfg.driver === "postgrest" || !!this.cfg.exec;
+  }
+
+  /** What SlintORM detected about the current runtime. */
+  runtimeInfo(): RuntimeInfo {
+    return runtimeInfo();
   }
 
   rlsEnabled(): boolean {
@@ -473,7 +711,7 @@ export default class ORMManager<
     const tableName = options.tableName || "_audit_logs";
     const exclude = new Set(options.excludeModels || ["_audit_logs"]);
     const driver = this.adapter.driver || "sqlite";
-    const q = (c: string) => driver === "mysql" ? `\`${c}\`` : `"${c}"`;
+    const q = (c: string) => quoteIdentifier((driver as any) ?? "sqlite", c);
     const ph = (i: number) => driver === "postgres" ? `$${i + 1}` : "?";
 
     const idType = driver === "postgres" ? "SERIAL PRIMARY KEY"

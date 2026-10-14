@@ -26,10 +26,33 @@ Minimal fully-typed ORM for TypeScript with SQLite / PostgreSQL / MySQL / MongoD
 | `src/browser.ts` | Edge-safe entrypoint — re-exports from index.js, model.js, http-driver.js, proxy.js, extensions.js, db-error.js |
 | `src/utils.ts` | `tsTypeToSqlType()` — maps TS primitive types to SQL column types |
  | `src/example.ts` | Runnable walkthrough covering all 42 feature sections |
- | `src/slintorm.test.ts` | 105-runtime-test suite covering all features |
+ | `src/slintorm.test.ts` | Runtime test suite. **192 tests.** SQL driver runs all of them; MySQL and MongoDB skip driver-specific cases and say so in the output. Coverage is not uniform — see the gaps below. |
 | `src/types.test.ts` | Compile-time type-safety tests (validated via `tsc --noEmit`) |
 | `SERVERLESS.md` | Edge/serverless deployment guide (`/root/slintorm/SERVERLESS.md`) |
 | `SECURITY.md` | Security annotations reference — `@hash`, `@encrypt`, `@secret` with `.verify()` and `.decrypt()` |
+
+## Known coverage gaps and per-driver limits
+
+Be precise about this — the test suite does NOT cover everything the README lists.
+
+- **MySQL and MongoDB are tested in CI**, but each skips driver-specific cases.
+  The runner prints a `SKIPPED <driver>` line for any driver whose connection
+  string is absent, so a partial run never looks complete.
+- **Not covered by tests:** streaming rows (`stream()`), the audit-log helper,
+  the CLI's snapshot/rollback flow, and plugin lifecycle hooks.
+- **MongoDB does not support:** SQL joins of any kind, CTEs, UNION/INTERSECT/EXCEPT,
+  HAVING, window functions, subqueries (`selectSubquery`, `exists`), full-text
+  search, row locking, or data migrations. These now **throw** rather than
+  silently returning unfiltered rows. Migrations on Mongo are limited to index
+  creation.
+- **Postgres-only:** RLS context propagation (`rls: true`). It throws if combined
+  with a custom `exec` or on a non-Postgres driver, because the wrapper cannot be
+  installed in those configurations.
+- **Edge runtimes (Vercel Edge, Workers, Deno) have no default driver.** All four
+  drivers need TCP; use an HTTP driver or `createProxyServer`. See `SERVERLESS.md`.
+- **Multi-tenancy uses `AsyncLocalStorage`** on Node ≥ 22.3. On edge runtimes
+  `orm.hasIsolatedContext()` returns `false` and context falls back to a single
+  shared slot — concurrent requests are NOT isolated there.
 
 ## Architecture
 
