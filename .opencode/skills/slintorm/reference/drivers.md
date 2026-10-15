@@ -1,5 +1,46 @@
 # Drivers, connections, and edge
 
+## HTTP drivers — real databases on edge, without PostgREST
+
+PostgREST is **not the only** edge path. `slintorm/edge` ships five HTTP
+transports that keep a real SQL database on a socketless runtime. This matters:
+PostgREST has no transactions, no raw SQL, and no `join()`. These do.
+
+All are exported from `slintorm/edge` (→ `src/browser.ts`) and all return an
+`ExecFn`, so they drop straight into `exec`.
+
+> **The config field is `endpoint`, not `url`.** `SERVERLESS.md:168` and the
+> error message in `dbAdapter.ts:68` both show `neonExec({ url })`, which is
+> wrong — it throws `Cannot read properties of undefined (reading 'endsWith')`.
+> Verified by `examples/http-drivers.ts`.
+
+```ts
+import { neonExec, tursoExec, planetscaleExec, proxyExec, http } from 'slintorm/edge';
+```
+
+| Export | Database | Config |
+|---|---|---|
+| `neonExec` | **Neon** Postgres | `{ endpoint }` — `/sql` appended automatically; full SQL + transactions |
+| `tursoExec` | **Turso / libSQL** SQLite | `{ endpoint, headers }` |
+| `planetscaleExec` | **PlanetScale** MySQL | `{ endpoint, organization, database, branch? }` |
+| `proxyExec` | any, via `slintorm/proxy` | tunnels SQL through the hardened HTTP proxy |
+| `http.{neon,turso,planetscale}` | — | the first three as a namespace |
+
+```ts
+// Neon on Vercel Edge — real Postgres, real transactions
+import { neonExec } from 'slintorm/edge';
+const orm = new ORMManager({
+  driver: 'postgres',                    // REQUIRED — defaults to 'sqlite'
+  exec: neonExec({ endpoint: process.env.DATABASE_URL! }),
+  schema,
+});
+```
+
+`http-driver.ts` has **no static Node imports** (asserted in
+`examples/http-drivers.ts`), so these are safe in a V8 isolate. Prefer them over
+PostgREST whenever you need SQL, transactions, or joins. See `SERVERLESS.md`
+for per-provider setup.
+
 ## Choosing a driver
 
 | Driver | Config | Transport | Edge-safe |

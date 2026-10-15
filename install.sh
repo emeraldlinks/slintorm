@@ -36,7 +36,8 @@ reference/model-api.md
 reference/query-builder.md
 reference/drivers.md
 reference/cli.md
-examples/verified.ts"
+examples/verified.ts
+examples/http-drivers.ts"
 
 FORCE=0
 VERIFY=0
@@ -249,8 +250,8 @@ printf '\n'
 info "It triggers on: slintorm, defineModel, ORMManager, @softDelete,"
 info "@relation, PostgREST, or edge-ORM questions."
 info ""
-info "The skill ships examples/verified.ts — 33 assertions covering schema,"
-info "CRUD, soft delete, validation, and the PostgREST driver. Run it before"
-info "telling anyone the code works:"
+info "The skill ships two harnesses — 41 assertions covering schema, CRUD,"
+info "soft delete, validation, the PostgREST driver and the HTTP drivers."
+info "Run them before telling anyone the code works:"
 info "  npx tsx ~/.claude/skills/slintorm/examples/verified.ts"
 printf '\n'

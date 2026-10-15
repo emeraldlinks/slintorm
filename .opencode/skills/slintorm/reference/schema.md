@@ -33,27 +33,53 @@ const Users = await orm.defineModel<User>("users", "User");  // no schema argume
 
 `createdAt`/`updatedAt` are auto-populated if present.
 
-## B. Hand-written JSON (edge runtimes, no filesystem)
+## B. Import the generated JSON (edge runtimes have no filesystem)
+
+`generate` needs a filesystem, so on edge you generate in your build step and
+import the result. This is the project's own pattern (`SERVERLESS.md:18-25`):
 
 ```ts
+// lib/db.ts — runs in an edge function
+import ORMManager from 'slintorm/edge';
+import schema from '../src/schema/generated.json' with { type: 'json' };
+
 const orm = new ORMManager({
-  driver: "postgrest",
-  postgrestUrl: "https://x.supabase.co/rest/v1",
-  postgrestKey: process.env.SUPABASE_ANON_KEY,
-  schema: {
-    User: {
-      table: "users",
-      fields: {
-        id:   { type: "INTEGER", meta: { "@index": true, "@auto": true } },
-        name: { type: "TEXT",    meta: { "@length": 100, "@notnull": true } },
-      },
-      relations: [],
-    },
-  },
+  driver: 'postgrest',
+  postgrestUrl: process.env.SUPABASE_URL!,
+  postgrestKey: process.env.SUPABASE_ANON_KEY!,
+  schema,                                 // ← the generated JSON
 });
 ```
 
-Shape: `Record<ModelName, { table?, fields: Record<string, {type, optional?, meta}>, relations: [] }>`.
+What `generate` emits, copied from `src/schema/generated.json`:
+
+```jsonc
+{
+  "User": {
+    "primaryKey": "id",              // top-level, not in SchemaModel
+    "table": "users",
+    "fields": {
+      "id":   { "type": "number | undefined", "originalType": "number",
+                "optional": true,  "meta": {} },
+      "name": { "type": "string", "originalType": "string", "optional": false,
+                "meta": { "@minLength": "2", "@maxLength": "100" } }
+    },
+    "relations": []
+  }
+}
+```
+
+**`type` is the TypeScript type, not the SQL type.** Real values include
+`"number | undefined"`, `"Payment[] | undefined"`,
+`"Record <string ,any > | undefined"`. A bare SQL type also works —
+`tsTypeToSqlType` matches on substrings — but the generator emits TS unions, and
+writing those by hand is exactly the kind of thing that silently degrades.
+
+`originalType` and top-level `primaryKey` are emitted but absent from the
+`SchemaModel`/`FieldInfo` interfaces.
+
+**Don't hand-author this file.** It has 100+ meta keys. Run
+`npx slintorm generate`.
 
 Directives work with or without the leading `@` — both are read.
 
@@ -136,6 +162,8 @@ soft-delete column, or is an enum with no default.
 | `@mask` | masks the value on read |
 | `@omit` / `@omitdb` | never written to the database |
 | `@omitjson` | omitted from default JSON output |
+| `@omitmigrate` | skipped by the migrator — no column is created for it |
+| `@polymorphicType` / `@polymorphicId` | marks a polymorphic relation pair; handled by the relation system (`migrator.ts:388-392`) |
 
 `encryptionKey` must be **≥32 characters** and identical across every instance
 sharing a database. Rotating it requires re-encrypting every field.

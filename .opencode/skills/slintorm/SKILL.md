@@ -55,25 +55,44 @@ const orm = new ORMManager({ driver: "sqlite", databaseUrl: "./db.sqlite" });
 const Users = await orm.defineModel<User>("users", "User");   // no schema arg
 ```
 
-**B. Hand-written JSON** (edge runtimes with no filesystem). Pass it to the
-manager — must be an object keyed by model name, with `fields`/`relations`:
+**B. Import the generated JSON** (edge runtimes have no filesystem, so
+`generate` can't run at request time). Generate at build time, then import it —
+this is the project's documented edge pattern:
 
 ```ts
+// lib/db.ts — runs in an edge function
+import ORMManager from 'slintorm/edge';
+import schema from '../src/schema/generated.json' with { type: 'json' };
+
 const orm = new ORMManager({
-  driver: "postgrest",
-  postgrestUrl: "https://x.supabase.co/rest/v1",
-  schema: {
-    User: {
-      table: "users",
-      fields: {
-        id:   { type: "INTEGER", meta: { "@index": true, "@auto": true } },
-        name: { type: "TEXT",    meta: { "@length": 100, "@notnull": true } },
-      },
-      relations: [],
-    },
-  },
+  driver: 'postgrest',
+  postgrestUrl: process.env.SUPABASE_URL!,
+  postgrestKey: process.env.SUPABASE_ANON_KEY!,
+  schema,                                  // ← the generated JSON
 });
 ```
+
+The shape `generate` emits, verbatim from `src/schema/generated.json`:
+
+```jsonc
+{
+  "User": {
+    "primaryKey": "id",
+    "table": "users",
+    "fields": {
+      "id":    { "type": "number | undefined",  "originalType": "number",  "optional": true,  "meta": {} },
+      "name":  { "type": "string",              "originalType": "string", "optional": false,
+                 "meta": { "@minLength": "2", "@maxLength": "100" } }
+    },
+    "relations": []
+  }
+}
+```
+
+Note `type` is the **TypeScript** type, not the SQL type — `"number | undefined"`,
+not `"INTEGER"`. A bare SQL type also works (`tsTypeToSqlType` matches on
+substrings), but don't hand-author this: 100+ meta keys and the union syntax are
+generated, not written. Run `npx slintorm generate`.
 
 ### 3. `delete()` does not delete on a `@softDelete` model
 
@@ -218,8 +237,16 @@ npx tsx ~/.claude/skills/slintorm/examples/verified.ts       # from an installed
 It resolves `slintorm` from your project, or falls back to the repo's source.
 In-memory SQLite only — no credentials, no network, no filesystem writes.
 
-**33 assertions, all passing.** Covers schema, CRUD, filters, soft delete,
-validation, hooks, the query builder, and the PostgREST driver.
+**41 assertions across two files, all passing.** `verified.ts` (33) covers
+schema, CRUD, filters, soft delete, validation, hooks, the query builder and the
+PostgREST driver; `http-drivers.ts` (8) covers `neonExec`/`tursoExec`.
+
+> **Coverage is partial.** Relations (`preload`, `withOne`, `withMany`,
+> `relatedTo`), the `@hash`/`@encrypt`/`@secret`/`@mask` annotations, all CLI
+> and migration commands, plugins and multi-db routing are **documented but not
+> executed** — every harness schema uses `relations: []`, and only `sqlite` and
+> `postgrest` are exercised. Treat those sections as unverified.
+> `npx tsx scripts/audit-skill-claims.ts` reports the current gap.
 
 If the library's behaviour contradicts anything written here, the **code wins**:
 this document is a convenience, the source is the truth. Report the discrepancy
