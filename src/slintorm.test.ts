@@ -890,8 +890,10 @@ if (!isMongo) describe("Advanced query clauses", () => {
     expect(sqlOf(q().forUpdate()).toUpperCase()).toContain("FOR UPDATE");
     expect(sqlOf(q().forShare()).toUpperCase()).toContain("FOR SHARE");
     expect(sqlOf(q().forNoKeyUpdate()).toUpperCase()).toContain("FOR NO KEY UPDATE");
-    expect(sqlOf(q().skipLocked()).toUpperCase()).toContain("SKIP LOCKED");
-    expect(sqlOf(q().noWait()).toUpperCase()).toContain("NOWAIT");
+    // skipLocked()/noWait() are MODIFIERS on a locking clause — on their own
+    // they correctly emit nothing, because there is no lock to modify.
+    expect(sqlOf(q().forUpdate().skipLocked()).toUpperCase()).toContain("SKIP LOCKED");
+    expect(sqlOf(q().forShare().noWait()).toUpperCase()).toContain("NOWAIT");
   });
 
   it("crossJoin emits a CROSS JOIN", () => {
@@ -1774,8 +1776,15 @@ describe("Relations & preload", () => {
   it("preloads a many-to-many relation through a pivot", async () => {
     if (driver === "mongodb") return;
     const qi = (n: string) => quoteIdentifier(driver as any, n);
+    // Dialect-specific surrogate key. "INTEGER PRIMARY KEY AUTOINCREMENT" is
+    // SQLite-only; PostgreSQL rejects it outright ("syntax error at or near
+    // AUTOINCREMENT") and MySQL wants AUTO_INCREMENT.
+    const idPk =
+      driver === "postgres" ? "SERIAL PRIMARY KEY"
+      : driver === "mysql" ? "INT AUTO_INCREMENT PRIMARY KEY"
+      : "INTEGER PRIMARY KEY AUTOINCREMENT";
     await (orm as any).adapter.exec(
-      `CREATE TABLE IF NOT EXISTS ${qi("user_tags")} ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "userId" INTEGER, "tagId" INTEGER)`,
+      `CREATE TABLE IF NOT EXISTS ${qi("user_tags")} ("id" ${idPk}, "userId" INTEGER, "tagId" INTEGER)`,
       [],
     );
     const t1 = (await Tags.insert({ label: "alpha" }))!;
@@ -2173,7 +2182,16 @@ describe("stream()", () => {
 // enableAuditLogging() had NO coverage. It registers global hooks that write to
 // a real table, so it exercises the plugin/hook dispatch path too.
 describe("Audit logging", () => {
-  beforeEach(async () => { await resetUsers(); });
+  beforeEach(async () => {
+    await resetUsers();
+    // _audit_logs is created with CREATE TABLE IF NOT EXISTS and is never
+    // dropped, so rows written by an earlier test leaked into the next one's
+    // count. Each of these tests asserts on an absolute row count, so the
+    // table has to start empty. Safe if the table does not exist yet.
+    try {
+      await (orm as any).adapter.exec(`DELETE FROM ${quoteIdentifier(driver as any, "_audit_logs")}`, []);
+    } catch { /* not created yet */ }
+  });
 
   it("records inserts, updates and deletes", async () => {
     const audit = new ORMManager({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);

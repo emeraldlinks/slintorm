@@ -289,6 +289,24 @@ export class DBAdapter {
           const mod = await import("pg");
           const pg = await this.defaultExport<any>(mod);
 
+          // node-postgres returns int8 (bigint) and numeric as STRINGS by
+          // default, because a JS number cannot hold the full int64 range.
+          // That silently breaks every aggregate: `COUNT(id)` arrives as "2",
+          // so `typeof row.count === "number"` is false and arithmetic on it
+          // yields NaN. COUNT/SUM/AVG/window functions all came back as text.
+          //
+          // The exactness trade-off is the right one here: an ORM's job is to
+          // hand back usable rows, and a row count that is a string is wrong
+          // for essentially every caller. Values beyond 2^53 lose precision,
+          // which is an acceptable and documented trade for row counts.
+          const types = pg.types;
+          if (types?.setTypeParser) {
+            types.setTypeParser(20, (v: string) => parseInt(v, 10));   // int8
+            types.setTypeParser(1700, (v: string) => parseFloat(v));   // numeric
+            types.setTypeParser(21, (v: string) => parseInt(v, 10));   // int2
+            types.setTypeParser(23, (v: string) => parseInt(v, 10));   // int4
+          }
+
           // `poolSize` was accepted but never read — the adapter always opened
           // ONE dedicated connection. In serverless that means one connection
           // per cold-start replica, which is the textbook route to Postgres

@@ -134,24 +134,36 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
     }
 
     // ---- UNION / INTERSECT / EXCEPT ------------------------------------------
+    // Each operand's bound parameters must be appended, not just its SQL.
+    // Dropping them leaves $1..$n in the text with nothing behind them, which
+    // PostgreSQL reports as "there is no parameter $1".
+    const appendOperands = (
+      queries: { buildSql(): { sql: string; params?: any[] } }[],
+      keyword: string,
+      all: boolean,
+    ) => {
+      const sqls: string[] = [];
+      for (const q of queries) {
+        const built = q.buildSql();
+        sqls.push(built.sql);
+        params.push(...(built.params ?? []));
+      }
+      const allKw = all ? " ALL" : "";
+      return [sql, ...sqls].join(`\n${keyword}${allKw}\n`);
+    };
+
     if (this._union) {
-      const sqls = this._union.queries.map((q) => q.buildSql().sql);
-      const unionAll = this._union.all ? " ALL" : "";
       // Each side is already a complete SELECT. Parenthesising them —
       // especially the LEFT operand — is invalid SQL: SQLite rejects
       // `(SELECT ...) UNION (SELECT ...)` outright with a syntax error, and
       // PostgreSQL/MySQL reject it too.
-      sql = [sql, ...sqls].join(`\nUNION${unionAll}\n`);
+      sql = appendOperands(this._union.queries, "UNION", this._union.all);
     }
     if (this._intersect) {
-      const sqls = this._intersect.queries.map((q) => q.buildSql().sql);
-      const intersectAll = this._intersect.all ? " ALL" : "";
-      sql = [sql, ...sqls].join(`\nINTERSECT${intersectAll}\n`);
+      sql = appendOperands(this._intersect.queries, "INTERSECT", this._intersect.all);
     }
     if (this._except) {
-      const sqls = this._except.queries.map((q) => q.buildSql().sql);
-      const exceptAll = this._except.all ? " ALL" : "";
-      sql = [sql, ...sqls].join(`\nEXCEPT${exceptAll}\n`);
+      sql = appendOperands(this._except.queries, "EXCEPT", this._except.all);
     }
 
     // ---- Optimizer / Index / Comment hints ----------------------------------

@@ -184,7 +184,17 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
         return acc;
       }, {});
       if (!Object.keys(inferredFields).length) return modelSchema;
-      const merged = { ...modelSchema, fields: { ...(modelSchema.fields || {}), ...inferredFields } };
+      const merged = { ...modelSchema, fields: { ...(modelSchema.fields || {}) } };
+      // Inferred fields must NEVER clobber a declared one. Spreading them over
+      // modelSchema silently dropped the declared meta (@unique, @mask,
+      // @omitjson, @encrypt, @hash …), because an inferred field carries
+      // meta:{} — so the first insert of a row permanently discarded the
+      // column's constraints. The visible symptom was `upsert()` failing with
+      // "no unique or exclusion constraint matching the ON CONFLICT
+      // specification" on tables whose schema said unique:true.
+      for (const [key, inferred] of Object.entries(inferredFields)) {
+        if (!merged.fields[key]) merged.fields[key] = inferred;
+      }
       // Ensure an id PK column exists when the schema is inferred (no explicit schema)
       if (!merged.fields.id) {
         merged.fields.id = { type: "INTEGER", meta: { primaryKey: true, auto: true } };
@@ -547,6 +557,10 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
             const cleaned = applyMasks(stripOmitJson(stripOmitDb(mapBooleans(mapJson(row, modelSchema.fields), modelSchema.fields), modelSchema.fields), modelSchema.fields), modelSchema.fields);
             const pkVal = (cleaned as any)[pkFieldName];
             if (hooks?.onCreateAfter) await hooks.onCreateAfter(cleaned);
+            // Returning here used to skip the emit() below, so on PostgreSQL
+            // no `afterInsert` ever reached plugins or the audit log — the
+            // features worked on SQLite/MySQL and silently did nothing here.
+            await emit("afterInsert", cleaned);
             return attachEntityMethods(cleaned, { [pkFieldName]: pkVal } as Partial<T>, this) as any;
           }
 
