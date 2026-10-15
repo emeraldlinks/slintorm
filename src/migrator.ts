@@ -261,7 +261,18 @@ export class Migrator {
       } else if (isExplicitNotNull) {
         isNullable = false;
       } else {
-        isNullable = isNullableMeta || isOptionalType || isOptionalField || isSoftDelete || isEnumNoDefault;
+        // @omitdb fields are stripped from every INSERT/UPDATE (see
+        // model.ts stripOmitDb), so a NOT NULL column can never be satisfied
+        // and every write to the table fails with "Missing required value".
+        // They are, by definition, always nullable.
+        const isOmitDb = this.hasM(meta, "omitdb") || this.hasM(meta, "omit");
+        isNullable =
+          isOmitDb ||
+          isNullableMeta ||
+          isOptionalType ||
+          isOptionalField ||
+          isSoftDelete ||
+          isEnumNoDefault;
       }
 
       const nullFrag = isNullable ? "" : "NOT NULL";
