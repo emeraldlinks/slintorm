@@ -560,7 +560,7 @@ export class Migrator {
         if (["createdat", "updatedat", "deletedat"].includes(existingCol)) continue;
         try {
           await this.exec(`ALTER TABLE ${this.qt(table)} DROP COLUMN ${this.qt(existingCol)}`);
-        } catch (e: any) { console.warn(`DIAG drop ${table}.${existingCol}: ${e?.message}`); }
+        } catch {}
       }
 
       for (const [col, info] of Object.entries(schema)) {
@@ -585,7 +585,7 @@ export class Migrator {
 
         try {
           await this.exec(`ALTER TABLE ${this.qt(table)} ADD COLUMN ${safeColDef}`);
-        } catch (e: any) { console.warn(`DIAG add ${table}: ${safeColDef} :: ${e?.message}`); }
+        } catch {}
       }
     }
 
