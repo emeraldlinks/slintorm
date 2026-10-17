@@ -180,6 +180,21 @@ Security and correctness release. **Contains breaking behaviour changes** — se
   takes `(filter?, opts?)`, applies the filter, and rejects unknown keys.
 - `SECURITY.md` now documents the real iteration count (600k) and storage format
   (4-part), and adds a vulnerability-reporting contact. Both were wrong.
+- **MongoDB: unknown filter keys are now rejected.** The allowlist ran *after* the
+  Mongo short-circuit, so `get`/`getAll`/`count`/`update`/`delete`/`deleteMany`
+  silently ignored a key built from a request body instead of rejecting it. This
+  is the behaviour `getAll()` gained above, now applied on every driver.
+- **MongoDB: `preload()` with a filter or limit, `whereRelated()`/`relatedTo()`,
+  and `enableAuditLogging()` now throw** instead of failing obscurely or, worse,
+  quietly returning more rows than asked for. Each is SQL-only; the previous
+  errors were `Unexpected token 'S', "SELECT users"... is not valid JSON` — raw SQL
+  fed to a JSON parser. `preload()` was the dangerous one: it returned *more*
+  rows than requested and said nothing.
+- **MySQL: a `string` column in a key specification is now `VARCHAR`, not `TEXT`.**
+  MySQL cannot index a BLOB/TEXT column without an explicit key length, so `@unique`,
+  `@index` and a `TEXT` primary key all failed at DDL time. Same for a column
+  carrying a literal `DEFAULT`. SQLite and Postgres are unchanged — they index TEXT
+  directly.
 
 ### Fixed
 - **A malformed stored hash crashed the login path.** `verifyPassword()` on a
@@ -193,6 +208,43 @@ Security and correctness release. **Contains breaking behaviour changes** — se
   anyone relying on the previous erase behaviour — use `forceDelete()` instead.
 - `logs: true` no longer prints bound parameter values. **Breaking** for anyone
   parsing those logs; set `logParams: true` to restore.
+- MongoDB now rejects unknown filter keys, like every other driver.
+- MongoDB `preload()` with a filter or limit, `whereRelated()`/`relatedTo()` and
+  `enableAuditLogging()` now throw instead of failing obscurely or — for
+  `preload()` — silently returning more rows than requested. All three are SQL-only.
+- MySQL maps a `string` column that appears in a key specification (`@unique`,
+  `@index`, primary key) or carries a literal `DEFAULT` to `VARCHAR` instead of
+  `TEXT`. **Breaking** only for schemas that relied on MySQL rejecting such DDL.
+- `logs: true` no longer prints MongoDB document values. **Breaking** for anyone
+  scraping those logs; set `logParams: true` to restore.
+- **`logs: true` printed every MongoDB document verbatim.** Mongo carries its values
+  inside the command document rather than in a parameter array, so redaction applied
+  to bound SQL parameters saw an empty array and every insert and update reached
+  stdout in full.
+- **`insert()` never emitted `afterInsert` on MongoDB**, so plugins and audit logging
+  did nothing on that driver while working everywhere else — the same defect already
+  fixed for PostgreSQL.
+- **The migrator believed every existing column was missing on MySQL.** Listing them
+  went through `information_schema.columns`, whose column name could not be read on
+  that driver, so it tried to `DROP` and `ADD` every column and each statement failed
+  inside a `catch`. Schema evolution silently did nothing; it now reads `SHOW COLUMNS`.
+- **MySQL `upsert()` reported updates as inserts** — the `ON DUPLICATE KEY UPDATE`
+  branch returned a hardcoded `"inserted"`.
+- **MySQL transactions could not run at all** — `BEGIN`/`COMMIT`/`ROLLBACK`/`SAVEPOINT`
+  went through the prepared-statement protocol, which does not implement them.
+- **MySQL audit writes failed** — an ISO-8601 string was sent to a `DATETIME` column,
+  which accepts only `YYYY-MM-DD HH:MM:SS`.
+- **MySQL `forNoKeyUpdate()` emitted `FOR NO KEY UPDATE`**, which MySQL has no
+  equivalent for. It now throws at build time, as row locking already did on SQLite.
+- **The test suite could not exit on Postgres.** It opened 27 `ORMManager`s and one
+  `DBAdapter` but closed 3; each unclosed client held a socket, so the event loop
+  never drained and CI sat until the 6-hour job timeout on a run whose log ended on
+  "233/233 passed". All are closed in teardown now, and the runner names any handle
+  still active afterwards. Every test job also has `timeout-minutes` so a future hang
+  fails fast with a readable log.
+- **The CI matrix did not test what it claimed to.** The MySQL job called
+  `npm run test:mysql`, which did not exist, so npm exited non-zero in ~39 s and the
+  suite had never once run against MySQL.
 
 ---
 
