@@ -885,13 +885,18 @@ export class Migrator {
           String(r.column_name).toLowerCase()
         );
       case "mysql":
-        res = await this.exec(
-          `SELECT column_name FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=?`,
-          [table]
-        );
-        return (res.rows || []).map((r: any) =>
-          String(r.column_name).toLowerCase()
-        );
+        // SHOW COLUMNS rather than information_schema.columns. The
+        // information_schema query returned rows whose column name could not be
+        // read on this driver, so every existing column came back as
+        // "undefined": the migrator believed the whole table was missing, tried
+        // to DROP and ADD every column, and each statement failed — silently,
+        // because the ALTERs are wrapped in catch. SHOW COLUMNS names the field
+        // `Field` and needs no placeholder.
+        res = await this.exec(`SHOW COLUMNS FROM ${this.qt(table)}`);
+        return (res.rows || []).map((r: any) => {
+          const name = r?.Field ?? r?.column_name ?? (Array.isArray(r) ? r[0] : undefined);
+          return String(name ?? "").toLowerCase();
+        });
     }
     return [];
   }
