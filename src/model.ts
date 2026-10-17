@@ -303,8 +303,12 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
     function buildWhereClause(filter: Partial<T>) {
       const keys = Object.keys(filter);
       if (!keys.length) throw new Error("Filter must contain at least one field");
-      if (driver === "mongodb") return { mongoFilter: filter };
+      // Validate BEFORE the MongoDB short-circuit below. An unknown key silently
+      // dropped by the Mongo filter builder is exactly the "a filter that
+      // quietly does nothing" case — indistinguishable from one that worked —
+      // so the guard is driver-independent.
       assertFilterKeysAllowed(keys, filter as Record<string, any>);
+      if (driver === "mongodb") return { mongoFilter: filter };
       const isPg = driver === "postgres";
 
       // A null/undefined value must become `IS NULL`, never `= ?`.
@@ -510,6 +514,11 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
             const pk = modelSchema?.primaryKey || "id";
             const pkVal = (cleaned as any)[pk];
             if (hooks?.onCreateAfter) await hooks.onCreateAfter(cleaned);
+            // Returning here without emitting skipped `afterInsert` entirely on
+            // MongoDB, so plugins and audit logging silently did nothing on this
+            // driver while working on SQLite/MySQL/Postgres — the same defect
+            // the postgres branch below was fixed for.
+            await emit("afterInsert", cleaned);
             return attachEntityMethods(cleaned, { [pk]: pkVal } as Partial<T>, this);
           }
         } else {

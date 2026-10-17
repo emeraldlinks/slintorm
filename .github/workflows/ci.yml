@@ -51,6 +51,7 @@ jobs:
   edge:
     name: test · edge (postgrest)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -74,6 +75,7 @@ jobs:
   sqlite:
     name: test · sqlite
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -90,6 +92,7 @@ jobs:
   postgres:
     name: test · postgres ${{ matrix.version }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -124,6 +127,7 @@ jobs:
   mysql:
     name: test · mysql ${{ matrix.version }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -155,6 +159,7 @@ jobs:
   mongodb:
     name: test · mongodb ${{ matrix.version }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

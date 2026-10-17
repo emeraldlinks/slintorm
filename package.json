@@ -64,6 +64,7 @@
     "test:sqlite": "npm run test:suite",
     "test:pg": "PG_ONLY=1 npm run test:suite",
     "test:mongo": "MONGO_ONLY=1 npm run test:suite",
+    "test:mysql": "MYSQL_ONLY=1 npm run test:suite",
     "test:all": "node --import tsx/esm src/slintorm.test.ts",
     "test:suite": "node --import tsx/esm src/slintorm.test.ts",
     "test:types": "tsc -p tsconfig.json --noEmit",

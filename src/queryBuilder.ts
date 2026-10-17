@@ -369,6 +369,17 @@ export class QueryBuilder<T extends Record<string, any>> {
   preload<K extends PreloadPath<T>>(relation: K, filter: (qb: QueryBuilder<T>) => void, limit: number, order?: "asc" | "desc"): this;
   preload<K extends PreloadPath<T>>(relation: K, arg2?: any, arg3?: any, arg4?: "asc" | "desc") {
     const key = relation as string;
+    // The Mongo fetch path applies only the foreign-key `$in`, so a preload
+    // filter or limit was dropped without error and the caller got back MORE
+    // rows than it asked for. Refuse rather than over-return.
+    if (this.orm?.dialect === "mongodb" && (typeof arg2 === "function" || typeof arg2 === "number")) {
+      throw new Error(
+        `preload("${key}", …) with a filter or limit is not supported on MongoDB and was not applied.\n` +
+          `The Mongo fetch path only applies the relation's foreign key, so the extra\n` +
+          `conditions would be silently dropped and too many rows returned.\n` +
+          `Query the related collection directly, or use a SQL driver.`,
+      );
+    }
     if (typeof arg2 === "function") {
       const fakeQB = new QueryBuilder<T>(this.table, this.dir, this.exec, this.modelName, this.schema, this.orm);
       arg2(fakeQB);
@@ -447,6 +458,17 @@ export class QueryBuilder<T extends Record<string, any>> {
 
   private async _resolvePendingRelated(): Promise<void> {
     if (!this._pendingRelated.length) return;
+    // This walks the relation path with hand-written SELECTs. On MongoDB the
+    // adapter parses its argument as a JSON command, so those SELECTs failed as
+    // `Unexpected token 'S', "SELECT users"... is not valid JSON` — an error
+    // that names neither the cause nor the fix.
+    if (this.orm?.dialect === "mongodb") {
+      throw new Error(
+        `whereRelated()/relatedTo() is not supported on MongoDB and was not applied.\n` +
+          `It resolves the relation path with raw SQL, which the Mongo command format cannot express.\n` +
+          `Use preload(), which fetches related collections natively, or use a SQL driver.`,
+      );
+    }
     const dialect = Dialects[this.orm?.dialect || "sqlite"];
 
     for (const pending of this._pendingRelated) {

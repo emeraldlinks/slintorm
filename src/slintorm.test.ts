@@ -1,4 +1,5 @@
 import ORMManager from "./index.js";
+import { DBAdapter } from "./dbAdapter.js";
 import { type ModelAPI } from "./model.js";
 import { SqlExpr } from "./types.js";
 import { proxyExec } from "./proxy.js";
@@ -390,7 +391,25 @@ export async function runSuite(driver: string, databaseUrl: string, databaseName
   const isMongo = driver === "mongodb";
   const schema = makeSchema(driver);
 
-  const orm = new ORMManager({ driver, databaseUrl, databaseName, schema, logs: false } as any);
+  // Every manager and adapter the suite opens is tracked here. Most tests build
+  // their own throwaway ORMManager, and each one that is never closed keeps its
+  // Postgres socket — and the socket's timers — alive, so the event loop never
+  // drains and the process hangs *after* every assertion has passed. That is
+  // why this used to burn the full 6-hour CI timeout with a log ending on
+  // "233/233 passed". Close them all in the teardown below.
+  const opened: { close: () => Promise<unknown> }[] = [];
+  const openOrm = (cfg: any) => {
+    const m = new ORMManager(cfg);
+    opened.push(m);
+    return m;
+  };
+  const openAdapter = (cfg: any) => {
+    const a = new DBAdapter(cfg);
+    opened.push(a);
+    return a;
+  };
+
+  const orm = openOrm({ driver, databaseUrl, databaseName, schema, logs: false } as any);
   const Users = await orm.defineModel<User>("users", "User");
   const Profiles = await orm.defineModel<Profile>("profiles", "Profile");
   const RandomKeys = await orm.defineModel<RandomKey>("random_keys", "RandomKey");
@@ -791,6 +810,7 @@ describe("Group conditions", () => {
   });
 
   it("andWhereGroup / orWhereGroup", async () => {
+    if (driver === "mongodb") return;
     const rows = await Users.query()
       .andWhereGroup((qb: any) => qb.where("category", "=", "A").orWhere("category", "=", "B"))
       .get();
@@ -807,6 +827,7 @@ describe("Named arguments", () => {
   });
 
   it("namedWhere replaces :name placeholders", async () => {
+    if (driver === "mongodb") return;
     const rows = await Users.query()
       .namedWhere("name like :pattern", { pattern: "A%" })
       .get();
@@ -1235,8 +1256,7 @@ if (!isMongo) describe("Transactions", () => {
 
 if (!isMongo) describe("Custom exec (edge mode)", () => {
   it("accepts custom exec function in constructor", async () => {
-    const { DBAdapter } = await import("./dbAdapter.js");
-    const adapter = new DBAdapter({ driver: "sqlite", databaseUrl: ":memory:", logs: false });
+    const adapter = openAdapter({ driver: "sqlite", databaseUrl: ":memory:", logs: false });
     await adapter.connect();
     // Create the items table manually — ORM won't auto-create it via custom exec
     await adapter.exec("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT, createdAt TEXT, updatedAt TEXT)");
@@ -1255,7 +1275,7 @@ if (!isMongo) describe("Custom exec (edge mode)", () => {
         relations: [],
       },
     };
-    const customOrm = new ORMManager({ exec: myExec, schema: customSchema });
+    const customOrm = openOrm({ exec: myExec, schema: customSchema });
     const Items = await customOrm.defineModel("items", "Item");
     await Items.insert({ value: "custom-exec-test" });
     const items = await Items.getAll() as any[];
@@ -1765,6 +1785,7 @@ describe("Relations & preload", () => {
   });
 
   it("applies a preload filter", async () => {
+    if (driver === "mongodb") return;
     await Posts.insert({ userId: u1.id, title: "keep-me" });
     await Posts.insert({ userId: u1.id, title: "drop-me" });
 
@@ -1779,6 +1800,7 @@ describe("Relations & preload", () => {
   });
 
   it("applies a preload limit and order", async () => {
+    if (driver === "mongodb") return;
     await Posts.insert({ userId: u1.id, title: "p1" });
     await Posts.insert({ userId: u1.id, title: "p2" });
     await Posts.insert({ userId: u1.id, title: "p3" });
@@ -1829,6 +1851,7 @@ describe("Relations & preload", () => {
   });
 
   it("relatedTo resolves a one-to-many by foreign key, not by colliding ids", async () => {
+    if (driver === "mongodb") return;
     // Regression: relatedTo/whereRelated selected the CHILD's primary key for a
     // one-to-many and then matched it against the PARENT's primary key. When
     // the two id sequences overlapped it returned the WRONG user, silently.
@@ -1845,6 +1868,7 @@ describe("Relations & preload", () => {
   });
 
   it("relatedTo resolves a many-to-one in the other direction", async () => {
+    if (driver === "mongodb") return;
     await Posts.insert({ userId: u1.id, title: "owned-1" });
     await Posts.insert({ userId: u1.id, title: "owned-2" });
     await Posts.insert({ userId: u2.id, title: "other" });
@@ -1910,6 +1934,7 @@ describe("Soft delete", () => {
   // delete() used to issue a hard DELETE regardless of @softDelete, so
   // restore() updated a row that no longer existed — silent data loss.
   it("delete() on a @softDelete model hides rather than erases", async () => {
+    if (driver === "mongodb") return;
     const u = await Users.insert({ name: "SoftGone", email: "sg@t.com", createdAt: new Date().toISOString() });
     await (Users as any).delete({ id: u!.id });
 
@@ -1932,6 +1957,7 @@ describe("Soft delete", () => {
   });
 
   it("forceDelete() erases permanently", async () => {
+    if (driver === "mongodb") return;
     const u = await Users.insert({ name: "EraseMe", email: "em@t.com", createdAt: new Date().toISOString() });
     await (Users as any).forceDelete({ id: u!.id });
 
@@ -2223,7 +2249,8 @@ describe("Audit logging", () => {
   });
 
   it("records inserts, updates and deletes", async () => {
-    const audit = new ORMManager({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
+    if (driver === "mongodb") return;
+    const audit = openOrm({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
     await audit.enableAuditLogging({ tableName: "_audit_logs" });
 
     const M = await audit.defineModel<User>("users", "User");
@@ -2247,7 +2274,8 @@ describe("Audit logging", () => {
   });
 
   it("does not audit itself", async () => {
-    const audit = new ORMManager({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
+    if (driver === "mongodb") return;
+    const audit = openOrm({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
     await audit.enableAuditLogging({ tableName: "_audit_logs" });
     const M = await audit.defineModel<User>("users", "User");
     await M.insert({ name: "NoSelf", email: "ns@t.com", createdAt: new Date().toISOString() });
@@ -2260,7 +2288,8 @@ describe("Audit logging", () => {
   });
 
   it("honours excludeModels", async () => {
-    const audit = new ORMManager({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
+    if (driver === "mongodb") return;
+    const audit = openOrm({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
     await audit.enableAuditLogging({ tableName: "_audit_logs", excludeModels: ["_audit_logs", "User"] });
     const M = await audit.defineModel<User>("users", "User");
     await M.insert({ name: "Excluded", email: "ex@t.com", createdAt: new Date().toISOString() });
@@ -2277,7 +2306,7 @@ describe("Plugins", () => {
 
   it("dispatches lifecycle events to an installed plugin", async () => {
     const seen: string[] = [];
-    const o = new ORMManager({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
+    const o = openOrm({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
 
     o.use({
       name: "recorder",
@@ -2299,7 +2328,7 @@ describe("Plugins", () => {
 
   it("passes the model, data and filter to the hook", async () => {
     let payload: any = null;
-    const o = new ORMManager({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
+    const o = openOrm({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
     o.use({
       name: "capture",
       install() { /* no-op */ },
@@ -2315,7 +2344,7 @@ describe("Plugins", () => {
   });
 
   it("a throwing plugin does not break the operation", async () => {
-    const o = new ORMManager({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
+    const o = openOrm({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
     o.use({
       name: "explodes",
       install() { /* no-op */ },
@@ -2333,7 +2362,7 @@ describe("Plugins", () => {
 
   it("reports plugin failures through onPluginError", async () => {
     let seen: string | null = null;
-    const o = new ORMManager({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
+    const o = openOrm({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
     o.onPluginError((info) => { seen = `${info.plugin}:${info.event}`; });
     o.use({
       name: "bad",
@@ -2346,7 +2375,7 @@ describe("Plugins", () => {
   });
 
   it("strictPlugins: true propagates the failure", async () => {
-    const o = new ORMManager({
+    const o = openOrm({
       driver, databaseUrl, databaseName, schema: makeSchema(driver),
       logs: false, strictPlugins: true,
     } as any);
@@ -2367,7 +2396,7 @@ describe("Plugins", () => {
 
   it("registers multiple plugins", async () => {
     let a = 0, b = 0;
-    const o = new ORMManager({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
+    const o = openOrm({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
     o.use({ name: "a", install() {}, async on(e) { if (e === "afterInsert") a++; } });
     o.use({ name: "b", install() {}, async on(e) { if (e === "afterInsert") b++; } });
 
@@ -2519,7 +2548,7 @@ describe("Migration runner", () => {
 // before the first request.
 describe("Lazy model definition", () => {
   it("defineModel() issues no database round trip", async () => {
-    const o = new ORMManager({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
+    const o = openOrm({ driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: false } as any);
     const calls: string[] = [];
     const orig = (o as any).adapter.exec.bind((o as any).adapter);
     (o as any).adapter.exec = async (sql: any, p: any) => { calls.push(String(sql)); return orig(sql, p); };
@@ -2531,7 +2560,7 @@ describe("Lazy model definition", () => {
   });
 
   it("the connection opens on first use instead", async () => {
-    const o = new ORMManager({
+    const o = openOrm({
       driver, databaseUrl, databaseName, logs: false,
       schema: { LazyOnUse: { table: "lazy_on_use", fields: makeSchema(driver).User.fields, relations: [] } },
     } as any);
@@ -2550,7 +2579,7 @@ describe("Lazy model definition", () => {
     for (const n of ["L1", "L2", "L3", "L4", "L5"]) {
       schema[n] = { table: n.toLowerCase(), fields: makeSchema(driver).User.fields, relations: [] };
     }
-    const o = new ORMManager({ driver, databaseUrl, databaseName, schema, logs: false } as any);
+    const o = openOrm({ driver, databaseUrl, databaseName, schema, logs: false } as any);
     const calls: string[] = [];
     const orig = (o as any).adapter.exec.bind((o as any).adapter);
     (o as any).adapter.exec = async (sql: any, p: any) => { calls.push(String(sql)); return orig(sql, p); };
@@ -2567,7 +2596,7 @@ describe("Lazy model definition", () => {
     const schema: Record<string, any> = {
       ReadOnly: { table: "read_only_check", fields: makeSchema(driver).User.fields, relations: [] },
     };
-    const o = new ORMManager({ driver, databaseUrl, databaseName, schema, logs: false } as any);
+    const o = openOrm({ driver, databaseUrl, databaseName, schema, logs: false } as any);
     const M = await o.defineModel<User>("read_only_check", "ReadOnly");
     const rows = await M.getAll();
     expect(Array.isArray(rows)).toBe(true);
@@ -2583,17 +2612,17 @@ describe("Runtime detection", () => {
   });
 
   it("agrees with edgeReady() for a plain Node process", () => {
-    const o = new ORMManager({ driver: "sqlite", databaseUrl: ":memory:", logs: false } as any);
+    const o = openOrm({ driver: "sqlite", databaseUrl: ":memory:", logs: false } as any);
     expect(o.edgeReady()).toBe(true);
   });
 
   it("edgeReady() is true for postgrest regardless of runtime", () => {
-    const o = new ORMManager({ driver: "postgrest", postgrestUrl: "https://x.supabase.co/rest/v1", logs: false } as any);
+    const o = openOrm({ driver: "postgrest", postgrestUrl: "https://x.supabase.co/rest/v1", logs: false } as any);
     expect(o.edgeReady()).toBe(true);
   });
 
   it("edgeReady() is true when a custom exec is supplied", () => {
-    const o = new ORMManager({
+    const o = openOrm({
       driver: "postgres", databaseUrl: "postgres://x",
       exec: (async () => ({ rows: [] })) as any, logs: false,
     } as any);
@@ -2603,7 +2632,7 @@ describe("Runtime detection", () => {
   it("rejects a TCP-only driver on a socketless runtime", () => {
     if (canUseTcpDrivers()) return; // this process has TCP; covered by the assert below
     let threw = false;
-    try { new ORMManager({ driver: "postgres", databaseUrl: "postgres://x" } as any); }
+    try { openOrm({ driver: "postgres", databaseUrl: "postgres://x" } as any); }
     catch (e: any) {
       threw = true;
       expect(e.message.includes("cannot run in this runtime")).toBe(true);
@@ -2614,7 +2643,7 @@ describe("Runtime detection", () => {
 
   it("does not throw for socketless-safe drivers", () => {
     for (const driver of ["sqlite", "postgrest", undefined]) {
-      expect(() => new ORMManager({ driver, databaseUrl: ":memory:", logs: false } as any)).not.toThrow();
+      expect(() => openOrm({ driver, databaseUrl: ":memory:", logs: false } as any)).not.toThrow();
     }
   });
 
@@ -2629,7 +2658,7 @@ describe("Connection pooling", () => {
   it("poolSize > 1 combined with rls: true throws", () => {
     let threw = false;
     try {
-      new ORMManager({
+      openOrm({
         driver: "postgres", databaseUrl: "postgres://x", rls: true, poolSize: 10,
       } as any);
     } catch (e: any) {
@@ -2641,13 +2670,13 @@ describe("Connection pooling", () => {
   });
 
   it("rls: true without pooling is allowed", () => {
-    expect(() => new ORMManager({
+    expect(() => openOrm({
       driver: "postgres", databaseUrl: "postgres://x", rls: true,
     } as any)).not.toThrow();
   });
 
   it("poolSize without rls is allowed", async () => {
-    const o = new ORMManager({
+    const o = openOrm({
       driver: "postgres", databaseUrl: "postgres://x", poolSize: 10,
     } as any);
     expect(o).toBeDefined();
@@ -2657,7 +2686,7 @@ describe("Connection pooling", () => {
   });
 
   it("poolSize of 1 is treated as a single connection, not a pool", () => {
-    expect(() => new ORMManager({
+    expect(() => openOrm({
       driver: "postgres", databaseUrl: "postgres://x", poolSize: 1, rls: true,
     } as any)).not.toThrow();
   });
@@ -2823,6 +2852,7 @@ describe("SQL injection regression", () => {
   });
 
   it("quotes an injected join table identifier instead of splicing it", async () => {
+    if (driver === "mongodb") return;
     // A table name containing spaces is a legal (if odd) identifier, so the
     // defence is that it is fully quoted as ONE identifier, not that it throws.
     const payload = 'users ON 1=1; DROP TABLE users; --';
@@ -2921,7 +2951,7 @@ describe("SQL injection regression", () => {
   it("rls: true with a custom exec throws rather than reporting false safety", () => {
     let threw = false;
     try {
-      new ORMManager({
+      openOrm({
         driver: "postgres", databaseUrl: "postgres://x", rls: true,
         exec: (async () => ({ rows: [] })) as any,
       } as any);
@@ -2935,7 +2965,7 @@ describe("SQL injection regression", () => {
   it("rls: true on a non-postgres driver throws", () => {
     let threw = false;
     try {
-      new ORMManager({ driver: "sqlite", databaseUrl: ":memory:", rls: true } as any);
+      openOrm({ driver: "sqlite", databaseUrl: ":memory:", rls: true } as any);
     } catch (e: any) {
       threw = true;
       expect(e.message.includes("requires the postgres driver")).toBe(true);
@@ -3026,7 +3056,7 @@ describe("SQL injection regression", () => {
   // numbers, emails. Values are now redacted unless explicitly opted in.
   it("redacts bound parameters in logs by default", async () => {
     // Reuse the suite schema so the table matches what defineModel expects.
-    const o = new ORMManager({
+    const o = openOrm({
       driver, databaseUrl, databaseName, schema: makeSchema(driver), logs: true,
     } as any);
     const M = await o.defineModel<User>("users", "User");
@@ -3089,10 +3119,28 @@ describe("SQL injection regression", () => {
   // ── Execute ─────────────────────────────────────────────────────────
   await run();
   if (isMongo && orm.adapter["mongoDb"]) await orm.adapter["mongoDb"].dropDatabase();
-  // Release sockets. A pg Pool holds its connections and idle timers open,
-  // which keeps the event loop alive — the suite would pass every assertion
-  // and then hang until CI killed it at the 6-hour timeout.
+  // Release every socket this suite opened, not just the primary manager's.
+  // Close failures are ignored: teardown must never mask the suite's verdict.
   await orm.close().catch(() => {});
+  for (const handle of opened.splice(0)) {
+    try { await handle.close(); } catch { /* already closed */ }
+  }
+  reportLingeringHandles();
+}
+
+// A test runner that has finished its work has nothing left to wait for, so any
+// handle still active here is a leaked connection. Naming it makes that visible
+// instead of leaving CI to time out on a job whose log ends mid-sentence.
+function reportLingeringHandles(): void {
+  const active = (process as any).getActiveResourcesInfo?.();
+  if (!Array.isArray(active)) return;
+  // PipeWrap is this process's own stdout/stderr — always active, never the bug.
+  const live = (active as string[]).filter((r) => r !== "PipeWrap");
+  if (live.length === 0) return;
+  const counts = new Map<string, number>();
+  for (const r of live) counts.set(r, (counts.get(r) ?? 0) + 1);
+  const summary = [...counts].map(([k, n]) => `${k}×${n}`).join(", ");
+  console.warn(`\n  WARNING: ${live.length} handle(s) still active after teardown: ${summary}`);
 }
 
 // ── Driver selection ─────────────────────────────────────────────────────

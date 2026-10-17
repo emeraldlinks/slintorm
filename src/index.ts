@@ -737,6 +737,19 @@ export default class ORMManager<
     const tableName = options.tableName || "_audit_logs";
     const exclude = new Set(options.excludeModels || ["_audit_logs"]);
     const driver = this.adapter.driver || "sqlite";
+
+    // Audit logging is a SQL table plus INSERT statements. On MongoDB the exec
+    // path parses its argument as a JSON command, so the CREATE TABLE below
+    // surfaced as `Unexpected token 'C', "CREATE TAB"... is not valid JSON` —
+    // an error that names neither the cause nor the fix. Refuse it up front.
+    if (driver === "mongodb") {
+      throw new Error(
+        `enableAuditLogging() is not supported on MongoDB and was not enabled.\n` +
+          `It provisions a SQL table and writes INSERT statements, which the Mongo command\n` +
+          `format cannot express. Record changes in a Mongo collection yourself, or use a SQL driver.`,
+      );
+    }
+
     const q = (c: string) => quoteIdentifier((driver as any) ?? "sqlite", c);
     const ph = (i: number) => driver === "postgres" ? `$${i + 1}` : "?";
 
