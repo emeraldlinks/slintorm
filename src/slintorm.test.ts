@@ -170,8 +170,32 @@ export function clearTestState() {
   currentSuite = null;
 }
 
+/**
+ * Reject if `p` does not settle within `ms`, naming what was being awaited.
+ * A hung test is otherwise indistinguishable from a slow one until CI's
+ * 6-hour job timeout kills it with no indication of the culprit.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  if (!ms || ms <= 0 || !Number.isFinite(ms)) return p;
+  let timer: any;
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`TIMED OUT after ${ms}ms: ${label}`)),
+        ms,
+      );
+    }),
+  ]).finally(() => clearTimeout(timer)) as Promise<T>;
+}
+
 export async function run() {
   let total = 0, passed = 0;
+
+  // A hung test used to be invisible: the runner awaited it forever, CI killed
+  // the job at its 6-hour timeout, and the log stopped with no indication of
+  // which test was stuck. Bound each test so a hang is reported by name.
+  const TEST_TIMEOUT_MS = Number(process.env.SLINTORM_TEST_TIMEOUT_MS ?? 60_000);
 
   for (const hook of globalBeforeAllHooks) await hook();
 
@@ -180,9 +204,14 @@ export async function run() {
     for (const hook of suite.beforeAllHooks) await hook();
     for (const test of suite.tests) {
       total++;
+      let timer: any;
       try {
-        for (const hook of suite.beforeEachHooks) await hook();
-        await test.fn();
+        for (const hook of suite.beforeEachHooks) {
+          await withTimeout(Promise.resolve().then(hook), TEST_TIMEOUT_MS,
+            `${suite.name} > ${test.name} (beforeEach)`);
+        }
+        await withTimeout(Promise.resolve().then(() => test.fn()), TEST_TIMEOUT_MS,
+          `${suite.name} > ${test.name}`);
         passed++;
         console.log(`    ✓ ${test.name}`);
       } catch (err: any) {
