@@ -3,10 +3,13 @@
 **A lightweight, GORM-inspired TypeScript ORM for SQLite, PostgreSQL, MySQL, MongoDB and PostgREST — zero-config migrations, a full SQL query builder, and everything hangs off your model instances.**
 
 > **Feature parity is not uniform across drivers.** SQL drivers get the full
-> query builder. MongoDB gets a complete CRUD engine — filters, preloads,
-> transactions, index migrations — but not SQL joins, CTEs, `UNION`, `HAVING`,
-> window functions, subqueries, or full-text search. Constructing one of those on
-> Mongo **throws** rather than silently returning unfiltered rows. On V8-isolate
+> query builder. MongoDB gets CRUD, filters, plain `preload()`, and index
+> migrations — `transaction()` uses a real session, so it needs a replica set.
+> It does not have SQL joins, CTEs, `UNION`, `HAVING`, window functions,
+> subqueries, or full-text search, and `relatedTo()`/`whereRelated()`,
+> `preload()` with a filter or limit, and `enableAuditLogging()` are SQL-only.
+> Constructing one of those on Mongo **throws** rather than silently returning
+> unfiltered rows — or, worse, more rows than you asked for. On V8-isolate
 > edge runtimes use `driver: 'postgrest'`. See `SERVERLESS.md` for the matrix.
 
 No schema DSL to learn. No Prisma Client generation step. No separate import for every query feature. Write a TypeScript interface, annotate a few fields with comments, call `migrate()`, and start querying.
@@ -881,7 +884,7 @@ Available from `slintorm/http-driver`:
 - Only the selected database driver is required at runtime — others are never imported.
 - Use `autoInstallDrivers: false` if you prefer to install the driver manually.
 - All queries return mapped boolean fields, parsed JSON fields, and respect configured excludes automatically.
-- MongoDB support covers CRUD, filtering, and preloads via the same query builder API; DDL/migrations are limited to index creation (`@index`/`@unique`) since MongoDB is schemaless.
+- MongoDB support covers CRUD, filtering, and `preload()` via the same query builder API; DDL/migrations are limited to index creation (`@index`/`@unique`) since MongoDB is schemaless. `preload()` accepts no filter or limit there — it throws rather than returning every related row.
 - `SqlExpr.raw()` is an escape hatch for raw SQL in values — use it sparingly; driver-specific syntax may not be portable across databases.
 - `dryRun()` returns the SQL the ORM would execute, but does not run it — useful for debugging or logging.
 - `stream()` uses `limit/offset` internally; avoid mutations on the source table between batches in a streaming loop.

@@ -34,6 +34,9 @@ green having tested nothing.
 
 ```bash
 npm run test:sqlite                                  # :memory:, default
+npm run test:pg                                      # PG_ONLY=1
+npm run test:mysql                                   # MYSQL_ONLY=1
+npm run test:mongo                                   # MONGO_ONLY=1
 
 PG_ONLY=1    PG_URL=postgresql://postgres:postgres@localhost:5432/slintorm_test npm test
 MYSQL_ONLY=1 MYSQL_URL=mysql://root:mysql@127.0.0.1:3306/slintorm_test      npm test
@@ -48,6 +51,20 @@ PG_URL=... MYSQL_URL=... MONGO_URL=... npm test
 
 Output reports each driver explicitly, including `SKIPPED <driver>` lines, so a
 partial run never looks complete.
+
+**Every database in the matrix is exercised in CI**, not just SQLite. That was
+not true until recently: the MySQL job called `npm run test:mysql`, which did not
+exist, so `npm` exited non-zero in ~39 s and the suite had never once run against
+MySQL. If you add a driver script, wire it into `.github/workflows/ci.yml` in the
+same change, and check the job actually runs assertions rather than failing in
+setup.
+
+Every test job sets `timeout-minutes`. A driver hang used to burn the default
+6-hour job limit on a run whose log ended on `233/233 passed` with nothing after
+it — the results print, then the process cannot exit, so the evidence needed to
+diagnose it never reached the log. The runner now closes every connection it
+opened and names any handle still active afterwards; the timeout is the backstop
+that keeps a future hang cheap.
 
 The **edge suite** (`driver: "postgrest"`) needs no credentials — it runs against
 a mock PostgREST server and is invoked automatically by `npm test`:

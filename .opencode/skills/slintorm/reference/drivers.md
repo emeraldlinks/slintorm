@@ -66,6 +66,31 @@ const orm = new ORMManager({
 const orm = new ORMManager({ driver: "mongodb", databaseUrl: process.env.MONGO_URL! });
 ```
 
+## What MongoDB cannot do
+
+MongoDB is a document store, so anything expressed as SQL has no translation.
+Each of these **throws** rather than being silently dropped — a filter that
+quietly does nothing is indistinguishable from one that works:
+
+- **`whereRaw()` / `SqlExpr.raw()`** — raw SQL text.
+- **`join()`** — the Mongo command format has no join stage. Use `preload()`.
+- **`whereRelated()` / `relatedTo()`** — resolves the relation path with
+  hand-written `SELECT`s. Use `preload()`, which fetches related collections
+  natively.
+- **`preload()` with a filter or limit** — only the relation's foreign key is
+  applied, so the extra conditions would be dropped and **too many rows
+  returned**. Filter the related collection directly instead.
+- **`enableAuditLogging()`** — provisions a SQL table and writes `INSERT`s.
+  Record changes in a Mongo collection yourself.
+
+**What works**: full CRUD, every `where` form (`where`, `in`, `between`,
+`like`, `orWhereGroup`, `IS NULL`), `orderBy`, `limit`/`offset`, `count`,
+aggregates, and `preload()` without a filter or limit. Unknown filter keys are
+rejected on Mongo exactly as on every other driver.
+
+`orm.transaction()` uses a Mongo session, which requires a **replica set** — a
+standalone `mongod` cannot do multi-document transactions.
+
 ## Runtime detection
 
 ```ts
@@ -168,6 +193,10 @@ new ORMManager({ logs: true, logParams: true })  // ⚠ includes bound values
 
 Bound parameters are user data — tokens, card numbers, emails. `logs: true`
 alone does not print them. Only enable `logParams` in a local terminal.
+
+MongoDB carries its values *inside* the command document rather than in a
+parameter array, so those are redacted too; `collection` and `action` stay
+readable, since they are structure rather than data.
 
 ## Plugins
 
