@@ -1,9 +1,11 @@
 # Changelog
 
-## [Unreleased]
+## [1.10.0] — 2026-10-17
 
-Security and correctness release. **Contains breaking behaviour changes** — see
-`TODO.md` for the full remediation list and `AUDIT.md` for the analysis.
+Security and correctness release. **Contains breaking behaviour changes.**
+It also brings the test matrix up to what the README always claimed: SQLite,
+MySQL, MongoDB, PostgreSQL 16 and 17, and the PostgREST edge path all run in CI,
+and all of them pass.
 
 ### Security — fixed
 - **SQL injection via filter-object keys (Critical).** `Model.getAll(req.body)` and
