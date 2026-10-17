@@ -293,12 +293,16 @@ export class Migrator {
       const nullFrag = isNullable ? "" : "NOT NULL";
 
       // MySQL refuses to index a BLOB/TEXT column without an explicit key
-      // length: `BLOB/TEXT column 'email' used in key specification without a
-      // key length`. SQLite and Postgres index TEXT directly, so this is
-      // MySQL-only. A column that carries @unique or @index must therefore be
-      // a bounded VARCHAR there — there is no way to keep it TEXT and still
-      // declare the key the schema asked for.
-      if (this.driver === "mysql" && (isUnique || this.m(meta, "index"))) {
+      // length: `BLOB/TEXT column 'id' used in key specification without a
+      // key length`. That applies to a PRIMARY KEY just as much as to @unique
+      // or @index — any column that lands in a key specification. SQLite and
+      // Postgres index TEXT directly, so this is MySQL-only, and keeping such a
+      // column TEXT while declaring the key is not possible there.
+      const inKeySpec =
+        isUnique ||
+        this.m(meta, "primaryKey") === true ||
+        !!this.m(meta, "index");
+      if (this.driver === "mysql" && inKeySpec) {
         if (/^(TEXT|LONGTEXT|MEDIUMTEXT|TINYTEXT|BLOB)$/i.test(sqlType)) {
           const lenVal = this.m(meta, "length");
           const len = lenVal === undefined || lenVal === null ? 191 : Number(lenVal);
@@ -560,6 +564,16 @@ export class Migrator {
           /NOT NULL/i.test(safeColDef) &&
           !/DEFAULT/i.test(safeColDef)
         ) {
+          if (this.driver === "mysql") {
+            // MySQL also refuses a DEFAULT on a TEXT column ("BLOB, TEXT,
+            // GEOMETRY or JSON column 'x' can't have a default value"), so the
+            // column has to become a bounded VARCHAR before a default can be
+            // attached at all. Attaching one to TEXT fails just as silently.
+            safeColDef = safeColDef.replace(
+              /\b(LONGTEXT|MEDIUMTEXT|TINYTEXT|TEXT|BLOB)\b/i,
+              "VARCHAR(191)",
+            );
+          }
           safeColDef = safeColDef.replace(/NOT NULL/i, "NOT NULL DEFAULT ''");
         }
 
