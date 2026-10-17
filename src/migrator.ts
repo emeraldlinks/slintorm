@@ -81,6 +81,34 @@ export class Migrator {
     return end < 0 ? undefined : colDef.slice(1, end);
   }
 
+  /**
+   * Make a column definition safe to ADD to a table that already exists.
+   *
+   * SQLite and MySQL both refuse to add a NOT NULL column to a table holding
+   * rows unless the definition carries a default, and MySQL additionally
+   * refuses a default on a TEXT column — so there the column has to become a
+   * bounded VARCHAR before the default can be attached at all.
+   *
+   * Schema evolution runs through two separate paths (migrateSchema and
+   * diffSchema). Only one of them did this, so the same incremental change
+   * applied through one and failed silently through the other: the ALTER threw,
+   * the catch swallowed it, and every later query reported an unknown column.
+   */
+  private safeAddColumnDef(colDef: string): string {
+    let def = colDef.replace(/\s+PRIMARY KEY(\s+AUTOINCREMENT)?/i, "");
+    if (
+      (this.driver === "sqlite" || this.driver === "mysql") &&
+      /NOT NULL/i.test(def) &&
+      !/DEFAULT/i.test(def)
+    ) {
+      if (this.driver === "mysql") {
+        def = def.replace(/\b(LONGTEXT|MEDIUMTEXT|TINYTEXT|TEXT|BLOB)\b/i, "VARCHAR(191)");
+      }
+      def = def.replace(/NOT NULL/i, "NOT NULL DEFAULT ''");
+    }
+    return def;
+  }
+
   // ----------------------------------------------------------------
   // Meta helpers — transparently handle both "key" and "@key" variants
   // so the migrator works regardless of whether the schema generator
@@ -553,29 +581,7 @@ export class Migrator {
         const colName = rawColName.toLowerCase();
         if (existingCols.includes(colName)) continue;
 
-        let safeColDef = colDef.replace(/\s+PRIMARY KEY(\s+AUTOINCREMENT)?/i, "");
-        // SQLite and MySQL both refuse to add a NOT NULL column to a table that
-        // already holds rows unless the definition carries a default
-        // ("Field 'title' doesn't have a default value" on MySQL). The failure
-        // was swallowed by the catch below, so the column was silently never
-        // added and every later query failed with an unknown-column error.
-        if (
-          (this.driver === "sqlite" || this.driver === "mysql") &&
-          /NOT NULL/i.test(safeColDef) &&
-          !/DEFAULT/i.test(safeColDef)
-        ) {
-          if (this.driver === "mysql") {
-            // MySQL also refuses a DEFAULT on a TEXT column ("BLOB, TEXT,
-            // GEOMETRY or JSON column 'x' can't have a default value"), so the
-            // column has to become a bounded VARCHAR before a default can be
-            // attached at all. Attaching one to TEXT fails just as silently.
-            safeColDef = safeColDef.replace(
-              /\b(LONGTEXT|MEDIUMTEXT|TINYTEXT|TEXT|BLOB)\b/i,
-              "VARCHAR(191)",
-            );
-          }
-          safeColDef = safeColDef.replace(/NOT NULL/i, "NOT NULL DEFAULT ''");
-        }
+        const safeColDef = this.safeAddColumnDef(colDef);
 
         try {
           await this.exec(`ALTER TABLE ${this.qt(table)} ADD COLUMN ${safeColDef}`);
@@ -806,7 +812,7 @@ export class Migrator {
         const colName = col.toLowerCase();
         if (!existingCols.includes(colName)) {
           const colDef = await this._buildColumnDef(tableLower, col, info, true);
-          if (colDef) statements.push(`ALTER TABLE ${this.qt(tableLower)} ADD COLUMN ${colDef};`);
+          if (colDef) statements.push(`ALTER TABLE ${this.qt(tableLower)} ADD COLUMN ${this.safeAddColumnDef(colDef)};`);
         }
       }
     }
