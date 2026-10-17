@@ -550,8 +550,13 @@ export class Migrator {
         if (existingCols.includes(colName)) continue;
 
         let safeColDef = colDef.replace(/\s+PRIMARY KEY(\s+AUTOINCREMENT)?/i, "");
+        // SQLite and MySQL both refuse to add a NOT NULL column to a table that
+        // already holds rows unless the definition carries a default
+        // ("Field 'title' doesn't have a default value" on MySQL). The failure
+        // was swallowed by the catch below, so the column was silently never
+        // added and every later query failed with an unknown-column error.
         if (
-          this.driver === "sqlite" &&
+          (this.driver === "sqlite" || this.driver === "mysql") &&
           /NOT NULL/i.test(safeColDef) &&
           !/DEFAULT/i.test(safeColDef)
         ) {

@@ -1237,9 +1237,16 @@ describe("Proxy (edge-compatible)", () => {
 if (!isMongo) describe("Transactions", () => {
   beforeEach(async () => { await resetUsers(); });
 
+  // MySQL reads a double-quoted identifier as a string literal, so these
+  // statements have to go through the dialect quoter like every other one.
+  const insertUser = (name: string, email: string) => {
+    const qi = (n: string) => quoteIdentifier(driver as any, n);
+    return `INSERT INTO ${qi("users")} (${qi("name")}, ${qi("email")}, ${qi("createdAt")}) VALUES (?, ?, ?)`;
+  };
+
   it("runs a transaction that commits", async () => {
     await orm.transaction(async (trx) => {
-      await trx.exec('INSERT INTO "users" ("name", "email", "createdAt") VALUES (?, ?, ?)', ["TrxUser", "trx@t.com", new Date().toISOString()]);
+      await trx.exec(insertUser("TrxUser", "trx@t.com"), ["TrxUser", "trx@t.com", new Date().toISOString()]);
     });
     const found = await Users.get({ name: "TrxUser" });
     expect(found).notToBeNull();
@@ -1248,7 +1255,7 @@ if (!isMongo) describe("Transactions", () => {
   it("rolls back on error", async () => {
     try {
       await orm.transaction(async (trx) => {
-        await trx.exec('INSERT INTO "users" ("name", "email", "createdAt") VALUES (?, ?, ?)', ["RollbackUser", "rb@t.com", new Date().toISOString()]);
+        await trx.exec(insertUser("RollbackUser", "rb@t.com"), ["RollbackUser", "rb@t.com", new Date().toISOString()]);
         throw new Error("force rollback");
       });
     } catch {
