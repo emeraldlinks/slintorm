@@ -759,6 +759,15 @@ export default class ORMManager<
     const changedType = driver === "postgres" ? "TIMESTAMPTZ"
       : "DATETIME";
 
+    // MySQL's DATETIME accepts only 'YYYY-MM-DD HH:MM:SS'. An ISO-8601 string
+    // with a T and a trailing Z was rejected outright — "Incorrect datetime
+    // value" — so every audit write failed on that driver. SQLite stores this
+    // column as TEXT and Postgres takes TIMESTAMPTZ, so both keep ISO-8601.
+    const nowStamp = () => {
+      const iso = new Date().toISOString();
+      return driver === "mysql" ? `${iso.slice(0, 19).replace("T", " ")}` : iso;
+    };
+
     await this.adapter.exec(
       `CREATE TABLE IF NOT EXISTS ${q(tableName)} (
         ${q("id")} ${idType},
@@ -775,7 +784,7 @@ export default class ORMManager<
       if (exclude.has(event.model)) return;
       await this.adapter.exec(
         `INSERT INTO ${q(tableName)} (${q("model")}, ${q("action")}, ${q("recordId")}, ${q("newData")}, ${q("changedAt")}) VALUES (${ph(0)}, ${ph(1)}, ${ph(2)}, ${ph(3)}, ${ph(4)})`,
-        [event.model, "INSERT", String(event.data?.id ?? ""), JSON.stringify(event.data), new Date().toISOString()]
+        [event.model, "INSERT", String(event.data?.id ?? ""), JSON.stringify(event.data), nowStamp()]
       );
     });
 
@@ -783,7 +792,7 @@ export default class ORMManager<
       if (exclude.has(event.model)) return;
       await this.adapter.exec(
         `INSERT INTO ${q(tableName)} (${q("model")}, ${q("action")}, ${q("recordId")}, ${q("newData")}, ${q("oldData")}, ${q("changedAt")}) VALUES (${ph(0)}, ${ph(1)}, ${ph(2)}, ${ph(3)}, ${ph(4)}, ${ph(5)})`,
-        [event.model, "UPDATE", String(event.data?.id ?? JSON.stringify(event.filter)), JSON.stringify(event.data), JSON.stringify(event.filter), new Date().toISOString()]
+        [event.model, "UPDATE", String(event.data?.id ?? JSON.stringify(event.filter)), JSON.stringify(event.data), JSON.stringify(event.filter), nowStamp()]
       );
     });
 
@@ -791,7 +800,7 @@ export default class ORMManager<
       if (exclude.has(event.model)) return;
       await this.adapter.exec(
         `INSERT INTO ${q(tableName)} (${q("model")}, ${q("action")}, ${q("recordId")}, ${q("oldData")}, ${q("changedAt")}) VALUES (${ph(0)}, ${ph(1)}, ${ph(2)}, ${ph(3)}, ${ph(4)})`,
-        [event.model, "DELETE", String(event.data?.id ?? JSON.stringify(event.filter)), JSON.stringify(event.data), new Date().toISOString()]
+        [event.model, "DELETE", String(event.data?.id ?? JSON.stringify(event.filter)), JSON.stringify(event.data), nowStamp()]
       );
     });
   }

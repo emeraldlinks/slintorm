@@ -66,6 +66,21 @@ export class Migrator {
     return quoteIdentifier(this.driver as any, name);
   }
 
+  /**
+   * Pull the column name back out of a rendered column definition.
+   *
+   * These definitions are quoted by qt(), which emits backticks on MySQL and
+   * double quotes elsewhere. Matching on a hardcoded `"` meant no column was
+   * ever recognised on MySQL, so the ALTER path believed every column was
+   * missing and every add-column failed with "Unknown column".
+   */
+  private leadingIdentifier(colDef: string): string | undefined {
+    const q = this.driver === "mysql" ? "`" : '"';
+    if (!colDef.startsWith(q)) return undefined;
+    const end = colDef.indexOf(q, 1);
+    return end < 0 ? undefined : colDef.slice(1, end);
+  }
+
   // ----------------------------------------------------------------
   // Meta helpers — transparently handle both "key" and "@key" variants
   // so the migrator works regardless of whether the schema generator
@@ -504,7 +519,7 @@ export class Migrator {
 
       const validCols = new Set(
         colsSql
-          .map((c) => c.match(/^"([^"]+)"/)?.[1]?.toLowerCase())
+          .map((c) => this.leadingIdentifier(c)?.toLowerCase())
           .filter(Boolean) as string[]
       );
 
@@ -529,9 +544,9 @@ export class Migrator {
       }
 
       for (const colDef of colsSql) {
-        const m = colDef.match(/^"([^"]+)"/);
-        if (!m) continue;
-        const colName = m[1].toLowerCase();
+        const rawColName = this.leadingIdentifier(colDef);
+        if (!rawColName) continue;
+        const colName = rawColName.toLowerCase();
         if (existingCols.includes(colName)) continue;
 
         let safeColDef = colDef.replace(/\s+PRIMARY KEY(\s+AUTOINCREMENT)?/i, "");

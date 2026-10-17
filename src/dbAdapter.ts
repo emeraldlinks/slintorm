@@ -39,14 +39,18 @@ function redactMongoCommand(sqlOrOp: string, include: boolean): string {
   let parsed: any;
   try { parsed = JSON.parse(sqlOrOp); } catch { return sqlOrOp; }
   let n = 0;
-  const walk = (v: any): any => {
-    if (Array.isArray(v)) return v.map(walk);
+  // Which collection and which action is structure, not user data. Redacting
+  // those too left a log that could not be read at all — and, because operator
+  // names are keys rather than values, they survive either way.
+  const STRUCTURAL = new Set(["collection", "action"]);
+  const walk = (v: any, structural = false): any => {
+    if (Array.isArray(v)) return v.map((x) => walk(x));
     if (v && typeof v === "object") {
       const out: any = {};
-      for (const [k, val] of Object.entries(v)) out[k] = walk(val);
+      for (const [k, val] of Object.entries(v)) out[k] = walk(val, STRUCTURAL.has(k));
       return out;
     }
-    return `$${++n}`;
+    return structural ? v : `$${++n}`;
   };
   return JSON.stringify(walk(parsed));
 }
@@ -493,7 +497,14 @@ export class DBAdapter {
 
       case "mysql": {
         if (this.logs) console.log("EXEC (mysql):", sqlOrOp, redactParams(params, this.logParams));
-        const [result] = await this.mysqlConn!.execute(sqlOrOp, params);
+        // mysql2's execute() speaks the prepared-statement protocol, which has no
+        // BEGIN/COMMIT/ROLLBACK/SAVEPOINT: transactions failed with "This
+        // command is not supported in the prepared statement protocol yet".
+        // Those statements have to go over the text protocol instead.
+        const isTxControl = /^\s*(BEGIN|START TRANSACTION|COMMIT|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT)\b/i.test(sqlOrOp);
+        const [result] = isTxControl
+          ? await this.mysqlConn!.query(sqlOrOp)
+          : await this.mysqlConn!.execute(sqlOrOp, params);
         if (Array.isArray(result)) {
           return { rows: result };
         } else {

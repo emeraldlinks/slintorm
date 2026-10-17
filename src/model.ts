@@ -1192,12 +1192,16 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
           validateItem(row, modelSchema?.fields);
           const values = cols.map((c) => serializeValue(c, row[c]));
           const updateSet = cols.map((c) => `\`${c}\` = VALUES(\`${c}\`)`).join(", ");
-          await adapter.exec(
+          const res = await adapter.exec(
             `INSERT INTO \`${tableName}\` (${cols.map((c) => `\`${c}\``).join(", ")}) VALUES (${cols.map(() => "?").join(", ")})
              ON DUPLICATE KEY UPDATE ${updateSet}`,
             values
           );
-          return "inserted" as const;
+          // mysql2 reports affectedRows: 1 for a fresh insert, 2 when an
+          // existing row was updated, and 0 when the update matched but changed
+          // nothing. Returning a constant "inserted" here reported every update
+          // as an insert.
+          return (res.changes === 1 ? "inserted" : "updated") as "inserted" | "updated";
         }
         const existing = await this.get(filter);
         if (existing) { await this.updateMany(filter, data); return "updated" as const; }
