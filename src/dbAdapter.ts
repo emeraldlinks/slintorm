@@ -606,17 +606,56 @@ export class DBAdapter {
     }
   }
 
+  /**
+   * Await a driver's `end()`, but never longer than SLINTORM_CLOSE_TIMEOUT_MS.
+   *
+   * `end()` waits for every pooled client to be released. If a test left a
+   * transaction open, a query in flight, or a socket already dead, it blocks
+   * forever — and because shutdown happens AFTER the suite prints its results,
+   * the hang is invisible: CI reports a job timeout on a log that ends with
+   * "233/233 passed" and nothing after it.
+   *
+   * On timeout, hard-destroy the remaining sockets so the process can exit.
+   */
+  private async endBounded(closeFn: () => Promise<unknown>): Promise<void> {
+    const ms = Number(process.env.SLINTORM_CLOSE_TIMEOUT_MS ?? 5_000);
+    let timer: any;
+    try {
+      await Promise.race([
+        Promise.resolve().then(closeFn),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => {
+            for (const c of [this.pgPool, this.pgClient] as any[]) {
+              const list = c?.pool?.clients ?? (c?.connection ? [c] : []);
+              for (const cl of list) {
+                try { cl.end?.(true); } catch { /* already gone */ }
+                try { cl.connection?.stream?.destroy?.(); } catch { /* already gone */ }
+              }
+            }
+            resolve();
+          }, ms);
+        }),
+      ]);
+    } catch { /* a driver that throws while closing must not fail the run */ }
+    finally { clearTimeout(timer); }
+  }
+
   async close() {
     switch (this.driver) {
       case "sqlite":
         if (this.sqliteDb?.close) await this.sqliteDb.close();
         break;
       case "mysql":
-        if (this.mysqlConn) await this.mysqlConn.end();
+        if (this.mysqlConn) await this.endBounded(() => this.mysqlConn!.end());
         break;
       case "postgres":
-        if (this.pgPool) await this.pgPool.end();
-        else if (this.pgClient) await this.pgClient.end();
+        // `end()` waits for every pooled client to be released. If a test left
+        // a transaction open, a query in flight, or a socket already dead, it
+        // blocks forever — and because this runs AFTER the suite has printed
+        // its results, the hang is invisible: CI reports a job timeout with a
+        // log that ends on "233/233 passed".
+        if (this.pgPool) await this.endBounded(() => this.pgPool!.end());
+        else if (this.pgClient) await this.endBounded(() => this.pgClient!.end());
         this.pgPool = null;
         break;
       case "mongodb":
