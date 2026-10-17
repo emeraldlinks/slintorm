@@ -267,6 +267,12 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
       where: Record<string, any>,
       withTrashed?: boolean,
     ): Record<string, any> {
+      // This is the one filter choke point that every read and write passes
+      // through, including the MongoDB branches — each of those builds its
+      // command JSON directly and never calls buildWhereClause(), so validating
+      // there alone left the unknown-key guard inert on MongoDB. An unvalidated
+      // key built from a request body was silently ignored instead of rejected.
+      assertFilterKeysAllowed(Object.keys(where), where);
       if (!softDeleteEnabled || withTrashed) return where;
       return { ...where, [softDeleteField]: null };
     }
@@ -683,6 +689,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
       async delete(filter: Partial<T>) {
         if (!Object.keys(filter).length) throw new Error("Delete filter cannot be empty");
+        assertFilterKeysAllowed(Object.keys(filter), filter as Record<string, any>);
         const needsRecord = !!(hooks?.onDeleteBefore || hooks?.onDeleteAfter);
         const toDelete = needsRecord ? await this.get(filter) : null;
         await emit("beforeDelete", null, filter);
@@ -1119,6 +1126,7 @@ export async function createModelFactory(adapter: DBAdapter, schema?: Record<str
 
       async deleteMany(filter: Partial<T>) {
         if (!Object.keys(filter).length) throw new Error("deleteMany filter cannot be empty");
+        assertFilterKeysAllowed(Object.keys(filter), filter as Record<string, any>);
         if (isPostgrest) {
           const res = await adapter.exec(pgCmd("delete", { filter: filter as Record<string, any> }));
           return res.changes ?? 0;

@@ -277,6 +277,20 @@ export class Migrator {
 
       const nullFrag = isNullable ? "" : "NOT NULL";
 
+      // MySQL refuses to index a BLOB/TEXT column without an explicit key
+      // length: `BLOB/TEXT column 'email' used in key specification without a
+      // key length`. SQLite and Postgres index TEXT directly, so this is
+      // MySQL-only. A column that carries @unique or @index must therefore be
+      // a bounded VARCHAR there — there is no way to keep it TEXT and still
+      // declare the key the schema asked for.
+      if (this.driver === "mysql" && (isUnique || this.m(meta, "index"))) {
+        if (/^(TEXT|LONGTEXT|MEDIUMTEXT|TINYTEXT|BLOB)$/i.test(sqlType)) {
+          const lenVal = this.m(meta, "length");
+          const len = lenVal === undefined || lenVal === null ? 191 : Number(lenVal);
+          sqlType = `VARCHAR(${Number.isFinite(len) && len > 0 ? len : 191})`;
+        }
+      }
+
       // ---- DEFAULT ---------------------------------------------------
       let defaultClause = "";
       const defVal = this.m(meta, "default");

@@ -3070,7 +3070,10 @@ describe("SQL injection regression", () => {
       console.log = orig;
     }
 
-    const insertLine = seen.find((l) => l.includes("INSERT"));
+    // MongoDB logs a JSON command (`{"action":"insert",…}`) rather than SQL text,
+// so match either form — the assertion under test is that the bound value is
+// absent, not which dialect rendered the line.
+const insertLine = seen.find((l) => l.includes("INSERT") || l.includes('"action":"insert"'));
     expect(insertLine !== undefined).toBe(true);
     expect(insertLine!.includes("SECRET-PII-VALUE")).toBe(false);
   });
