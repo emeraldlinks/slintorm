@@ -25,6 +25,33 @@ function redactParams(params: any[], include: boolean): any {
 }
 
 /**
+ * Redact a MongoDB command for logging.
+ *
+ * Mongo carries its values INSIDE the command document rather than in a
+ * parameter array, so redactParams() was handed an empty array and every
+ * inserted or updated document was written to stdout verbatim — the precise
+ * leak the SQL path above exists to prevent, and invisible until the Mongo
+ * suite actually ran. Rewrite leaf values to placeholders while keeping keys:
+ * operator names such as `$in` are structure, not user data.
+ */
+function redactMongoCommand(sqlOrOp: string, include: boolean): string {
+  if (include) return sqlOrOp;
+  let parsed: any;
+  try { parsed = JSON.parse(sqlOrOp); } catch { return sqlOrOp; }
+  let n = 0;
+  const walk = (v: any): any => {
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === "object") {
+      const out: any = {};
+      for (const [k, val] of Object.entries(v)) out[k] = walk(val);
+      return out;
+    }
+    return `$${++n}`;
+  };
+  return JSON.stringify(walk(parsed));
+}
+
+/**
  * Classify a driver load/connect failure.
  *
  * These used to collapse into "driver not found. Install it: npm install X",
@@ -486,7 +513,7 @@ export class DBAdapter {
       }
 
       case "mongodb": {
-        if (this.logs) console.log("EXEC (mongodb):", sqlOrOp, redactParams(params, this.logParams));
+        if (this.logs) console.log("EXEC (mongodb):", redactMongoCommand(sqlOrOp, this.logParams), redactParams(params, this.logParams));
         if (!this.mongoDb) throw new Error("MongoDB not initialized");
         const cmd = JSON.parse(sqlOrOp);
 

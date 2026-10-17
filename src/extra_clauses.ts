@@ -177,6 +177,15 @@ export class AdvancedQueryBuilder<T extends Record<string, any>> extends QueryBu
       if (this.orm?.dialect === "sqlite") {
         throw new Error("Row locking (FOR UPDATE / FOR SHARE) is not supported on SQLite");
       }
+      // MySQL has no FOR NO KEY UPDATE locking strength. Emitting it anyway
+      // produced a syntax error at execution time, from a query that had
+      // already been built successfully.
+      if (this._forNoKeyUpdate && this.orm?.dialect === "mysql") {
+        throw new Error(
+          "forNoKeyUpdate() is not supported on MySQL, which has no FOR NO KEY UPDATE " +
+            "locking strength. Use forUpdate() or forShare().",
+        );
+      }
     }
     if (this._forUpdate) {
       let lockClause = " FOR UPDATE";

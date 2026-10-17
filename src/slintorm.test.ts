@@ -938,8 +938,15 @@ if (!isMongo) describe("Advanced query clauses", () => {
     if (driver === "sqlite") return;
     const q = () => (Users as any).query();
     expect(sqlOf(q().forUpdate()).toUpperCase()).toContain("FOR UPDATE");
-    expect(sqlOf(q().forShare()).toUpperCase()).toContain("FOR SHARE");
-    expect(sqlOf(q().forNoKeyUpdate()).toUpperCase()).toContain("FOR NO KEY UPDATE");
+    // The two dialects spell shared locking differently and both are valid.
+    expect(sqlOf(q().forShare()).toUpperCase()).toContain(driver === "mysql" ? "LOCK IN SHARE MODE" : "FOR SHARE");
+    if (driver === "mysql") {
+      // MySQL has no FOR NO KEY UPDATE, so it must be refused at build time
+      // rather than emitted as a statement the server will reject.
+      expect(() => q().forNoKeyUpdate()).toThrow();
+    } else {
+      expect(sqlOf(q().forNoKeyUpdate()).toUpperCase()).toContain("FOR NO KEY UPDATE");
+    }
     // skipLocked()/noWait() are MODIFIERS on a locking clause — on their own
     // they correctly emit nothing, because there is no lock to modify.
     expect(sqlOf(q().forUpdate().skipLocked()).toUpperCase()).toContain("SKIP LOCKED");
@@ -1060,7 +1067,7 @@ if (!isMongo) describe("Rows streaming", () => {
 
 if (!isMongo) describe("Raw SQL & SqlExpr", () => {
   it("SqlExpr.raw works in insert", async () => {
-    const user = await Users.insert({ name: SqlExpr.raw("'ExprUser'"), email: "raw@t.com", createdAt: SqlExpr.raw(driver === "postgres" ? "NOW()" : "datetime('now')") } as any);
+    const user = await Users.insert({ name: SqlExpr.raw("'ExprUser'"), email: "raw@t.com", createdAt: SqlExpr.raw(driver === "sqlite" ? "datetime('now')" : "NOW()") } as any);
     expect(user).notToBeNull();
   });
 });
@@ -1720,7 +1727,7 @@ describe("Validation annotations", () => {
 
   if (!isMongo) it("skips validation for SqlExpr.raw values", async () => {
     const nameExpr = SqlExpr.raw("'RawName'") as unknown as string;
-    const createdAtExpr = SqlExpr.raw(driver === "postgres" ? "NOW()" : "datetime('now')") as unknown as string;
+    const createdAtExpr = SqlExpr.raw(driver === "sqlite" ? "datetime('now')" : "NOW()") as unknown as string;
     const u = await Users.insert({ name: nameExpr, email: "raw@t.com", createdAt: createdAtExpr });
     expect(u).notToBeNull();
   });
@@ -1835,13 +1842,13 @@ describe("Relations & preload", () => {
       : driver === "mysql" ? "INT AUTO_INCREMENT PRIMARY KEY"
       : "INTEGER PRIMARY KEY AUTOINCREMENT";
     await (orm as any).adapter.exec(
-      `CREATE TABLE IF NOT EXISTS ${qi("user_tags")} ("id" ${idPk}, "userId" INTEGER, "tagId" INTEGER)`,
+      `CREATE TABLE IF NOT EXISTS ${qi("user_tags")} (${qi("id")} ${idPk}, ${qi("userId")} INTEGER, ${qi("tagId")} INTEGER)`,
       [],
     );
     const t1 = (await Tags.insert({ label: "alpha" }))!;
     const t2 = (await Tags.insert({ label: "beta" }))!;
     await (orm as any).adapter.exec(
-      `INSERT INTO ${qi("user_tags")} ("userId", "tagId") VALUES (?, ?), (?, ?)`,
+      `INSERT INTO ${qi("user_tags")} (${qi("userId")}, ${qi("tagId")}) VALUES (?, ?), (?, ?)`,
       [u1.id, t1.id, u1.id, t2.id],
     );
 

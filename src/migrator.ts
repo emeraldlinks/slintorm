@@ -295,6 +295,17 @@ export class Migrator {
       let defaultClause = "";
       const defVal = this.m(meta, "default");
 
+      // MySQL also refuses a DEFAULT on a BLOB/TEXT column
+      // ("BLOB, TEXT, GEOMETRY or JSON column 'status' can't have a default
+      // value"), so a literal default forces the same bounded VARCHAR.
+      if (this.driver === "mysql" && defVal !== undefined && defVal !== null) {
+        if (/^(TEXT|LONGTEXT|MEDIUMTEXT|TINYTEXT|BLOB|JSON)$/i.test(sqlType)) {
+          const lenVal = this.m(meta, "length");
+          const len = lenVal === undefined || lenVal === null ? 191 : Number(lenVal);
+          sqlType = `VARCHAR(${Number.isFinite(len) && len > 0 ? len : 191})`;
+        }
+      }
+
       if (defVal !== undefined && defVal !== null) {
         if (defVal === "CURRENT_TIMESTAMP") {
           defaultClause =
