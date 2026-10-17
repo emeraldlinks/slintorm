@@ -2617,11 +2617,14 @@ describe("Connection pooling", () => {
     } as any)).not.toThrow();
   });
 
-  it("poolSize without rls is allowed", () => {
+  it("poolSize without rls is allowed", async () => {
     const o = new ORMManager({
       driver: "postgres", databaseUrl: "postgres://x", poolSize: 10,
     } as any);
     expect(o).toBeDefined();
+    // Release the Pool this opened. Left open it keeps its idle timers on the
+    // event loop, so the process never exits after the suite has finished.
+    await (o as any).close();
   });
 
   it("poolSize of 1 is treated as a single connection, not a pool", () => {
@@ -3057,6 +3060,10 @@ describe("SQL injection regression", () => {
   // ── Execute ─────────────────────────────────────────────────────────
   await run();
   if (isMongo && orm.adapter["mongoDb"]) await orm.adapter["mongoDb"].dropDatabase();
+  // Release sockets. A pg Pool holds its connections and idle timers open,
+  // which keeps the event loop alive — the suite would pass every assertion
+  // and then hang until CI killed it at the 6-hour timeout.
+  await orm.close().catch(() => {});
 }
 
 // ── Driver selection ─────────────────────────────────────────────────────

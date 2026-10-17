@@ -173,6 +173,10 @@ export class DBAdapter {
       this._connecting = (async () => {
         await this._connectOnce();
       })();
+      // A rejected connection promise must not stay cached: every later call
+      // would re-await the same rejection, so one transient failure (a database
+      // still booting, a dropped socket) would poison the adapter permanently.
+      this._connecting.catch(() => { this._connecting = null; });
     }
     await this._connecting;
   }
@@ -331,6 +335,23 @@ export class DBAdapter {
             });
             await this.pgClient.connect();
           }
+
+          // A `pg` Client is an EventEmitter, and an idle connection closed by
+          // a pooler (Supabase, PgBouncer, RDS Proxy, any load balancer that
+          // reaps idle sockets) emits an `error` event. With no listener
+          // attached, Node rethrows it as an uncaught exception and the whole
+          // process dies — observed as `Error: read ECONNABORTED` killing a
+          // test run mid-suite. Attach a handler, surface it when logging is
+          // on, and mark the adapter disconnected so the next query reconnects
+          // instead of reusing a dead socket.
+          this.pgClient.on?.("error", (err: any) => {
+            if (this.logs) console.error("Postgres connection error:", err?.message ?? err);
+            this.connected = false;
+            this._connecting = null;
+          });
+          this.pgPool?.on?.("error", (err: any) => {
+            if (this.logs) console.error("Postgres pool error:", err?.message ?? err);
+          });
         } catch (err) {
           throw describeDriverFailure("Postgres", "pg", err);
         }

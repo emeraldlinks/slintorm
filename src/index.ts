@@ -695,6 +695,32 @@ export default class ORMManager<
     return this._databases.get(name);
   }
 
+  /**
+   * Release every connection this manager opened — the primary adapter plus
+   * any added with addDatabase().
+   *
+   * Without this, a pg Pool keeps its sockets and idle timers alive, which
+   * holds the Node event loop open: the process never exits. That is why the
+   * test suite used to hang for the full 6-hour CI timeout even though every
+   * assertion had already passed. Long-running servers leak connections the
+   * same way.
+   *
+   * Safe to call more than once, and safe to call on a manager that never
+   * connected.
+   */
+  async close(): Promise<void> {
+    const seen = new Set<DBAdapter>();
+    const closeOne = async (adapter: DBAdapter | undefined) => {
+      if (!adapter || seen.has(adapter)) return;
+      seen.add(adapter);
+      try { await adapter.close(); } catch { /* already closed */ }
+    };
+
+    await closeOne(this.adapter);
+    for (const [, entry] of this._databases) await closeOne(entry.adapter);
+    this._databases.clear();
+  }
+
   /** Execute a query on a named database */
   async execOn(dbName: string, sql: string, params: any[] = []): Promise<any> {
     const db = this._databases.get(dbName);
