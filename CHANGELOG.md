@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.10.1] — 2026-10-28
+
+### Fixed
+- **Postgres/MySQL driver fails under ESM serverless bundlers (Critical).** Bundlers that inline a CJS driver into an ESM handler rewrite its `require("events")` into esbuild's throwing shim, so `import("pg")` failed with `Dynamic require of "events" is not supported` even though the driver was installed and the host had TCP sockets. Drivers now load through `createRequire` anchored at the deployment root when the bundler shim throws, and the failure is reported as a bundling problem (mark the driver external) instead of an edge-runtime TCP limitation.
+
 ## [1.10.0] — 2026-10-17
 
 Security and correctness release. **Contains breaking behaviour changes.**
