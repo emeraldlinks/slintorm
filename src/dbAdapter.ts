@@ -82,6 +82,21 @@ function describeDriverFailure(
     );
   }
 
+  // esbuild/rollup can inline a CJS driver into an ESM server bundle and turn
+  // its `require("events")` into a shim that throws at runtime. The package is
+  // installed and the host has TCP; the bundler is the problem. Reporting this
+  // as an edge-runtime limitation sent people down the wrong path.
+  if (/Dynamic require of .* is not supported/i.test(msg)) {
+    return new Error(
+      `Failed to connect to ${driver}.\n\n` +
+      `The ${pkg} driver IS installed, but the server bundle inlined it into ESM output and ` +
+      `the driver's internal require() calls became a throwing shim.\n\n` +
+      `Fix: keep ${pkg} (or its package) external in the bundler so Node loads it from ` +
+      `node_modules — e.g. esbuild \`packages: "external"\`, or add it to \`serverExternalPackages\`.\n\n` +
+      `Original error: ${msg}`
+    );
+  }
+
   // Everything else is a connection or runtime problem, not a packaging one.
   const looksLikeNoTcp =
     /TCP|net\.Socket|node:net|EACCES|EPERM|not supported|Workers|edge runtime/i.test(msg);
@@ -196,6 +211,33 @@ export class DBAdapter {
     return mod?.default ?? mod;
   }
 
+  /**
+   * Load a Node driver package.
+   *
+   * Bundlers that inline a CJS driver into an ESM server bundle rewrite its
+   * internal `require("events")` calls into a throwing shim, so `import()`
+   * fails even though the package is installed and the host has TCP sockets.
+   * When node_modules is shipped, a real require anchored at the deployment
+   * root still works; try it before surfacing the (misleading) bundle error.
+   */
+  private async importDriver<T = any>(spec: string): Promise<T> {
+    try {
+      return (await import(spec)) as T;
+    } catch (err) {
+      const msg = String((err as any)?.message ?? err);
+      const bundledCjs = /Dynamic require of .* is not supported/i.test(msg);
+      if (!bundledCjs || typeof process === "undefined" || !process.versions?.node) throw err;
+      try {
+        const { createRequire } = await import("node:module");
+        // createRequire wants a filename; anchor at the deployment root.
+        const req = createRequire(`${process.cwd()}/package.json`);
+        return req(spec) as T;
+      } catch {
+        throw err;
+      }
+    }
+  }
+
   async connect() {
     // Without this, N concurrent first-queries during a cold start all pass the
     // `connected` check (it is only set AFTER the await below) and each open
@@ -308,7 +350,7 @@ export class DBAdapter {
 
       case "mysql": {
         try {
-          const mod = await import("mysql2/promise");
+          const mod = await this.importDriver("mysql2/promise");
           const mysql = await this.defaultExport<any>(mod);
           this.mysqlConn = await mysql.createConnection({
             uri: this.config.databaseUrl,
@@ -321,7 +363,7 @@ export class DBAdapter {
 
       case "postgres": {
         try {
-          const mod = await import("pg");
+          const mod = await this.importDriver("pg");
           const pg = await this.defaultExport<any>(mod);
 
           // node-postgres returns int8 (bigint) and numeric as STRINGS by
@@ -710,14 +752,14 @@ export class DBAdapter {
     for (const url of replicaUrls) {
       try {
         if (this.driver === "postgres") {
-          const mod = await import("pg");
+          const mod = await this.importDriver("pg");
           const pg = await this.defaultExport<any>(mod);
           const client = new (pg.Client ?? pg)({ connectionString: url });
           await client.connect();
           if (!this.replicaPools.pg) this.replicaPools.pg = [];
           this.replicaPools.pg.push(client);
         } else if (this.driver === "mysql") {
-          const mod = await import("mysql2/promise");
+          const mod = await this.importDriver("mysql2/promise");
           const mysql = await this.defaultExport<any>(mod);
           const conn = await mysql.createConnection({ uri: url });
           if (!this.replicaPools.mysql) this.replicaPools.mysql = [];
